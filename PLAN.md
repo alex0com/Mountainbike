@@ -209,6 +209,13 @@ Each phase is a separate commit (or a few), tested with the Phase 0 harness befo
 
       Time in flights of 1.5 s or longer: about 7 → 10 s per km. Hard landings: 0.58 → 0.35 per km. Crashes: 0 in every mode.
 
+- **Feedback round 2: done.** *Tricks while holding a flip.* A flick used to count as "not holding", so the flip stopped, and a touch could only flick once, within 0.26 s of going down.
+  - A finger can now flick at any time it's down, and the flip carries on under it.
+  - It can flick again once it has slowed (under 120 px/s), paused, or turned back. A single long swipe is still one trick.
+  - A flick before the hold has started a flip delays the flip instead of cancelling it.
+  - Same for the second finger and front flips. At a fork, up/down flicks still pick the line.
+  - Checked with real pointer events: hold + flick, a second flick after a pause, a long swipe, flick-then-hold, flick-and-lift, slow drift, zig-zag.
+
 ## Running the tools
 
     node tools/sim.mjs [--seeds 20] [--km 5] [--flips back|front] [--tricks] [--lanes rand|up|down|main] [--turbo] [--json out.json]

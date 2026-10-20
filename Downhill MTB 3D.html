@@ -1369,7 +1369,7 @@ for (const t of Object.values(TRICKS)) SWIPE_TRICKS[t.dir] = t.name;
 const STYLE_CYCLE = ['SUPERMAN', 'NO-HANDER', 'CAN-CAN', 'HEEL CLICKER'];
 // how long the flights of a run last, in half seconds, for the test rides
 let airHist = [0, 0, 0, 0, 0, 0], hardLandings = 0;
-let trickQueued = null, trickBuf = 0, trickBufName = '', comboKeys = [], trickCounts = {}, tricksTotal = 0, everSwiped = false;
+let swipeCount = 0, trickQueued = null, trickBuf = 0, trickBufName = '', comboKeys = [], trickCounts = {}, tricksTotal = 0, everSwiped = false;
 const countTrick = (name, n=1)=> trickCounts[name] = (trickCounts[name] || 0) + n;
 
 function placeRider(x)
@@ -1549,7 +1549,7 @@ function airSwipe(dir)
     // on the ground it waits a moment for the takeoff
     if (grounded || grinding) { trickBuf = .3; trickBufName = name; }
     else trickQueued = name;
-    everSwiped = true;
+    everSwiped = true; ++swipeCount;
     return true;
 }
 
@@ -2575,38 +2575,70 @@ addEventListener('pointerdown', e=>
         if (e.clientX >= b.x && e.clientX <= b.x + b.w && e.clientY >= b.y && e.clientY <= b.y + b.h)
             { sfx('click'); b.act(); return; }
     if (tapScreen()) return;
-    ptStart.set(e.pointerId, {x: e.clientX, y: e.clientY, t: e.timeStamp});
+    ptStart.set(e.pointerId, {x: e.clientX, y: e.clientY, hist: [[e.clientX, e.clientY, e.timeStamp]], armed: true, fx: 0, fy: 0, lane: false});
     // at a fork a first finger that would jump may be a swipe, so it waits a moment before it does
     if (mainP === null && !swipeP && state == 'ride' && forkAhead && !ride && (grounded || grinding || offGroundT < .14)) swipeP = {id: e.pointerId, t: time};
     else if (mainP === null && !swipeP) { mainP = e.pointerId; pressMain(); }
     else if (secondP === null) { secondP = e.pointerId; pressSecond(); }
 });
-// a swipe: this far across the screen, in css pixels, soon enough after the finger went down
-const SWIPE_PX = 28, SWIPE_MS = 260;
+// a flick: this far across the screen, in css pixels, within this long. A finger can flick any time it is down,
+// over and over while it holds a flip, each time it has slowed, paused or turned after the one before.
+const SWIPE_PX = 28, SWIPE_MS = 220;
+function strokeMove(st, x, y, t)
+{
+    const h = st.hist, prev = h[h.length - 1];
+    if (!st.armed)
+    {
+        // how fast it is going now, over the last 50 ms or so, and whether it has turned back on its last flick
+        let ref = prev;
+        for (let k = h.length; k--;) { ref = h[k]; if (t - h[k][2] >= 50) break; }
+        const slow = hypot(x - ref[0], y - ref[1])/max(1, t - ref[2]) < .12;
+        const turned = (x - prev[0])*st.fx + (y - prev[1])*st.fy < 0;
+        if (slow || turned) { st.armed = true; h.length = 0; h.push(prev); }
+    }
+    h.push([x, y, t]);
+    while (h.length > 2 && t - h[0][2] > SWIPE_MS) h.shift();
+    if (!st.armed) return;
+    const o = h[0], dx = x - o[0], dy = y - o[1], d = hypot(dx, dy);
+    if (d < SWIPE_PX || t - o[2] > SWIPE_MS) return;
+    st.armed = false; st.fx = dx/d; st.fy = dy/d;
+    return {x0: o[0], y0: o[1], dx, dy};
+}
+// a flick before the hold has started a flip puts the start back, so a quick flick and lift never twitches one;
+// a flip already going carries on under the finger
+function flickHold(id)
+{
+    if (id === mainP && mainT < (pressInAir ? .09 : .14)) mainT = 0;
+    if (id === secondP && secondT < .12) secondT = 0;
+}
 addEventListener('pointermove', e=>
 {
-    const p0 = ptStart.get(e.pointerId);
-    if (!p0 || swipeDone.has(e.pointerId) || state != 'ride') return;
-    const dx = e.clientX - p0.x, dy = e.clientY - p0.y;
+    const st = ptStart.get(e.pointerId);
+    if (!st || state != 'ride') return;
+    const id = e.pointerId, x = e.clientX, y = e.clientY;
     // coming up to a fork, up or down picks the line, in the air as well as on the ground
-    if (forkAhead && !ride && abs(dy) > 24 && abs(dy) > abs(dx)*1.1)
+    const atFork = forkAhead && !ride, dx0 = x - st.x, dy0 = y - st.y;
+    if (atFork && !st.lane && abs(dy0) > 24 && abs(dy0) > abs(dx0)*1.1)
     {
-        chooseLine(dy < 0 ? 1 : -1, e.pointerId);
-        swipeFx.push({x0: p0.x, y0: p0.y, x1: e.clientX, y1: e.clientY, t: time, line: true});
-        // a finger that turned out to be a swipe is not holding a flip
-        if (e.pointerId === mainP) { mainHeld = false; pressInAir = false; }
-        if (e.pointerId === secondP) secondHeld = false;
-        return;
+        st.lane = true;
+        chooseLine(dy0 < 0 ? 1 : -1, id);
+        swipeFx.push({x0: st.x, y0: st.y, x1: x, y1: y, t: time, line: true});
+        flickHold(id);
+    }
+    const f = strokeMove(st, x, y, e.timeStamp);
+    if (!f) return;
+    swipeDone.add(id);
+    if (atFork && abs(f.dy) > abs(f.dx)*1.1)
+    {
+        // at a fork up and down belong to the line
+        chooseLine(f.dy < 0 ? 1 : -1, id);
+        swipeFx.push({x0: f.x0, y0: f.y0, x1: x, y1: y, t: time, line: true});
     }
     // anywhere else a flick throws a trick, in whichever of eight directions it went
-    if (hypot(dx, dy) < SWIPE_PX || e.timeStamp - p0.t > SWIPE_MS) return;
-    swipeDone.add(e.pointerId);
-    if (airSwipe(round(atan2(-dy, dx)/(PI/4)))) swipeFx.push({x0: p0.x, y0: p0.y, x1: e.clientX, y1: e.clientY, t: time});
-    // a finger held back at a fork in case it swiped, and it did, sideways: it jumps, and the trick waits for the air
-    if (swipeP && e.pointerId === swipeP.id) { swipeP = null; mainP = e.pointerId; pressMain(); }
-    // the finger that flicked is not holding a flip
-    if (e.pointerId === mainP) { mainHeld = false; pressInAir = false; }
-    if (e.pointerId === secondP) secondHeld = false;
+    else if (airSwipe(round(atan2(-f.dy, f.dx)/(PI/4)))) swipeFx.push({x0: f.x0, y0: f.y0, x1: x, y1: y, t: time});
+    // a finger held back at a fork in case it swiped, and it flicked sideways: it jumps, and the trick waits for the air
+    if (swipeP && id === swipeP.id && !(atFork && abs(f.dy) > abs(f.dx)*1.1)) { swipeP = null; mainP = id; pressMain(); }
+    flickHold(id);
 });
 function chooseLine(dir, id)
 {
@@ -2930,7 +2962,7 @@ function drawTitle(W, H, top, bottom)
         ['TAP', 'jump'],
         ['HOLD IN THE AIR', 'backflip'],
         ['SECOND FINGER', 'hold: front flip  ·  tap: style trick'],
-        ['SWIPE IN THE AIR', 'eight ways, eight tricks · throw them in a flip'],
+        ['SWIPE IN THE AIR', 'eight tricks · flick while you hold a flip'],
         ['SWIPE UP OR DOWN AT A FORK', 'berm off onto the high or low line'],
         ['FILL THE BATTERY', 'tap the bolt for eBike turbo'],
         ['LAND SQUARE TO THE SLOPE', 'chain tricks for a combo and a boost'],
@@ -3222,7 +3254,7 @@ window.__mtb = {
         combo, comboPts, bestCombo, crashReason, runTime, fps: averageFPS, objects: engineObjects.length, chunks: chunks.size,
         OX, OY, night, dayT, boostT, grindDist, seed, ride: ride ? ride.dir : 0, riderZ: riderZ(), battery, turboT, turbos, lines,
         forkAhead: !!forkAhead, laneWant, view: camViewName(), zoom: camZoomName(), splits: splits.map(s=> [s.x0|0, s.x1|0]),
-        trickCounts, tricksTotal, style: style?.name, styleT, airHist, hardLandings}),
+        trickCounts, tricksTotal, style: style?.name, styleT, airHist, hardLandings, queued: trickQueued, swipeCount, mainHeld, secondHeld}),
     start: ()=> startRide(),
     // steps the game by hand, a 60th of a second at a time, with the engine paused
     sim: (n, until)=> { for (let k = 0; k < n; ++k) { timeDelta = 1/frameRate; time += timeDelta; ++frame; gameUpdate(); gameUpdatePost(); if (until && until()) break; } return window.__mtb.info(); },

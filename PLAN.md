@@ -25,7 +25,7 @@ Line numbers refer to `Downhill MTB 3D.html` as of commit `c1efd23`. All changes
 | Second finger tap | (jump) | Style trick (as now) |
 | **Swipe up/down** | **Change target line**, one step per swipe, near a line block | **Trick** (see table below) |
 | **Swipe any other direction** | Ignored | **Trick** |
-| Keyboard | Space jumps; Up/Down change line near a block | **I J K L** for up/back/down/forward, **U O M ,** for the diagonals |
+| Keyboard | Space jumps; Up/Down change line near a block | **I J K L** for up/back/down/forward, **U O N ,** for the diagonals (M stays mute) |
 
 ### Swipe tricks (proposed mapping, all values to be tuned)
 
@@ -176,10 +176,24 @@ Tricks first (Phase 1): they're independent and the most immediately fun. Then d
 
 Each phase is a separate commit (or a few), tested with the Phase 0 harness before pushing.
 
-## Open questions
+## Decisions
 
-1. 8 swipe directions, or 4 (up/down/back/forward) for reliability on small phones?
-2. Slow motion off big drop-in lips: yes or no?
-3. At a drop-in lip: tap to SEND IT for a bonus with auto roll-off (proposed), or must tap to go?
-4. Keep the eBike turbo as is (proposed, held only in brake zones)?
-5. Is the trick mapping table right, or are there tricks you want added or swapped?
+1. **8 swipe directions.**
+2. **No slow motion** off drop-in lips.
+3. **Drop-in lips roll off automatically**; a tap at the lip gives a SEND IT pop and bonus.
+4. **eBike turbo stays as it is** (held only in brake zones).
+5. **Trick table as proposed.**
+
+## Progress
+
+- **Phase 0: done.** `tools/sim.mjs` (headless autopilot rides) and `tools/shot.mjs` (screenshots).
+  Baseline: 0 crashes over 101 km (20 seeds × 5 km) with no flips, with backflips and with front flips.
+- **Phase 1: done.** Swipe tricks, landing tiers, scoring, animations, HUD, keyboard, help text, autopilot.
+  0 crashes over 101 km in each of: tricks, tricks + backflips, tricks + front flips. Changes from the plan, found in testing:
+  - A trick starts only once the bike has been in the air for 0.1 s. A swipe on the ground waits 0.3 s for the takeoff. A trick that hasn't got going on a hop under 0.4 s is quietly dropped. Without these, a swipe during a crest hop too small to see would crash the rider at once.
+  - A swipe on the ground (away from a fork) still jumps, as any press does, so a ground flick works as "jump and trick".
+
+## Running the tools
+
+    node tools/sim.mjs [--seeds 20] [--km 5] [--flips back|front] [--tricks] [--lanes rand|up|down|main] [--turbo] [--json out.json]
+    node tools/shot.mjs --seed 3 --at 800 --view SIDE --zoom 1 --day .3 --out shot.png [--size 390x844] [--js "code"]

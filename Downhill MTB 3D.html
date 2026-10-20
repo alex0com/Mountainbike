@@ -1301,7 +1301,7 @@ let vyGround = 0, boostT = 0, crashT = 0, rag, bikeRag, crashReason = '';
 let runTime = 0, dist = 0, score = 0, orbsGot = 0, orbStreak = 0;
 let combo = 0, comboPts = 0, comboT = 0, comboNames = [], bestCombo = 0, bestComboName = '', flipsTotal = 0;
 let grindStart = 0, grindDist = 0;
-let mainHeld = false, mainT = 0, secondHeld = false, secondT = 0, jumpQueued = false, styleQueued = false;
+let mainHeld = false, mainT = 0, secondHeld = false, secondT = 0, jumpQueued = false;
 let offGroundT = 0, jumpBuf = 0;
 // the eBike: tricks and orbs charge the battery, a full battery fires the turbo
 let battery = 0, turboT = 0, turboGrace = 0, turbos = 0, laneWant = 0, forkAhead = null, bermStage = 0, lines = 0;
@@ -1322,19 +1322,32 @@ function fireTurbo()
     showMessage('TURBO!', '', hsl(.5,1,.62));
     camShake = max(camShake, .4);
 }   // a tap just after leaving the ground still jumps, one just before landing waits for it
-const STYLES = [
-    {name: 'SUPERMAN', dur: .95, pts: 450},
-    {name: 'NO-HANDER', dur: .75, pts: 300},
-    {name: 'CAN-CAN', dur: .8, pts: 350},
-    {name: 'HEEL CLICKER', dur: .7, pts: 400}];
+// air tricks: how long each takes, what it scores, the swipe that throws it, and how a landing in the middle of it ends.
+// Swipes on the screen: 0 forward (right), then round counterclockwise in eighths, 2 up, 4 back (left), 6 down.
+const TRICKS = {
+    'SUPERMAN':     {dur: .95, pts: 450, dir: 0},
+    'BARSPIN':      {dur: .5,  pts: 350, dir: 1, fail: 'MISSED THE BARS'},
+    'NO-HANDER':    {dur: .75, pts: 300, dir: 2, fail: 'HANDS OFF THE BARS'},
+    'HEEL CLICKER': {dur: .7,  pts: 400, dir: 3},
+    'TAILWHIP':     {dur: .6,  pts: 550, dir: 4, fail: 'TANGLED IN THE WHIP'},
+    '360':          {dur: .8,  pts: 600, dir: 5, fail: 'LANDED SIDEWAYS'},
+    'TABLETOP':     {dur: .7,  pts: 400, dir: 6, fail: 'LANDED ON YOUR SIDE'},
+    'CAN-CAN':      {dur: .8,  pts: 350, dir: 7}};
+for (const [name, t] of Object.entries(TRICKS)) t.name = name;
+const SWIPE_TRICKS = [];
+for (const t of Object.values(TRICKS)) SWIPE_TRICKS[t.dir] = t.name;
+// a second finger tap throws these in turn
+const STYLE_CYCLE = ['SUPERMAN', 'NO-HANDER', 'CAN-CAN', 'HEEL CLICKER'];
+let trickQueued = null, trickBuf = 0, trickBufName = '', comboKeys = [], trickCounts = {}, tricksTotal = 0, everSwiped = false;
+const countTrick = (name, n=1)=> trickCounts[name] = (trickCounts[name] || 0) + n;
 
 function placeRider(x)
 {
     px = x; py = baseY = groundY(x); vx = vy = 0; sp = 0;
     grounded = true; grinding = null; ang = atan(groundSlope(x)); angVel = 0; landVis = 0;
-    airT = rot = 0; style = undefined; stylesDone = []; boostT = 0;
+    airT = rot = 0; style = undefined; stylesDone = []; trickQueued = null; trickBuf = 0; boostT = 0;
     suspF = suspR = .03; suspFV = suspRV = 0;
-    combo = comboPts = comboT = 0; comboNames = [];
+    combo = comboPts = comboT = 0; comboNames = []; comboKeys = [];
     ride = null; laneWant = 0; forkAhead = null; turboT = turboGrace = 0; bermStage = 0;
 }
 
@@ -1386,7 +1399,7 @@ function jumpNow()
 function takeoff(kind)
 {
     grounded = false; grinding = null;
-    airT = 0; rot = 0; style = undefined; stylesDone = [];
+    airT = 0; rot = 0; style = undefined; stylesDone = []; trickQueued = null;
     takeoffX = px; takeoffY = py;
     const f = onBranch(px) ? null : feats.find(f=> px >= f.x0 - .5 && px <= f.x1 + 1.5);
     takeoffKind = kind || (f ? f.type : 'crest');
@@ -1398,7 +1411,8 @@ function takeoff(kind)
 // ---------- in the air: hold to flip, let go and the rider settles toward the slope below
 function airControl(dt)
 {
-    const back = mainHeld && (pressInAir || mainT > .14), front = secondHeld && secondT > .12;
+    // a press in the air waits a moment before it flips, in case it is a swipe
+    const back = mainHeld && mainT > (pressInAir ? .09 : .14), front = secondHeld && secondT > .12;
     const target = front ? -6.9 : back ? 6.6 : 0;
     if (target) angVel += (target - angVel)*damp(10, dt);
     else
@@ -1408,13 +1422,15 @@ function airControl(dt)
         if (abs(e) < 1.7) ang += clampV(e*3.4, -3, 3)*dt;   // lets go a little early and still comes round
     }
     ang += angVel*dt; rot += angVel*dt;
-    if (styleQueued && !style)
+    // a swipe just before leaving the ground is kept for the air
+    if (trickBuf > 0) { trickQueued = trickBufName; trickBuf = 0; }
+    // a trick waits for the bike to be properly off the ground, so a hop over a crest never throws one
+    if (trickQueued && !style && airT > .1)
     {
-        style = STYLES[styleIndex++ % STYLES.length];
-        styleT = 0;
-        sfx('whoosh');
+        style = TRICKS[trickQueued];
+        styleT = 0; trickQueued = null;
+        sfx('whoosh', style.dir);
     }
-    styleQueued = false;
     if (style && (styleT += dt) >= style.dur) { stylesDone.push(style); style = undefined; }
 }
 
@@ -1461,13 +1477,12 @@ function land(gy)
     if (abs(s) > 2.5 || gy - py > .5) { crash('HIT THE EDGE'); return; }
     const err = wrapPI(ang - th), nX = -sin(th), nY = cos(th), impact = -(vx*nX + vy*nY);
     if (abs(err) > .8) { crash(abs(err) > 2 ? 'LANDED ON YOUR HEAD' : 'BAD LANDING'); return; }
-    if (style && styleT < style.dur*.55) { crash('FEET OFF THE PEDALS'); return; }
-    if (style) { stylesDone.push(style); style = undefined; }   // nearly done: it counts
+    if (!finishTrick()) return;
     const perfect = abs(err) < .22;
     sp = vx*cos(th) + vy*sin(th);
     sp = max(VMIN, sp*(perfect ? 1 : 1 - abs(err)*.3)*(impact > 22 ? .8 : 1));
     if (impact > 22) showMessage('HARD LANDING', '', hsl(.07,.9,.6));
-    py = gy; grounded = true; vyGround = sp*sin(th);
+    py = gy; grounded = true; vyGround = sp*sin(th); trickQueued = null;
     landVis = err; ang = th; angVel = 0;
     suspFV += impact*.5; suspRV += impact*.55;
     compressKick = min(1, impact*.08);
@@ -1480,12 +1495,39 @@ function land(gy)
     scoreAir(perfect);
 }
 
+// a trick still under way when the wheels touch: nearly done it counts, half done it is sketchy, barely begun a crash
+function finishTrick()
+{
+    if (!style) return true;
+    const p = styleT/style.dur;
+    // a short hop that came down before the trick got going just drops it
+    if (p < .4 && airT < .4) { style = undefined; trickQueued = null; return true; }
+    if (p < .4) { crash(style.fail || 'FEET OFF THE PEDALS'); return false; }
+    if (p >= .8) stylesDone.push(style);
+    else { showMessage('SKETCHY!', 'finish the trick before landing', hsl(.08,.9,.6)); sfx('landHard'); }
+    style = undefined; trickQueued = null;
+    return true;
+}
+
+// a flick in the air throws the trick for its direction; one waits its turn behind a trick under way
+function airSwipe(dir)
+{
+    if (state != 'ride') return false;
+    const name = SWIPE_TRICKS[(dir % 8 + 8) % 8];
+    // on the ground it waits a moment for the takeoff
+    if (grounded || grinding) { trickBuf = .3; trickBufName = name; }
+    else trickQueued = name;
+    everSwiped = true;
+    return true;
+}
+
 // ---------- tricks build a combo; it banks when the rider rolls on without another trick for a moment
-function addTrick(name, pts)
+function addTrick(name, pts, key)
 {
     ++combo; comboPts += pts; comboT = 2.2;
     charge(pts);
     comboNames.push(name);
+    if (key) comboKeys.push(key);
     if (combo >= 2) boostT = max(boostT, .5 + min(combo, 6)*.12);
     showTrick(name, pts);
 }
@@ -1497,21 +1539,37 @@ function bankCombo()
     if (total > bestCombo) bestCombo = total, bestComboName = comboNames.slice(-3).join(' + ');
     if (combo > 1) showBank('x' + min(combo, 10) + ' COMBO', total);
     sfx(combo > 1 ? 'bank' : 'trick');
-    combo = comboPts = 0; comboNames = []; comboT = 0;
+    combo = comboPts = 0; comboNames = []; comboKeys = []; comboT = 0;
 }
 
 function scoreAir(perfect)
 {
-    const n = abs(rot) > TAU*.7 ? max(1, round(abs(rot)/TAU)) : 0;
+    const n = abs(rot) > TAU*.7 ? max(1, round(abs(rot)/TAU)) : 0, back = rot > 0;
+    let flipName = '', flipPts = 0;
     if (n)
     {
-        const back = rot > 0, mult = n == 1 ? 1 : n == 2 ? 2.6 : 4.5;
-        addTrick((n == 2 ? 'DOUBLE ' : n == 3 ? 'TRIPLE ' : n > 3 ? n + 'X ' : '') + (back ? 'BACKFLIP' : 'FRONTFLIP'),
-            round((back ? 500 : 650)*mult));
+        flipName = (n == 2 ? 'DOUBLE ' : n == 3 ? 'TRIPLE ' : n > 3 ? n + 'X ' : '') + (back ? 'BACKFLIP' : 'FRONTFLIP');
+        flipPts = round((back ? 500 : 650)*(n == 1 ? 1 : n == 2 ? 2.6 : 4.5));
         flipsTotal += n;
+        countTrick(back ? 'BACKFLIP' : 'FRONTFLIP', n);
         sfx('trickBig');
     }
-    for (const s of stylesDone) addTrick(s.name, s.pts);
+    // each trick in one air is worth more than the one before, a repeat in the same combo half as much;
+    // the first one thrown during a flip joins it, for a bonus
+    stylesDone.forEach((t, k)=>
+    {
+        const reps = comboKeys.filter(c=> c == t.name).length;
+        let name = t.name, pts = t.pts*1.25**min(k, 4)*.5**reps;
+        if (k == 0 && n)
+        {
+            name = t.name == 'TAILWHIP' ? flipName.replace('BACKFLIP', 'FLIP WHIP').replace('FRONTFLIP', 'FRONT FLIP WHIP') : t.name + ' ' + flipName;
+            pts = (pts + flipPts)*1.5;
+            flipName = '';
+        }
+        addTrick(name, round(pts/10)*10, t.name);
+        countTrick(t.name); ++tricksTotal;
+    });
+    if (flipName) addTrick(flipName, flipPts);
     if (takeoffKind == 'gap' && airT > .3) addTrick('CHASM', 300);
     if (takeoffKind == 'cliff' && takeoffY - py > 4) addTrick('DROP ' + round(takeoffY - py) + 'm', round((takeoffY - py)*40));
     if (airT > 1.6) addTrick('BIG AIR', round(airT*120));
@@ -1524,6 +1582,7 @@ function startGrind(r)
 {
     const th = atan(r.slope), err = wrapPI(ang - th);
     if (abs(err) > .85) { crash('MISSED THE RAIL'); return; }
+    if (!grounded && !finishTrick()) return;
     if (!grounded) scoreAir(abs(err) < .22);
     grinding = r; grounded = false;
     sp = max(VMIN, vx*cos(th) + vy*sin(th));
@@ -1606,8 +1665,8 @@ function crash(reason)
 {
     if (state != 'ride') return;
     state = 'crash'; crashT = 0; crashReason = reason;
-    window.__lastCrash = {reason, px: +px.toFixed(1), ride: ride ? ride.dir : 0, z: +riderZ().toFixed(1), turbo: +turboT.toFixed(2), tk: takeoffKind, tkx: +takeoffX.toFixed(1), rot: +(rot*57).toFixed(0), ang: +(ang*57).toFixed(0), slope: +(atan(rideSlope(px))*57).toFixed(0), airT: +airT.toFixed(2), sp: +sp.toFixed(1), vx: +vx.toFixed(1), vy: +vy.toFixed(1)};
-    combo = comboPts = 0; comboNames = []; grinding = null; style = undefined;
+    window.__lastCrash = {reason, px: +px.toFixed(1), ride: ride ? ride.dir : 0, z: +riderZ().toFixed(1), turbo: +turboT.toFixed(2), tk: takeoffKind, tkx: +takeoffX.toFixed(1), rot: +(rot*57).toFixed(0), ang: +(ang*57).toFixed(0), slope: +(atan(rideSlope(px))*57).toFixed(0), airT: +airT.toFixed(2), sp: +sp.toFixed(1), vx: +vx.toFixed(1), vy: +vy.toFixed(1), style: style?.name, styleT: +styleT.toFixed(2), flightT: window.__flightT, grounded, frame};
+    combo = comboPts = 0; comboNames = []; comboKeys = []; grinding = null; style = undefined; trickQueued = null;
     const r = ()=> Math.random() - .5;
     rag = {x: px, y: py + .9, vx: vx*.7, vy: max(vy, 0) + 3.5, rot: ang, av: 6 + r()*6, roll: 0, rv: r()*4};
     bikeRag = {x: px, y: py + .4, vx: vx*.55, vy: max(vy, 0) + 2, rot: ang, av: -4 + r()*6, roll: 0, rv: r()*5};
@@ -1689,10 +1748,14 @@ function ik(a, c, l1, l2, hint)
 }
 
 // bike geometry in its own space: forward is -Z, ground contact at y=0
-const RW = .37, AXLE_R = vec3(0, RW, .62), AXLE_F = vec3(0, RW, -.64);
-function drawBike(M, cF, cR, wheelSpin, crankA)
+const RW = .37, AXLE_R = vec3(0, RW, .62), AXLE_F = vec3(0, RW, -.64), STEERER = vec3(0, .9, -.44);
+// turned about the steerer: the frame in a tailwhip, the bars in a barspin
+const aboutSteerer = (M, a)=> a ? M.copy().multiply(buildMatrix(STEERER, vec3(0, a, 0))).multiply(Matrix4.translation(STEERER.scale(-1))) : M;
+function drawBike(M, cF, cR, wheelSpin, crankA, whip=0, barA=0)
 {
-    MC = M;
+    // the frame and back wheel, the fork and front wheel, and the bars each have their own transform
+    const MF = aboutSteerer(M, whip), MB = aboutSteerer(M, barA);
+    MC = MF;
     // frame points drop with the suspension, the axles stay on the ground
     const sag = (p)=> vec3(p.x, p.y - mix(cR, cF, clamp01((.62 - p.z)/1.26)), p.z);
     const bb = sag(vec3(0, .34, .05)), headTop = sag(vec3(0, 1.0, -.41)), headBot = sag(vec3(0, .8, -.46));
@@ -1701,6 +1764,7 @@ function drawBike(M, cF, cR, wheelSpin, crankA)
     // wheels
     for (const [axle, disc] of [[rA, .07], [fA, -.07]])
     {
+        MC = axle == fA ? M : MF;
         const rot = vec3(wheelSpin, 0, PI/2);
         drawPart(meshTyre, buildMatrix(axle, rot, undefined, scratch));
         drawPart(meshRim, buildMatrix(axle, rot, undefined, scratch));
@@ -1708,6 +1772,7 @@ function drawBike(M, cF, cR, wheelSpin, crankA)
         drawPart(meshDisc, buildMatrix(vec3(disc, axle.y, axle.z), vec3(wheelSpin, 0, PI/2), undefined, scratch));
         ball(axle, .09, PAL.silver);
     }
+    MC = MF;
     // main frame, chunky downhill tubes
     tube(bb, headBot, .085, PAL.frame);
     tube(ttRear, headTop.add(vec3(0, -.05, .02)), .06, PAL.frame);
@@ -1732,6 +1797,7 @@ function drawBike(M, cF, cR, wheelSpin, crankA)
     tube(seatTop, seatTop.add(vec3(0, .07, .03)), .035, PAL.silver);
     box(seatTop.add(vec3(0, .09, .05)), vec3(.13, .05, .27), PAL.black);
     // dual crown fork: stanchions slide into the lowers as it compresses
+    MC = M;
     const forkDir = fA.subtract(vec3(0, .8, -.46)).normalize();
     for (const x of [-.075, .075])
     {
@@ -1742,12 +1808,14 @@ function drawBike(M, cF, cR, wheelSpin, crankA)
     box(headTop.add(vec3(0, .02, 0)), vec3(.23, .045, .07), PAL.black);
     box(headBot.add(vec3(0, -.02, 0)), vec3(.23, .045, .07), PAL.black);
     // stem and wide bars
+    MC = MB;
     const stem = headTop.add(vec3(0, .04, -.05)), bar = stem.add(vec3(0, .04, 0));
     tube(headTop, stem, .045, PAL.black);
     box(stem.add(vec3(0, .07, .02)), vec3(.09, .05, .07), lit);
     tube(bar.add(vec3(-.4, .03, 0)), bar.add(vec3(.4, .03, 0)), .032, PAL.black);
     for (const x of [-.36, .36]) tube(bar.add(vec3(x - .04, .03, 0)), bar.add(vec3(x + .04, .03, 0)), .045, PAL.glove);
     // cranks, chainring and pedals
+    MC = MF;
     drawPart(meshRing, buildMatrix(bb.add(vec3(.07, 0, 0)), vec3(crankA, 0, PI/2), undefined, scratch));
     const pedals = [];
     for (const [x, a] of [[.17, crankA], [-.17, crankA + PI]])
@@ -1786,6 +1854,15 @@ function drawRider(M, bikePts, comp, styleName, styleAmt)
         hip = hip.lerp(vec3(0, 1.3, .48), s);
         feet = feet.map((f, i)=> f.lerp(vec3(i ? -.06 : .06, 1.05, -.85), s));
     }
+    // the feet come off the pedals and wait, spread, for the frame to come round
+    else if (styleName == 'TAILWHIP')
+    {
+        hip = hip.lerp(vec3(0, 1.3, .25), s);
+        feet = feet.map((f, i)=> f.lerp(vec3(i ? -.34 : .34, .78, .12), s));
+    }
+    // the hands let go above the bars while they spin, and catch them again
+    else if (styleName == 'BARSPIN')
+        hands = hands.map((h, i)=> h.lerp(vec3(i ? -.3 : .3, 1.3, -.32), s));
     const shoulders = [chest.add(vec3(.2, .03, -.02)), chest.add(vec3(-.2, .03, -.02))];
     const hips = [hip.add(vec3(.11, 0, 0)), hip.add(vec3(-.11, 0, 0))];
     // torso, pack and head
@@ -1838,8 +1915,22 @@ function sideMatrix(x, y, a, roll, piv, z=0, yaw=0, lean=0)
 function bikeMatrix()
 {
     // flips turn about the middle of rider and bike, on the ground it pivots on the wheels
-    const piv = .85*RS*airBlend, onSomething = grounded || grinding;
-    return sideMatrix(px, (onSomething ? baseY : py) + bermY, onSomething ? ang + landVis : ang, 0, piv, pz, yawV, leanV);
+    const piv = .85*RS*airBlend, onSomething = grounded || grinding, t = trickAnim();
+    const M = sideMatrix(px, (onSomething ? baseY : py) + bermY, onSomething ? ang + landVis : ang, 0, piv, pz, yawV + t.spin, leanV);
+    if (t.table) M.multiply(buildMatrix(vec3(0, .8, 0), vec3(0, 0, t.table))).multiply(Matrix4.translation(vec3(0, -.8, 0)));
+    return M;
+}
+// the trick under way: its pose and how far round its spins are
+const TA = {};
+function trickAnim()
+{
+    const name = state == 'ride' && style ? style.name : '', p = name ? clamp01(styleT/style.dur) : 0, turn = TAU*sstep(p);
+    TA.name = name; TA.amt = name ? sin(PI*p) : 0;
+    TA.whip = name == 'TAILWHIP' ? turn : 0;
+    TA.bar = name == 'BARSPIN' ? turn : 0;
+    TA.spin = name == '360' ? turn : 0;
+    TA.table = name == 'TABLETOP' ? -1.15*sstep(TA.amt*1.6) : 0;
+    return TA;
 }
 
 class RiderView extends EngineObject3D
@@ -1854,11 +1945,11 @@ class RiderView extends EngineObject3D
             drawRider(sideMatrix(rag.x, rag.y - .9*RS, rag.rot, rag.roll, .9*RS, ragZ(rag.x)), pts, 1, '', 0);
             return;
         }
-        const M = bikeMatrix();
+        const M = bikeMatrix(), t = trickAnim();
         this.M = M;
-        const pts = drawBike(M, suspF, suspR, wheelSpin, crank);
+        const pts = drawBike(M, suspF, suspR, wheelSpin, crank, t.whip, t.bar);
         const tuck = grounded || grinding ? 0 : clamp01(abs(angVel)/5)*.7;
-        drawRider(M, pts, clamp01(compress + tuck), style?.name, style ? sin(PI*clamp01(styleT/style.dur)) : 0);
+        drawRider(M, pts, clamp01(compress + tuck + (t.spin || t.table ? .3*t.amt : 0)), t.name, t.amt);
     }
 }
 // where the scarf ties on, at the back of the neck
@@ -1904,9 +1995,9 @@ function newRun(s)
     state = 'title';
     placeRider(START_X);
     runTime = dist = score = orbsGot = orbStreak = 0;
-    bestCombo = 0; bestComboName = ''; flipsTotal = 0; grindDist = 0; crashReason = '';
+    bestCombo = 0; bestComboName = ''; flipsTotal = 0; grindDist = 0; crashReason = ''; trickCounts = {}; tricksTotal = 0;
     battery = 0; turboT = 0; turbos = 0; lines = 0; pz = yawV = leanV = bermY = 0; camZ = camB = 0;
-    messages.length = 0; trickPops.length = 0;
+    messages.length = 0; trickPops.length = 0; swipeFx.length = 0;
     riderView = new RiderView;
     new OrbView; new OrbGlow; new SkyExtras; new TurboGlow;
     scarf = new Trail3D(vec3(), .16, .26*RS, undefined, hsl(.0,.85,.5), hsl(.0,.85,.5,0));
@@ -1966,6 +2057,7 @@ function gameUpdate()
         jumpQueued = false;
         if (jumpBuf > 0 && (grounded || grinding || offGroundT < .14)) jumpNow();
         else if (jumpBuf > 0) jumpBuf -= dt;
+        if (trickBuf > 0 && (grounded || grinding)) trickBuf -= dt;
         if (!grounded && !grinding) airControl(dt);
         const pxWas = px;
         for (let k = 0; k < SUB && state == 'ride'; ++k)
@@ -2406,9 +2498,10 @@ function updateFeatures(dt, pxWas)
 // INPUT AND HUD - one thumb: tap to jump, hold in the air to backflip; a second
 // finger front flips while held or throws a style trick with a tap
 // ============================================================================
-let swipeP = null, swipeDone = new Set, ptStart = new Map, mainP = null, secondP = null, buttons = [], safeTop = 0, safeBottom = 0, bankMsg, tutorial = 0;
+let swipeP = null, swipeDone = new Set, swipeFx = [], ptStart = new Map, mainP = null, secondP = null, buttons = [], safeTop = 0, safeBottom = 0, bankMsg, tutorial = 0;
 const keys = {}, messages = [], trickPops = [];
-try { tutorial = +localStorage.getItem('dhside.tutorial') || 0; } catch(e) {}
+let swipeTutorial = 0;
+try { tutorial = +localStorage.getItem('dhside.tutorial') || 0; swipeTutorial = +localStorage.getItem('dhside.swipeTutorial') || 0; } catch(e) {}
 
 function pressMain()
 {
@@ -2425,7 +2518,7 @@ function pressSecond()
 }
 function releaseSecond()
 {
-    if (secondT < .22 && state == 'ride' && !grounded && !grinding) styleQueued = true;
+    if (secondT < .22 && state == 'ride' && !grounded && !grinding) trickQueued = STYLE_CYCLE[styleIndex++ % STYLE_CYCLE.length];
     secondHeld = false;
 }
 function readInput(dt)
@@ -2450,17 +2543,32 @@ addEventListener('pointerdown', e=>
         if (e.clientX >= b.x && e.clientX <= b.x + b.w && e.clientY >= b.y && e.clientY <= b.y + b.h)
             { sfx('click'); b.act(); return; }
     if (tapScreen()) return;
-    ptStart.set(e.pointerId, {x: e.clientX, y: e.clientY});
-    // at a fork a first finger may be a swipe, so it waits a moment before it jumps
-    if (mainP === null && !swipeP && state == 'ride' && forkAhead && !ride) swipeP = {id: e.pointerId, t: time};
+    ptStart.set(e.pointerId, {x: e.clientX, y: e.clientY, t: e.timeStamp});
+    // at a fork a first finger on the ground may be a swipe, so it waits a moment before it jumps
+    if (mainP === null && !swipeP && state == 'ride' && forkAhead && !ride && (grounded || grinding)) swipeP = {id: e.pointerId, t: time};
     else if (mainP === null && !swipeP) { mainP = e.pointerId; pressMain(); }
     else if (secondP === null) { secondP = e.pointerId; pressSecond(); }
 });
+// a swipe: this far across the screen, in css pixels, soon enough after the finger went down
+const SWIPE_PX = 28, SWIPE_MS = 260;
 addEventListener('pointermove', e=>
 {
     const p0 = ptStart.get(e.pointerId);
-    if (!p0 || swipeDone.has(e.pointerId) || state != 'ride' || !forkAhead || ride) return;
+    if (!p0 || swipeDone.has(e.pointerId) || state != 'ride') return;
     const dx = e.clientX - p0.x, dy = e.clientY - p0.y;
+    // a flick throws a trick, in whichever of eight directions it went; on the ground at a fork it picks the line
+    const atFork = forkAhead && !ride && (grounded || grinding);
+    if (!atFork)
+    {
+        if (hypot(dx, dy) < SWIPE_PX || e.timeStamp - p0.t > SWIPE_MS) return;
+        swipeDone.add(e.pointerId);
+        if (airSwipe(round(atan2(-dy, dx)/(PI/4)))) swipeFx.push({x0: p0.x, y0: p0.y, x1: e.clientX, y1: e.clientY, t: time});
+        // the finger that flicked is not holding a flip
+        if (e.pointerId === mainP) { mainHeld = false; pressInAir = false; }
+        if (e.pointerId === secondP) secondHeld = false;
+        return;
+    }
+    if (!forkAhead || ride) return;
     if (abs(dy) > 24 && abs(dy) > abs(dx)*1.1)
     {
         chooseLine(dy < 0 ? 1 : -1, e.pointerId);
@@ -2486,11 +2594,20 @@ const pointerUp = e=>
         return;
     }
     if (e.pointerId === mainP) { mainP = null; releaseMain(); }
-    else if (e.pointerId === secondP) { secondP = null; releaseSecond(); }
+    // a second finger that swiped throws no style trick as it lifts
+    else if (e.pointerId === secondP) { secondP = null; swiped ? secondHeld = false : releaseSecond(); }
 };
 addEventListener('pointerup', pointerUp);
 addEventListener('pointercancel', pointerUp);
 const MAIN_KEYS = ['Space', 'ArrowUp', 'KeyW'], SECOND_KEYS = ['ShiftLeft', 'ShiftRight', 'ArrowDown', 'KeyS'];
+// swipes from the keyboard, laid out round K: I up, J back, K down, L forward, and U O N , between them
+const SWIPE_KEYS = {KeyL: 0, KeyO: 1, KeyI: 2, KeyU: 3, KeyJ: 4, KeyN: 5, KeyK: 6, Comma: 7};
+function keySwipe(dir)
+{
+    if (!airSwipe(dir)) return;
+    const x = mainCanvasSize.x/2, y = mainCanvasSize.y*.78, a = dir*PI/4;
+    swipeFx.push({x0: x - cos(a)*40, y0: y + sin(a)*40, x1: x + cos(a)*40, y1: y - sin(a)*40, t: time});
+}
 addEventListener('keydown', e=>
 {
     if (e.repeat) return;
@@ -2500,6 +2617,7 @@ addEventListener('keydown', e=>
     if (atFork && (e.code == 'ArrowUp' || e.code == 'KeyW')) chooseLine(1);
     else if (atFork && (e.code == 'ArrowDown' || e.code == 'KeyS')) chooseLine(-1);
     else if (e.code == 'KeyT' || e.code == 'KeyE') fireTurbo();
+    else if (e.code in SWIPE_KEYS) keySwipe(SWIPE_KEYS[e.code]);
     else if (MAIN_KEYS.includes(e.code) || e.code == 'Enter') { if (!tapScreen()) pressMain(); }
     else if (SECOND_KEYS.includes(e.code)) pressSecond();
     else if (e.code == 'KeyF') { pressSecond(); secondT = 0; releaseSecond(); }
@@ -2622,6 +2740,8 @@ function drawHUD()
             rrect(W/2 - 60, H*.16 + 46, w, 5, 2.5, '#ffd23a');
         }
     }
+    if (state == 'ride') drawAirTricks(W, H);
+    drawSwipes();
     // each trick pops up as it lands
     // below the combo, newest on top, older ones sliding down
     const popY = max(H*.3, H*.16 + 74), land = W > H;
@@ -2653,16 +2773,45 @@ function drawHUD()
     });
 
     // first runs: show the controls as they are needed
-    if (state == 'ride' && tutorial < 3)
+    if (state == 'ride' && (tutorial < 3 || !everSwiped && swipeTutorial < 3))
     {
         let hint = '';
         if (!everJumped && hintT > 1.5) hint = 'TAP TO JUMP';
         else if (!everFlipped && !grounded && !grinding && airT > .2) hint = 'HOLD TO BACKFLIP';
+        else if (!everSwiped && hintT > 20 && !grounded && !grinding && airT > .2) hint = 'SWIPE IN THE AIR FOR TRICKS';
         else if (everFlipped && hintT < 60 && !grounded && !grinding && airT > .2) hint = 'SECOND FINGER: HOLD TO FRONT FLIP';
         if (hint) txt(hint, W/2, bottom - 40, fitSize(hint, 20, W - 30), 'rgba(255,255,255,' + (.75 + .25*sin(time*6)) + ')', 'center', 900);
     }
     if (state == 'results' && resultsT > .4) drawResults(W, H);
     ctx.restore();
+}
+
+// the tricks in this air so far and the one under way, scored when the wheels touch
+function drawAirTricks(W, H)
+{
+    if (grounded || grinding) return;
+    const parts = [], n = abs(rot) > TAU*.7 ? max(1, round(abs(rot)/TAU)) : 0;
+    if (n) parts.push((n > 1 ? n + 'x ' : '') + (rot > 0 ? 'BACKFLIP' : 'FRONTFLIP'));
+    for (const t of stylesDone) parts.push(t.name);
+    if (style) parts.push(style.name + '...');
+    if (!parts.length) return;
+    const s = parts.join('  +  ');
+    txt(s, W/2, H*.16 + 54, fitSize(s, 18, W - 30), '#9dffb0', 'center', 900);
+}
+// each swipe leaves a short fading streak with an arrow head, so the player sees it was taken
+function drawSwipes()
+{
+    while (swipeFx.length && time - swipeFx[0].t > .4) swipeFx.shift();
+    ctx.lineCap = 'round';
+    for (const f of swipeFx)
+    {
+        const a = 1 - (time - f.t)/.4, d = atan2(f.y1 - f.y0, f.x1 - f.x0);
+        ctx.strokeStyle = 'rgba(160,255,190,' + .8*a + ')';
+        ctx.lineWidth = 3 + 5*a;
+        ctx.beginPath(); ctx.moveTo(f.x0, f.y0); ctx.lineTo(f.x1, f.y1);
+        for (const s of [-1, 1]) { ctx.moveTo(f.x1, f.y1); ctx.lineTo(f.x1 - cos(d + s*.5)*16, f.y1 - sin(d + s*.5)*16); }
+        ctx.stroke();
+    }
 }
 
 // the eBike battery: fills with tricks and orbs, drains through a turbo
@@ -2749,6 +2898,7 @@ function drawTitle(W, H, top, bottom)
         ['TAP', 'jump'],
         ['HOLD IN THE AIR', 'backflip'],
         ['SECOND FINGER', 'hold: front flip  ·  tap: style trick'],
+        ['SWIPE IN THE AIR', 'eight ways, eight tricks · throw them in a flip'],
         ['SWIPE UP OR DOWN AT A FORK', 'berm off onto the high or low line'],
         ['FILL THE BATTERY', 'tap the bolt for eBike turbo'],
         ['LAND SQUARE TO THE SLOPE', 'chain tricks for a combo and a boost'],
@@ -2776,13 +2926,13 @@ function camButtons(W, top, bw, bh)
 
 function drawResults(W, H)
 {
-    const cw = min(W - 28, 360), ch = min(H - 20, 350), cx = (W - cw)/2, cy = H*.5 - ch/2;
+    const cw = min(W - 28, 360), ch = min(H - 20, 374), cx = (W - cw)/2, cy = H*.5 - ch/2;
     ctx.fillStyle = 'rgba(8,14,28,.4)'; ctx.fillRect(0, 0, W, H);
     rrect(cx, cy, cw, ch, 18, 'rgba(12,18,30,.88)', 'rgba(255,210,70,.55)');
     txt(crashReason || 'WIPEOUT', W/2, cy + 32, fitSize(crashReason || 'WIPEOUT', 22, cw - 30), '#ff8a6a', 'center', 900);
     txt(floor(dist).toLocaleString() + ' m', W/2, cy + 80, 44, '#fff', 'center', 900);
     txt(score.toLocaleString() + ' points', W/2, cy + 116, 18, '#ffd23a', 'center', 800);
-    const rows = [['Orbs', orbsGot], ['Flips', flipsTotal], ['Lines taken', lines], ['Best combo', bestCombo]];
+    const rows = [['Orbs', orbsGot], ['Flips', flipsTotal], ['Tricks', tricksTotal], ['Lines taken', lines], ['Best combo', bestCombo]];
     let y = cy + 152;
     for (const [a, b] of rows)
     {
@@ -2826,6 +2976,7 @@ function sfx(name, v=0)
     if (!s || !soundOn) return;
     if (name == 'orb') s.play(undefined, .7, 1 + v*.035);
     else if (name == 'land') s.play(undefined, .45 + v*.6);
+    else if (name == 'whoosh') s.play(undefined, 1, .85 + v*.07);
     else s.play();
 }
 function toggleSound()
@@ -2965,8 +3116,8 @@ const startRideFirst = startRide;
 startRide = function()
 {
     startRideFirst();
-    ++tutorial;
-    try { localStorage.setItem('dhside.tutorial', tutorial); } catch(e) {}
+    ++tutorial; ++swipeTutorial;
+    try { localStorage.setItem('dhside.tutorial', tutorial); localStorage.setItem('dhside.swipeTutorial', swipeTutorial); } catch(e) {}
 };
 
 // a test rider: jumps rocks and onto high rails, and flips on long flights when asked
@@ -2988,16 +3139,27 @@ function autopilotInput()
         if (window.__turboPilot && battery >= 1) fireTurbo();
         return;
     }
-    if (!window.__flipPilot) return;
+    if (!window.__flipPilot && !window.__trickPilot) return;
     // will this flight last long enough for a flip? look ahead along the arc
     if (airT < .05)
     {
         let x = px, y = py, wy = vy, t = 0;
         let wx = vx;
         while (t < 3 && (y > rideY(x) || t < .05)) { t += 1/60; if (wx > VMAX + 3) wx += (VMAX + 3 - wx)*damp(4, 1/60); x += wx/60; wy -= G_AIR/60; y += wy/60; }
-        window.__flipWanted = t > .95 && !rails.some(r=> x > r.x0 - 2 && x < r.x1 + 2);
+        const clear = !rails.some(r=> x > r.x0 - 2 && x < r.x1 + 2);
+        window.__flipWanted = window.__flipPilot && t > .95 && clear;
         window.__flipFront = window.__flipPilot == 'front';
+        window.__flightT = clear ? t : 0;
     }
+    // a swipe trick when the rest of the flight has room for it
+    if (window.__trickPilot && !style && !trickQueued && airT > .1 && window.__flightT)
+    {
+        let x = px, y = py, wx = vx, wy = vy, t = 0;
+        while (t < 3 && y > rideY(x)) { t += 1/60; if (wx > VMAX + 3) wx += (VMAX + 3 - wx)*damp(4, 1/60); x += wx/60; wy -= G_AIR/60; y += wy/60; }
+        const dir = Math.random()*8 | 0;
+        if (t > TRICKS[SWIPE_TRICKS[dir]].dur + .2) airSwipe(dir);
+    }
+    if (!window.__flipPilot) return;
     const want = window.__flipWanted && abs(rot) < TAU*.8;
     if (window.__flipFront) { secondHeld = want; secondT = want ? 1 : 0; mainHeld = false; }
     else { mainHeld = want; mainT = want ? 1 : 0; }
@@ -3027,12 +3189,15 @@ window.__mtb = {
     info: ()=> ({state, px, py, vx, vy, sp, grounded, grinding: !!grinding, ang, rot, airT, dist, score, orbsGot, flipsTotal,
         combo, comboPts, bestCombo, crashReason, runTime, fps: averageFPS, objects: engineObjects.length, chunks: chunks.size,
         OX, OY, night, dayT, boostT, grindDist, seed, ride: ride ? ride.dir : 0, riderZ: riderZ(), battery, turboT, turbos, lines,
-        forkAhead: !!forkAhead, laneWant, view: camViewName(), zoom: camZoomName(), splits: splits.map(s=> [s.x0|0, s.x1|0])}),
+        forkAhead: !!forkAhead, laneWant, view: camViewName(), zoom: camZoomName(), splits: splits.map(s=> [s.x0|0, s.x1|0]),
+        trickCounts, tricksTotal, style: style?.name, styleT}),
     start: ()=> startRide(),
-    sim: (n, until)=> { for (let k = 0; k < n; ++k) { gameUpdate(); gameUpdatePost(); if (until && until()) break; } return window.__mtb.info(); },
+    // steps the game by hand, a 60th of a second at a time, with the engine paused
+    sim: (n, until)=> { for (let k = 0; k < n; ++k) { timeDelta = 1/frameRate; time += timeDelta; ++frame; gameUpdate(); gameUpdatePost(); if (until && until()) break; } return window.__mtb.info(); },
     autopilot: (on, flips)=> { window.__autopilot = on; window.__flipPilot = flips; },
     press: ()=> pressMain(), release: ()=> releaseMain(),
     press2: ()=> pressSecond(), release2: ()=> releaseSecond(),
+    swipe: dir=> airSwipe(dir),
     teleport: x=> { trackEnsure(x + 720); placeRider(x); state = 'ride'; sp = 16; },
     setDay: t=> dayT = t,
     feats: ()=> feats.map(f=> ({type: f.type, x0: f.x0, x1: f.x1, x2: f.x2})),

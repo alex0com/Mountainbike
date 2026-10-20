@@ -216,6 +216,20 @@ Each phase is a separate commit (or a few), tested with the Phase 0 harness befo
   - Same for the second finger and front flips. At a fork, up/down flicks still pick the line.
   - Checked with real pointer events: hold + flick, a second flick after a pause, a long swipe, flick-then-hold, flick-and-lift, slow drift, zig-zag.
 
+- **Feedback round 3: built, partly re-tested.**
+  - *Day and night.* The time of day used to carry over from run to run, so a later run could start in the dark. Every run now starts in the morning, and night can't begin before 60 s of riding. Measured: dusk at about 106 s, night at about 136 s.
+  - *Seasons.* Longer zones: the first 1000–1500 m, later ones 1500–2600 m. Snowfields never start before 2080 m (about 90 s); the earliest over 400 seeds was 2.7 km. Alpine night snowfall waits until 90 s too.
+  - *Phase 2 drop-ins:*
+    - A banked bend onto a 34 m ledge, where the rider skids to about 7 m/s and the turbo pauses.
+    - A "SEND IT" sign and lip flags, then a 10–24 m sheer face onto a long landing (grade 1.0–1.15), with about 2 s of air.
+    - A tap at the lip pops higher and scores SEND IT; otherwise the rider rolls off automatically. Scores DROP-IN by height.
+    - About one per km.
+    - From the ledge until after the landing, the camera comes in close and low from in front of the rider, then eases back.
+  - *Banking:* every turn in the trail tilts, outside edge up.
+  - *Testing:*
+    - Standard suite: 0 crashes in no-flip, flips + tricks and turbo modes (about 100 km each), apart from one rock crash in one turbo run that didn't repeat. 60 new seeds with turbo (303 km): 0 crashes.
+    - Not yet re-run after the last two small edits: smaller lip flags, and resetting the braking flag on takeoff.
+
 ## Running the tools
 
     node tools/sim.mjs [--seeds 20] [--km 5] [--flips back|front] [--tricks] [--lanes rand|up|down|main] [--turbo] [--json out.json]

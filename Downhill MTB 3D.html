@@ -142,7 +142,7 @@ let ORB_V = 13;   // the launch speed air orbs are laid out for, measured from r
 
 let seed = 1, rnd, NA, NB, NC, NV;
 let ys = [], gapF = [], rails = [], rocks = [], orbs = [], signs = [], feats = [], gaps = [], pendingArcs = [];
-let genBase = 0, genGrade = 0, nextSignX = 500, lastLaunch = null;
+let genBase = 0, genGrade = 0, nextSignX = 500, lastLaunch = null, nextBooterX = 200;
 // forks: a high line up the hillside behind the trail and a low line down the slope in front, reached by berms
 const B_T = 22, LANE_UP = -10, LANE_DN = 9;
 let splits = [], openSplit = null, lastSplitEnd = 0, ride = null, noSign = [];
@@ -321,6 +321,23 @@ function addKicker(H, Lr, type='kicker')
     return f;
 }
 
+// a big kicker onto a long steep landing that falls away under the flight: the most air on the mountain.
+// The landing is laid out for a fast rider rolling off the lip, so anyone from a cruise to flat out comes down on its slope.
+function addBooter(d) { return addJump(2.2 + rnd()*.6 + d*.4, 7 + rnd()*1.5, .55 + rnd()*.12 + d*.08, 'booter', 17); }
+// a kicker with its own landing, steeper than the trail, laid along the flight off it
+function addJump(H, L, G, type='kicker', orbV=ORB_V)
+{
+    const f = addKicker(H, L, type), a = atan(f.lipSlope), v = VMAX + 2;
+    // a short knuckle off the lip, then the landing all the way past that flight
+    let x = 0, y = 0, vx = v*cos(a), vy = v*sin(a);
+    for (let t = 0; t < 6 && y > -.5 - G*x; t += 1/60) { x += vx/60; vy -= G_AIR/60; y += vy/60; }
+    genBase = f.lipY - .5; genGrade = G;
+    addRun(x + 12, G, 0);
+    f.x2 = genX(); f.orbV = orbV;
+    addRun(16, gradeTarget(clamp01(genX()/6000)), 0);
+    return f;
+}
+
 // a little lip then a drop onto a steep landing
 function addCliff(d)
 {
@@ -358,13 +375,14 @@ function addGap(d)
 // a rock or two, or a log, on a straight stretch
 function addRocks(d)
 {
-    // held at one grade, so no crest throws the bike up into them
-    const start = genX(), count = rnd() < .45 + d*.35 ? 2 : 1, len = 22;
+    // held at one grade, so no crest throws the bike up into them, with room before them for a flight off
+    // the last crest to come down
+    const start = genX(), count = rnd() < .45 + d*.35 ? 2 : 1, len = 30;
     addRun(len, genGrade);
     for (let k = 0; k < count; ++k)
     {
         // a pair sits close, so one jump clears both
-        const x = start + 6 + k*(3.6 + rnd()*1.4), log = rnd() < .3;
+        const x = start + 14 + k*(3.6 + rnd()*1.4), log = rnd() < .3;
         rocks.push(log ? {type: 'log', x, w: .3, h: .5, y: groundY(x)} :
             {type: 'rock', x, w: .65 + rnd()*.25, h: .7 + rnd()*.35 + d*.15, y: groundY(x), rot: rnd()*TAU});
     }
@@ -402,8 +420,9 @@ function orbLine(x0, n, sp)
 function orbArc(f)
 {
     const a = atan(f.lipSlope);
-    let x = f.x1, y = f.lipY + .9, vx = ORB_V*cos(a), vy = ORB_V*sin(a), t = 0, next = .14;
-    while (t < 2.4)
+    const v = f.orbV || ORB_V;
+    let x = f.x1, y = f.lipY + .9, vx = v*cos(a), vy = v*sin(a), t = 0, next = .14;
+    while (t < 3.2)
     {
         const dt = 1/60;
         t += dt; x += vx*dt; vy -= G_AIR*dt; y += vy*dt;
@@ -575,10 +594,20 @@ function genSection()
     if (rnd() < .5) orbLine(start + 6, 5 + (rnd()*5 | 0), 2.4);
     const r = rnd();
     if (x < 120) pendingArcs.push(lastLaunch = addKicker(1.15, 4.5));
+    // a big jump every few hundred metres, clear of the flight before it
+    else if (x > nextBooterX && !openSplit)
+    {
+        const reach = launchReach(lastLaunch);
+        if (reach > genX() - 4) addRun(reach - genX() + 10, genGrade);
+        addRun(14, min(genGrade, .35), 0);
+        pendingArcs.push(lastLaunch = addBooter(d));
+        nextBooterX = genX() + 150 + rnd()*190;
+    }
     else if (r < .2)
     {
-        const big = rnd() < .35 + d*.3;
-        pendingArcs.push(lastLaunch = addKicker(big ? 1.6 + rnd()*.3 : 1.1 + rnd()*.3, big ? 6 : 4.5));
+        // the bigger ones come with a landing of their own, so they carry real air
+        const big = rnd() < .45 + d*.3;
+        pendingArcs.push(lastLaunch = big ? addJump(1.5 + rnd()*.4, 5.5 + rnd(), .42 + rnd()*.08, 'kicker', 15) : addKicker(1.1 + rnd()*.3, 4.5));
     }
     else if (r < .32) pendingArcs.push(lastLaunch = addCliff(d));
     else if (r < .45 && x > 280 && !openSplit)
@@ -623,7 +652,7 @@ function trackInit(s)
     NA = makeNoise(rnd); NB = makeNoise(rnd); NC = makeNoise(rnd); NV = makeNoise(rnd);
     ys = []; gapF = []; rails = []; rocks = []; orbs = []; signs = []; feats = []; gaps = []; pendingArcs = [];
     splits = []; openSplit = null; lastSplitEnd = 0; ride = null; noSign = []; gullies = []; arches = [];
-    nextSignX = 500; lastLaunch = null;
+    nextSignX = 500; lastLaunch = null; nextBooterX = 200;
     // the summit: the back of the peak rising from the left, a flat top to stand on, then the drop in
     genBase = -14; genGrade = -.6;
     pushY(genBase);
@@ -1338,6 +1367,8 @@ const SWIPE_TRICKS = [];
 for (const t of Object.values(TRICKS)) SWIPE_TRICKS[t.dir] = t.name;
 // a second finger tap throws these in turn
 const STYLE_CYCLE = ['SUPERMAN', 'NO-HANDER', 'CAN-CAN', 'HEEL CLICKER'];
+// how long the flights of a run last, in half seconds, for the test rides
+let airHist = [0, 0, 0, 0, 0, 0], hardLandings = 0;
 let trickQueued = null, trickBuf = 0, trickBufName = '', comboKeys = [], trickCounts = {}, tricksTotal = 0, everSwiped = false;
 const countTrick = (name, n=1)=> trickCounts[name] = (trickCounts[name] || 0) + n;
 
@@ -1481,11 +1512,12 @@ function land(gy)
     const perfect = abs(err) < .22;
     sp = vx*cos(th) + vy*sin(th);
     sp = max(VMIN, sp*(perfect ? 1 : 1 - abs(err)*.3)*(impact > 22 ? .8 : 1));
-    if (impact > 22) showMessage('HARD LANDING', '', hsl(.07,.9,.6));
+    if (impact > 22) { showMessage('HARD LANDING', '', hsl(.07,.9,.6)); ++hardLandings; }
     py = gy; grounded = true; vyGround = sp*sin(th); trickQueued = null;
     landVis = err; ang = th; angVel = 0;
     suspFV += impact*.5; suspRV += impact*.55;
     compressKick = min(1, impact*.08);
+    if (airT > .3) ++airHist[min(5, floor(airT*2))];
     if (airT > .3)
     {
         sfx(impact > 9 ? 'landHard' : 'land', clamp01(impact/10));
@@ -1995,7 +2027,7 @@ function newRun(s)
     state = 'title';
     placeRider(START_X);
     runTime = dist = score = orbsGot = orbStreak = 0;
-    bestCombo = 0; bestComboName = ''; flipsTotal = 0; grindDist = 0; crashReason = ''; trickCounts = {}; tricksTotal = 0;
+    bestCombo = 0; bestComboName = ''; flipsTotal = 0; grindDist = 0; crashReason = ''; trickCounts = {}; tricksTotal = 0; airHist = [0, 0, 0, 0, 0, 0]; hardLandings = 0;
     battery = 0; turboT = 0; turbos = 0; lines = 0; pz = yawV = leanV = bermY = 0; camZ = camB = 0;
     messages.length = 0; trickPops.length = 0; swipeFx.length = 0;
     riderView = new RiderView;
@@ -2544,8 +2576,8 @@ addEventListener('pointerdown', e=>
             { sfx('click'); b.act(); return; }
     if (tapScreen()) return;
     ptStart.set(e.pointerId, {x: e.clientX, y: e.clientY, t: e.timeStamp});
-    // at a fork a first finger on the ground may be a swipe, so it waits a moment before it jumps
-    if (mainP === null && !swipeP && state == 'ride' && forkAhead && !ride && (grounded || grinding)) swipeP = {id: e.pointerId, t: time};
+    // at a fork a first finger that would jump may be a swipe, so it waits a moment before it does
+    if (mainP === null && !swipeP && state == 'ride' && forkAhead && !ride && (grounded || grinding || offGroundT < .14)) swipeP = {id: e.pointerId, t: time};
     else if (mainP === null && !swipeP) { mainP = e.pointerId; pressMain(); }
     else if (secondP === null) { secondP = e.pointerId; pressSecond(); }
 });
@@ -2556,25 +2588,25 @@ addEventListener('pointermove', e=>
     const p0 = ptStart.get(e.pointerId);
     if (!p0 || swipeDone.has(e.pointerId) || state != 'ride') return;
     const dx = e.clientX - p0.x, dy = e.clientY - p0.y;
-    // a flick throws a trick, in whichever of eight directions it went; on the ground at a fork it picks the line
-    const atFork = forkAhead && !ride && (grounded || grinding);
-    if (!atFork)
+    // coming up to a fork, up or down picks the line, in the air as well as on the ground
+    if (forkAhead && !ride && abs(dy) > 24 && abs(dy) > abs(dx)*1.1)
     {
-        if (hypot(dx, dy) < SWIPE_PX || e.timeStamp - p0.t > SWIPE_MS) return;
-        swipeDone.add(e.pointerId);
-        if (airSwipe(round(atan2(-dy, dx)/(PI/4)))) swipeFx.push({x0: p0.x, y0: p0.y, x1: e.clientX, y1: e.clientY, t: time});
-        // the finger that flicked is not holding a flip
+        chooseLine(dy < 0 ? 1 : -1, e.pointerId);
+        swipeFx.push({x0: p0.x, y0: p0.y, x1: e.clientX, y1: e.clientY, t: time, line: true});
+        // a finger that turned out to be a swipe is not holding a flip
         if (e.pointerId === mainP) { mainHeld = false; pressInAir = false; }
         if (e.pointerId === secondP) secondHeld = false;
         return;
     }
-    if (!forkAhead || ride) return;
-    if (abs(dy) > 24 && abs(dy) > abs(dx)*1.1)
-    {
-        chooseLine(dy < 0 ? 1 : -1, e.pointerId);
-        // a finger that turned out to be a swipe is not holding a flip
-        if (e.pointerId === mainP) { mainHeld = false; pressInAir = false; }
-    }
+    // anywhere else a flick throws a trick, in whichever of eight directions it went
+    if (hypot(dx, dy) < SWIPE_PX || e.timeStamp - p0.t > SWIPE_MS) return;
+    swipeDone.add(e.pointerId);
+    if (airSwipe(round(atan2(-dy, dx)/(PI/4)))) swipeFx.push({x0: p0.x, y0: p0.y, x1: e.clientX, y1: e.clientY, t: time});
+    // a finger held back at a fork in case it swiped, and it did, sideways: it jumps, and the trick waits for the air
+    if (swipeP && e.pointerId === swipeP.id) { swipeP = null; mainP = e.pointerId; pressMain(); }
+    // the finger that flicked is not holding a flip
+    if (e.pointerId === mainP) { mainHeld = false; pressInAir = false; }
+    if (e.pointerId === secondP) secondHeld = false;
 });
 function chooseLine(dir, id)
 {
@@ -2806,7 +2838,7 @@ function drawSwipes()
     for (const f of swipeFx)
     {
         const a = 1 - (time - f.t)/.4, d = atan2(f.y1 - f.y0, f.x1 - f.x0);
-        ctx.strokeStyle = 'rgba(160,255,190,' + .8*a + ')';
+        ctx.strokeStyle = f.line ? (f.y1 < f.y0 ? 'rgba(255,214,70,' : 'rgba(90,230,215,') + .9*a + ')' : 'rgba(160,255,190,' + .8*a + ')';
         ctx.lineWidth = 3 + 5*a;
         ctx.beginPath(); ctx.moveTo(f.x0, f.y0); ctx.lineTo(f.x1, f.y1);
         for (const s of [-1, 1]) { ctx.moveTo(f.x1, f.y1); ctx.lineTo(f.x1 - cos(d + s*.5)*16, f.y1 - sin(d + s*.5)*16); }
@@ -3190,7 +3222,7 @@ window.__mtb = {
         combo, comboPts, bestCombo, crashReason, runTime, fps: averageFPS, objects: engineObjects.length, chunks: chunks.size,
         OX, OY, night, dayT, boostT, grindDist, seed, ride: ride ? ride.dir : 0, riderZ: riderZ(), battery, turboT, turbos, lines,
         forkAhead: !!forkAhead, laneWant, view: camViewName(), zoom: camZoomName(), splits: splits.map(s=> [s.x0|0, s.x1|0]),
-        trickCounts, tricksTotal, style: style?.name, styleT}),
+        trickCounts, tricksTotal, style: style?.name, styleT, airHist, hardLandings}),
     start: ()=> startRide(),
     // steps the game by hand, a 60th of a second at a time, with the engine paused
     sim: (n, until)=> { for (let k = 0; k < n; ++k) { timeDelta = 1/frameRate; time += timeDelta; ++frame; gameUpdate(); gameUpdatePost(); if (until && until()) break; } return window.__mtb.info(); },

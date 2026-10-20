@@ -193,6 +193,22 @@ Each phase is a separate commit (or a few), tested with the Phase 0 harness befo
   - A trick starts only once the bike has been in the air for 0.1 s. A swipe on the ground waits 0.3 s for the takeoff. A trick that hasn't got going on a hop under 0.4 s is quietly dropped. Without these, a swipe during a crest hop too small to see would crash the rider at once.
   - A swipe on the ground (away from a fork) still jumps, as any press does, so a ground flick works as "jump and trick".
 
+- **Feedback round 1: done.**
+  - *Fork choice by swipe was broken.* At a fork, up/down only picked the line while the bike was touching the ground. The approach usually includes jumps and crest hops, so most swipes became tricks. Now, within the fork window, up/down always picks the line, in the air too. Other directions still throw tricks. The line choice leaves an arrow in the line's colour.
+  - *Bigger jumps.*
+    - New **big kicker**: a 2.2–3 m ramp onto a long steep landing (grade .55–.75) laid along the flight of a fast rider. Every speed lands on the slope. Air time is about 1.5–3 s. One every 150–340 m, the first at about 200 m.
+    - The larger regular kickers now get their own landing (grade .42–.5) too.
+    - Rock sections start 14 m in, so a crest before them can't throw the bike into a rock.
+    - Air time per km, before → after (no flips):
+
+      | Flight length | Before | After |
+      |---|---|---|
+      | 1.5–2 s | 1.6 | 0.8 |
+      | 2–2.5 s | 1.7 | 1.4 |
+      | 2.5 s or more | 0.2 | 2.0 |
+
+      Time in flights of 1.5 s or longer: about 7 → 10 s per km. Hard landings: 0.58 → 0.35 per km. Crashes: 0 in every mode.
+
 ## Running the tools
 
     node tools/sim.mjs [--seeds 20] [--km 5] [--flips back|front] [--tricks] [--lanes rand|up|down|main] [--turbo] [--json out.json]

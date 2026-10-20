@@ -2,7 +2,7 @@
 // what happened. The engine is paused and the game stepped by hand, so a run is the same every time.
 //
 //   node tools/sim.mjs [--seeds 20] [--km 5] [--flips back|front] [--tricks] [--lanes rand|up|down|main] [--turbo]
-//                      [--from 1] [--json out.json]
+//                      [--from 1] [--json out.json] [--game other.html]
 import {createRequire} from 'node:module';
 import {execSync} from 'node:child_process';
 import {pathToFileURL, fileURLToPath} from 'node:url';
@@ -19,7 +19,8 @@ const has = k=> args.includes('--' + k);
 const SEEDS = +opt('seeds', 20), KM = +opt('km', 5), FROM = +opt('from', 1);
 const FLIPS = opt('flips', false), TRICKS = has('tricks'), LANES = opt('lanes', 'rand'), TURBO = has('turbo');
 const here = path.dirname(fileURLToPath(import.meta.url));
-const game = pathToFileURL(path.join(here, '..', 'Downhill MTB 3D.html')).href;
+// --game rides another copy of the page, for comparing against an older version
+const game = pathToFileURL(opt('game', false) || path.join(here, '..', 'Downhill MTB 3D.html')).href;
 
 const browser = await playwright.chromium.launch({
     args: ['--use-gl=swiftshader', '--enable-unsafe-swiftshader', '--mute-audio']});
@@ -44,11 +45,13 @@ for (let seed = FROM; seed < FROM + SEEDS; ++seed)
         const crashes = [], goal = KM*1000;
         // the run's totals are kept through a teleport, so they are read once at the end
         let ridden = 0, segStart = m.info().px, frames = 0, sinceTeleport = 99;
-        const stats = {flips: 0, score: 0, lines: 0, turbos: 0, orbs: 0, tricks: {}};
+        const stats = {flips: 0, score: 0, lines: 0, turbos: 0, orbs: 0, tricks: {}, airs: [0, 0, 0, 0, 0, 0]};
         const bank = i=>
         {
             stats.flips += i.flipsTotal; stats.score += i.score; stats.lines += i.lines; stats.turbos += i.turbos; stats.orbs += i.orbsGot;
             for (const [k, v] of Object.entries(i.trickCounts || {})) stats.tricks[k] = (stats.tricks[k] || 0) + v;
+            (i.airHist || []).forEach((v, k)=> stats.airs[k] += v);
+            stats.hard = (stats.hard || 0) + (i.hardLandings || 0);
         };
         while (ridden < goal && frames < 400000)
         {
@@ -84,6 +87,11 @@ for (const r of all)
 const n = Object.values(reasons).reduce((a, b)=> a + b, 0);
 console.log(`\n${km.toFixed(1)} km over ${all.length} seeds, ${n} crashes (${(n/km).toFixed(2)} per km)`);
 for (const [k, v] of Object.entries(reasons).sort((a, b)=> b[1] - a[1])) console.log(`  ${v}  ${k}`);
+// flights longer than .3 s, by how long they lasted
+const airs = [0, 0, 0, 0, 0, 0];
+for (const r of all) r.stats.airs.forEach((v, k)=> airs[k] += v);
+console.log('hard landings per km: ' + (all.reduce((s, r)=> s + (r.stats.hard || 0), 0)/km).toFixed(2));
+console.log('air time per km:  ' + ['<.5s', '.5-1s', '1-1.5s', '1.5-2s', '2-2.5s', '2.5s+'].map((l, k)=> l + ' ' + (airs[k]/km).toFixed(1)).join('   '));
 if (Object.keys(tricks).length)
 {
     console.log('tricks landed:');

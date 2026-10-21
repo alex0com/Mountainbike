@@ -326,6 +326,28 @@ Each phase is a separate commit (or a few), tested with the Phase 0 harness befo
     - Lines with features: about 96% as before.
     - Regression over 500 km (pro, high, low lanes, plain, turbo): 0 crashes. Fork and flick tests pass.
 
+- **Performance and smoothness: done.**
+  - **Findings:**
+    - It already used WebGL2 (LittleJS 3D plugin), with frustum culling and automatic instancing. Repeated draws of a mesh are batched by the engine, the rider's parts included, so batching the rider by hand gained nothing and was taken back out.
+    - About 80–125 draws and 85k–235k triangles per frame: ground about half, trees and rocks 35–45%, shadows about a quarter.
+    - Game logic about 0.1 ms per frame.
+  - **The hitch:** each new 64 m stretch of ground took 15 ms on average, up to 51 ms, all in one frame, about every 3 s.
+    - Values that only change along the trail are now worked out per column.
+    - The lighting comes straight from the grid, using the neighbouring stretches' heights at each edge (the engine's generic smoothing was 45% of the cost).
+    - The build runs as small steps, at most 3 ms of each frame. Nothing enters the scene until the last step.
+    - The sky's day colours are recoloured in place every 12 frames instead of rebuilt every other frame.
+    - **Result over three 3 km rides:** frames over 16 ms 5 → 0, over 8 ms 38–41 → 1–5, worst frame 19–22 → 9–10 ms. The few remaining spikes are garbage-collection pauses spread across small steps.
+  - **The bike's shake:**
+    - The body and rider now ride the ground smoothed over 2 m, kept within 6 cm of the real ground so lips and drops still read.
+    - The wheels follow the real ground: the axles move, and the fork and swingarm with them.
+    - The suspension springs are driven by the smoothed body and now extend in the air too.
+    - **Result:** body-height buzz above 8 Hz 1.39 → 0.46 mm; pitch buzz 0.026° → 0.010°. Physics unchanged.
+  - **Variable timestep:** the game steps once per screen frame by its real length (`setEngineVariableStep`), so it moves evenly on 90/120 Hz screens. The riding itself still runs in steps of at most 1/60 s, so a slow frame can't skip past a rock. 4 seeds × 3 km at 60, 120, 30 and uneven 40–110 fps: 0 crashes, flights and ride times alike.
+  - **Quality step-down:** looks after 1.2 s, on the summit as well as riding, and drops two levels at once below 28 fps. Before, it took 3 s per level and only while riding.
+  - **Not done:** thinning distant ground rows. Measured at about 7% of triangles, not worth the visual cost.
+  - **Visuals:** side-by-side shots at the title, SIDE, CHASE, 3/4 and HIGH show the same quality. Pixel differences come from the camera following the smoothed body (a pixel's shift), not from shading.
+  - **Regression:** 500 km over five modes and lanes: 0 crashes. Fork and flick tests pass.
+
 ## Running the tools
 
     node tools/sim.mjs [--seeds 20] [--km 5] [--flips back|front] [--tricks] [--lanes rand|up|down|main] [--turbo] [--json out.json] [--salt n] [--game other.html]

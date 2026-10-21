@@ -78,6 +78,9 @@ setTouchPinchWheel(false);
 setSoundIgnoreSilentSwitch(true);
 setSoundVolume(.5);
 setCanvasClearColor(hsl(.6,.3,.2));
+// the game steps once each frame the screen draws, by however long the frame took, so it moves evenly on a 90 or
+// 120 Hz screen too rather than in a fixed 60 a second
+setEngineVariableStep(true);
 
 // ---------- seeded random and noise
 function mulberry(seed)
@@ -1129,56 +1132,83 @@ function sightLift(rx, ry, rz, cx, cy, cz)
     return min(need - cy, 25);
 }
 
-function buildChunkMesh(ch)
+// a chunk's ground, built a few rows at a time (each yield is a place the work can stop until the next frame).
+// What changes only along the trail is worked out once a column; the lighting comes straight off the grid, with a
+// column beyond each end so it runs on smoothly into the chunks either side.
+function* chunkMeshSteps(ch)
 {
-    const x0 = ch.x0, y0 = ch.y0, cols = CHN + 1, R = ROWS.length;
-    const pts = [], col = [], ind = [], c = [0,0,0], h = [0,0,0], r2 = [0,0,0], fc = [0,0,0], cv = {}, tc = [0,0,0];
-    const bs = branchesNear(x0, x0 + CH);
+    const x0 = ch.x0, y0 = ch.y0, cols = CHN + 1, R = ROWS.length, W = cols + 2, cv = {};
+    const bs = branchesNear(x0 - DX, x0 + CH + DX);
+    const C = [];
+    for (let i = -1; i <= cols; ++i)
+    {
+        const x = x0 + i*DX, c = {x, p: groundY(x), s: smoothY(x), g: gapAt(x)};
+        c.trail = palMix(x, 'trail', [0,0,0]); c.hill = palMix(x, 'hill', [0,0,0]); c.hill2 = palMix(x, 'hill2', [0,0,0]);
+        c.rock = palMix(x, 'rock', [0,0,0]); c.face = palMix(x, 'face', [0,0,0]);
+        c.alpine = MT.snow > 5 ? 0 : biomeW(x, BWS).alpine;
+        C.push(c);
+    }
+    yield;
+    // the points, every row of every column including the extra two, and the colors of the chunk's own
+    const P = new Array(W*R), col = [];
     for (let j = 0; j < R; ++j)
     {
         const [z, kind] = ROWS[j];
-        for (let i = 0; i < cols; ++i)
+        for (let q = 0; q < W; ++q)
         {
-            const x = x0 + i*DX, p = groundY(x), s = smoothY(x), g = gapAt(x);
-            carve(bs, x, z, rowY(kind, z, x, p, s, g) - gullyCut(x, z, kind), cv);
-            const y = cv.y;
+            const c = C[q], x = c.x;
+            carve(bs, x, z, rowY(kind, z, x, c.p, c.s, c.g) - gullyCut(x, z, kind), cv);
             // bent sideways with the weave
-            pts.push(vec3(x - x0, y - y0, wz(x, z)));
-            const nCol = col.length;
+            P[j*W + q] = vec3(x - x0, cv.y - y0, wz(x, z));
+            if (q == 0 || q == W - 1) continue;
             const n = NV(x*.21, z*.21)*.07 + NV(x*.05, z*.05 + 9)*.08;
+            let color;
             if (kind == 'trail' || kind == 'edge')
             {
-                palMix(x, 'trail', c);
-                const k = (kind == 'edge' ? .62 : abs(z) > 2 ? .84 : 1.04) + n;
-                col.push(new Color(c[0]*k, c[1]*k, c[2]*k));
+                const t = c.trail, k = (kind == 'edge' ? .62 : abs(z) > 2 ? .84 : 1.04) + n;
+                color = new Color(t[0]*k, t[1]*k, t[2]*k);
             }
             else if (kind == 'front' || kind == 'drop')
             {
                 // the slope falling away in front: hillside with rocky bands, shaded as it drops
-                palMix(x, 'hill', h); palMix(x, 'face', fc);
-                const rockW = sstep(fbm(NC, x*.03 + 3, z*.05, 2)*2.2 + .1), k = (1.02 - min(.35, (z - 5.6)*.014)) + n;
-                col.push(new Color(mix(h[0], fc[0], rockW)*k, mix(h[1], fc[1], rockW)*k, mix(h[2], fc[2], rockW)*k));
+                const h = c.hill, fc = c.face, rockW = sstep(fbm(NC, x*.03 + 3, z*.05, 2)*2.2 + .1), k = (1.02 - min(.35, (z - 5.6)*.014)) + n;
+                color = new Color(mix(h[0], fc[0], rockW)*k, mix(h[1], fc[1], rockW)*k, mix(h[2], fc[2], rockW)*k);
             }
             else
             {
-                palMix(x, 'hill', h); palMix(x, 'hill2', r2); palMix(x, 'rock', c);
-                const rr = -z - 2.6, t = sstep(fbm(NC, x*.02, z*.04, 2)*1.6 + .5);
+                const h = c.hill, r2 = c.hill2, rk = c.rock, rr = -z - 2.6, t = sstep(fbm(NC, x*.02, z*.04, 2)*1.6 + .5);
                 const rockW = sstep(fbm(NC, x*.015 + 7, z*.03, 2)*2.2 + rr/90*.7 - .35);
                 let cr = mix(h[0], r2[0], t), cg = mix(h[1], r2[1], t), cb = mix(h[2], r2[2], t);
-                cr = mix(cr, c[0], rockW); cg = mix(cg, c[1], rockW); cb = mix(cb, c[2], rockW);
+                cr = mix(cr, rk[0], rockW); cg = mix(cg, rk[1], rockW); cb = mix(cb, rk[2], rockW);
                 // snow lies on the high slopes of alpine country too
-                const snowW = (MT.snow > 5 ? 0 : biomeW(x, BWS).alpine)*sstep((rr - 45)/30)*.8;
+                const snowW = c.alpine*sstep((rr - 45)/30)*.8;
                 cr = mix(cr, .92, snowW); cg = mix(cg, .94, snowW); cb = mix(cb, .98, snowW);
                 const k = 1 + n;
-                col.push(new Color(cr*k, cg*k, cb*k));
+                color = new Color(cr*k, cg*k, cb*k);
             }
             if (cv.w > 0)
             {
-                palMix(x, 'trail', tc);
-                const cc = col[nCol], k = .9 + n - cv.lift*.09;
-                col[nCol] = new Color(mix(cc.r, tc[0]*k, cv.w), mix(cc.g, tc[1]*k, cv.w), mix(cc.b, tc[2]*k, cv.w));
+                const t = c.trail, k = .9 + n - cv.lift*.09;
+                color = new Color(mix(color.r, t[0]*k, cv.w), mix(color.g, t[1]*k, cv.w), mix(color.b, t[2]*k, cv.w));
             }
+            col.push(color);
         }
+        if (j % 2) yield;
+    }
+    // smooth normals from the neighbours along and across, and the chunk's own points
+    const pts = [], nrm = [], ind = [];
+    for (let j = 0; j < R; ++j)
+    {
+        const ja = max(0, j - 1)*W, jb = min(R - 1, j + 1)*W;
+        for (let q = 1; q < W - 1; ++q)
+        {
+            const l = P[j*W + q - 1], r = P[j*W + q + 1], u = P[ja + q], d = P[jb + q];
+            const tx = r.x - l.x, ty = r.y - l.y, tz = r.z - l.z, bx = d.x - u.x, by = d.y - u.y, bz = d.z - u.z;
+            const nx = ty*bz - tz*by, ny = tz*bx - tx*bz, nz = tx*by - ty*bx, n = hypot(nx, ny, nz);
+            pts.push(P[j*W + q]);
+            nrm.push(n > 1e-9 ? vec3(nx/n, ny/n, nz/n) : vec3(0, 1, 0));
+        }
+        if (j % 10 == 9) yield;
     }
     for (let j = 0; j < R - 1; ++j)
     for (let i = 0; i < cols - 1; ++i)
@@ -1186,10 +1216,10 @@ function buildChunkMesh(ch)
         const a = j*cols + i, b = a + 1, d = a + cols + 1, e = a + cols;
         ind.push(a, b, d, a, d, e);
     }
-    const mesh = new Mesh().addTriangles(pts, ind, undefined, undefined, col);
-    mesh.computeNormals(true);
+    yield;
+    const mesh = new Mesh().addTriangles(pts, ind, nrm, undefined, col);
     mesh.doubleSided = true;
-    return mesh;
+    ch.mesh = mesh;
 }
 
 // an object placed at a world position, moved when the origin moves; z is across the trail, bent by the weave
@@ -1210,14 +1240,13 @@ function alongTrail(o, x, z=0)
 }
 const placeAnchor = o=> o.pos3D = vec3(o.ax - OX, o.ay - OY, o.az);
 
-function buildChunk(i)
+// a chunk of the world, built a step at a time; nothing is put into the scene until the last step, so a chunk
+// given up on part way leaves nothing behind
+function* buildChunk(i)
 {
     const x0 = i*CH, ch = {i, x0, y0: groundY(x0), objs: [], sets: []};
     const rr = mulberry(seed*131 + i*977 + 5);
-    ch.mesh = buildChunkMesh(ch);
-    const ground = anchorW(new EngineObject3D(vec3(), ch.mesh), x0, ch.y0, 0);
-    ground.castShadow = false;
-    ch.objs.push(ground);
+    yield* chunkMeshSteps(ch);
 
     // trees and bushes on the hillside behind, a few rocks and bushes on the slope in front
     const w = biomeW(x0 + CH/2, {}), lists = {pine: [], snowPine: [], broad: [], bush: [], rock: [], crag: []};
@@ -1239,7 +1268,9 @@ function buildChunk(i)
         if (pick < wl.desert + wl.snow) kind = 'snowPine';
         else if (pick < wl.desert + wl.snow + wl.autumn*.75) kind = 'broad';
         lists[kind].push({x, y, z, s: sc*(kind == 'broad' ? .9 : 1), rot: rr()*TAU, t: rr()});
+        if (k % 40 == 39) yield;
     }
+    yield;
     // trees down the slope in front too, far enough below the trail that they never hide the rider
     for (let k = 0; k < nTrees*.6; ++k)
     {
@@ -1249,6 +1280,7 @@ function buildChunk(i)
         const kind = pick < wl.desert ? 'bush' : pick < wl.desert + wl.snow ? 'snowPine' : pick < wl.desert + wl.snow + wl.autumn*.75 ? 'broad' : 'pine';
         lists[kind].push({x, y, z, s: sc*(kind == 'bush' ? 1.3 : 1), rot: rr()*TAU, t});
     }
+    yield;
     for (let k = 0; k < 18; ++k)
     {
         const x = x0 + rr()*CH, z = -4.5 - rr()*60;
@@ -1278,6 +1310,10 @@ function buildChunk(i)
         const y = back ? hillY(x, z) - .6 : rowY('drop', z, x, groundY(x), smoothY(x), 0) - gullyCut(x, z, 'drop') - .4;
         lists.crag.push({x, y, z, s: sz, rot: rr()*TAU, t, tall: 1.2 + t*2.2});
     }
+    yield;
+    const ground = anchorW(new EngineObject3D(vec3(), ch.mesh), x0, ch.y0, 0);
+    ground.castShadow = false;
+    ch.objs.push(ground);
     const palAt = (x, key)=> palMix(x, key, [0,0,0]);
     const tint = {
         pine: t=> hsl(.0, 0, .82 + t.t*.3),
@@ -1333,13 +1369,27 @@ function destroyChunk(ch)
     chunks.delete(ch.i);
 }
 
-// keep the chunks around the camera built, one new one a frame so nothing stalls
+// keep the chunks around the camera built: the nearest one missing is built a step at a time within a slice of
+// each frame, so no frame stalls on it; all at once when the world is laid out fresh
+const CHUNK_MS = 3;
+let chunkJob = null;
 function updateChunks(camX, force, more=0)
 {
-    const a = floor((camX - 150)/CH), b = floor((camX + 400 + more)/CH);
-    let built = 0;
-    for (let i = max(0, a); i <= b; ++i)
-        if (!chunks.has(i) && (force || built++ < 1)) buildChunk(i);
+    const a = floor((camX - 150)/CH), b = floor((camX + 400 + more)/CH), until = performance.now() + (force ? 1e9 : CHUNK_MS);
+    if (chunkJob && (chunkJob.i < a - 1 || chunkJob.i > b + 2)) chunkJob = null;
+    while (performance.now() < until)
+    {
+        if (!chunkJob)
+        {
+            let i = max(0, a);
+            while (i <= b && chunks.has(i)) ++i;
+            if (i > b) break;
+            chunkJob = {i, steps: buildChunk(i)};
+        }
+        let done;
+        while (!(done = chunkJob.steps.next().done) && performance.now() < until);
+        if (done) chunkJob = null;
+    }
     for (const ch of [...chunks.values()])
         if (ch.i < a - 1 || ch.i > b + 2) destroyChunk(ch);
 }
@@ -1635,6 +1685,7 @@ function rebase(nx, ny)
 
 function resetScene()
 {
+    chunkJob = null;
     for (const ch of [...chunks.values()]) destroyChunk(ch);
     for (const r of ringObjs) r?.mesh.dispose?.();
     ringObjs = [];
@@ -1749,7 +1800,7 @@ function placeRider(x)
     px = x; py = baseY = groundY(x); vx = vy = 0; sp = 0;
     grounded = true; grinding = null; ang = atan(groundSlope(x)); angVel = 0; landVis = 0;
     airT = rot = 0; style = undefined; stylesDone = []; trickQueued = null; trickBuf = 0; boostT = 0;
-    suspF = suspR = .03; suspFV = suspRV = 0;
+    suspF = suspR = .03; suspFV = suspRV = 0; wheelOffF = wheelOffR = 0; visYWas = py; visVyWas = 0;
     combo = comboPts = comboT = 0; comboNames = []; comboKeys = [];
     ride = null; laneWant = 0; forkAhead = null; turboT = turboGrace = 0; bermStage = 0;
 }
@@ -1789,12 +1840,9 @@ function stepGround(dt)
         takeoff();
         return;
     }
-    const vyNew = (gy - py)/dt, accY = clampV((vyNew - vyGround)/dt, -40, 120);
+    const vyNew = (gy - py)/dt;
     vyGround = vyNew;
     px = nx; py = gy; vx = sp*c; vy = vyNew;
-    const sus = clampV(.035 + accY*.004, -.01, .16);
-    suspFV += (240*(sus - suspF) - 17*suspFV)*dt; suspF = clampV(suspF + suspFV*dt, -.02, .19);
-    suspRV += (240*(sus - suspR) - 17*suspRV)*dt; suspR = clampV(suspR + suspRV*dt, -.02, .19);
     // ride onto a rail that starts at the ground
     if (!onBranch(px)) for (const r of rails)
         if (r.mount && ox < r.x0 && px >= r.x0 && abs(railY(r, px) - py) < .7) { startGrind(r); return; }
@@ -2202,7 +2250,7 @@ function ik(a, c, l1, l2, hint)
 const RW = .37, AXLE_R = vec3(0, RW, .62), AXLE_F = vec3(0, RW, -.64), STEERER = vec3(0, .9, -.44);
 // turned about the steerer: the frame in a tailwhip, the bars in a barspin
 const aboutSteerer = (M, a)=> a ? M.copy().multiply(buildMatrix(STEERER, vec3(0, a, 0))).multiply(Matrix4.translation(STEERER.scale(-1))) : M;
-function drawBike(M, cF, cR, wheelSpin, crankA, whip=0, barA=0)
+function drawBike(M, cF, cR, wheelSpin, crankA, whip=0, barA=0, offF=0, offR=0)
 {
     // the frame and back wheel, the fork and front wheel, and the bars each have their own transform
     const MF = aboutSteerer(M, whip), MB = aboutSteerer(M, barA);
@@ -2211,7 +2259,8 @@ function drawBike(M, cF, cR, wheelSpin, crankA, whip=0, barA=0)
     const sag = (p)=> vec3(p.x, p.y - mix(cR, cF, clamp01((.62 - p.z)/1.26)), p.z);
     const bb = sag(vec3(0, .34, .05)), headTop = sag(vec3(0, 1.0, -.41)), headBot = sag(vec3(0, .8, -.46));
     const seatTop = sag(vec3(0, .93, .17)), stayTop = sag(vec3(0, .8, .13)), ttRear = sag(vec3(0, .86, .14));
-    const rA = AXLE_R, fA = AXLE_F;
+    // the axles ride up and down over the bumps, the fork and the swingarm with them
+    const rA = AXLE_R.add(vec3(0, offR/RS, 0)), fA = AXLE_F.add(vec3(0, offF/RS, 0));
     // wheels
     for (const [axle, disc] of [[rA, .07], [fA, -.07]])
     {
@@ -2398,7 +2447,7 @@ class RiderView extends EngineObject3D
         }
         const M = bikeMatrix(), t = trickAnim();
         this.M = M;
-        const pts = drawBike(M, suspF, suspR, wheelSpin, crank, t.whip, t.bar);
+        const pts = drawBike(M, suspF, suspR, wheelSpin, crank, t.whip, t.bar, wheelOffF, wheelOffR);
         const tuck = grounded || grinding ? 0 : clamp01(abs(angVel)/5)*.7;
         drawRider(M, pts, clamp01(compress + tuck + (t.spin || t.table ? .3*t.amt : 0)), t.name, t.amt);
     }
@@ -2502,37 +2551,9 @@ function gameUpdate()
     updateMessages(dt);
     if (state == 'ride')
     {
-        runTime += dt; hintT += dt;
-        offGroundT = grounded || grinding ? 0 : offGroundT + dt;
-        if (jumpQueued) jumpBuf = .15;
-        jumpQueued = false;
-        if (jumpBuf > 0 && (grounded || grinding || offGroundT < .14)) jumpNow();
-        else if (jumpBuf > 0) jumpBuf -= dt;
-        if (trickBuf > 0 && (grounded || grinding)) trickBuf -= dt;
-        if (!grounded && !grinding) airControl(dt);
-        const pxWas = px;
-        for (let k = 0; k < SUB && state == 'ride'; ++k)
-            grinding ? stepGrind(dt/SUB) : grounded ? stepGround(dt/SUB) : stepAir(dt/SUB);
-        if (state == 'ride')
-        {
-            updateFork(pxWas);
-            updateFeatures(dt, pxWas);
-            checkRocks();
-            collectOrbs();
-            if (turboGrace > 0) turboGrace -= dt;
-            if (turboT > 0 && !paceAt(px))
-            {
-                turboT -= dt;
-                battery = max(0, turboT/TURBO_LEN);
-                if (turboT <= 0) { battery = 0; turboGrace = 1.5; showMessage('BATTERY EMPTY', 'tricks and orbs recharge it', hsl(.5,.6,.75)); }
-            }
-            if (grounded && combo && (comboT -= dt) <= 0) bankCombo();
-            if (boostT > 0) boostT -= dt;
-            dist = max(dist, px - START_X);
-            // a new stretch of mountain
-            const z = zoneAt(px - 40);
-            if (z != zoneNow) { zoneNow = z; showMessage(BIOME_NAMES[biomeOf(z)], 'next stretch', hsl(.55,.6,.8)); }
-        }
+        // the ride in steps of no more than a 60th of a second, so a slow frame never lets the bike skip past a rock
+        const n = max(1, ceil(dt*60 - .01));
+        for (let k = 0; k < n && state == 'ride'; ++k) rideStep(dt/n);
     }
     else if (state == 'crash' || state == 'results')
     {
@@ -2551,9 +2572,54 @@ function gameUpdate()
     updateEffects(dt);
     audioUpdate(dt);
 }
+function rideStep(dt)
+{
+    runTime += dt; hintT += dt;
+    offGroundT = grounded || grinding ? 0 : offGroundT + dt;
+    if (jumpQueued) jumpBuf = .15;
+    jumpQueued = false;
+    if (jumpBuf > 0 && (grounded || grinding || offGroundT < .14)) jumpNow();
+    else if (jumpBuf > 0) jumpBuf -= dt;
+    if (trickBuf > 0 && (grounded || grinding)) trickBuf -= dt;
+    if (!grounded && !grinding) airControl(dt);
+    const pxWas = px;
+    for (let k = 0; k < SUB && state == 'ride'; ++k)
+        grinding ? stepGrind(dt/SUB) : grounded ? stepGround(dt/SUB) : stepAir(dt/SUB);
+    if (state != 'ride') return;
+    updateFork(pxWas);
+    updateFeatures(dt, pxWas);
+    checkRocks();
+    collectOrbs();
+    if (turboGrace > 0) turboGrace -= dt;
+    if (turboT > 0 && !paceAt(px))
+    {
+        turboT -= dt;
+        battery = max(0, turboT/TURBO_LEN);
+        if (turboT <= 0) { battery = 0; turboGrace = 1.5; showMessage('BATTERY EMPTY', 'tricks and orbs recharge it', hsl(.5,.6,.75)); }
+    }
+    if (grounded && combo && (comboT -= dt) <= 0) bankCombo();
+    if (boostT > 0) boostT -= dt;
+    dist = max(dist, px - START_X);
+    // a new stretch of mountain
+    const z = zoneAt(px - 40);
+    if (z != zoneNow) { zoneNow = z; showMessage(BIOME_NAMES[biomeOf(z)], 'next stretch', hsl(.55,.6,.8)); }
+}
 
+// the ground smoothed over a couple of metres, for the body of the bike to ride: the fine bumps and the corners
+// between the points of the ground are ironed out, but it never strays more than a few centimetres from the real
+// ground, so a lip or a drop just ahead pulls it down by no more than that
+const SMOOTH_W = [1, 2, 3, 4, 5, 4, 3, 2, 1].map(w=> w/25);
+function rideYs(x)
+{
+    const y = rideY(x);
+    let s = 0;
+    for (let k = 0; k < 9; ++k) s += rideY(x + (k - 4)*.25)*SMOOTH_W[k];
+    return y + clampV(s - y, -.06, .06);
+}
+let wheelOffF = 0, wheelOffR = 0, visYWas = 0, visVyWas = 0;
 function updateVisuals(dt)
 {
+    let offF = 0, offR = 0;
     if (grounded || grinding)
     {
         // the bike sits on both wheels, pitched by the ground between them
@@ -2561,12 +2627,16 @@ function updateVisuals(dt)
         if (grinding) { baseY = py; ang = atan(grinding.slope); }
         else
         {
-            // pitched by the ground under the wheels, but never toward a lip's drop the front wheel is already over
-            const xr = px - .62*c, xf = px + .64*c, yr = rideY(xr), yf = rideY(xf);
-            const sR = (py - yr)/max(.1, px - xr), sF = (yf - py)/max(.1, xf - px);
+            // the body rides the smoothed ground, pitched by it under the wheels, but never toward a lip's drop the
+            // front wheel is already over
+            const xr = px - .62*c, xf = px + .64*c, yc = rideYs(px), yr = rideYs(xr), yf = rideYs(xf);
+            const sR = (yc - yr)/max(.1, px - xr), sF = (yf - yc)/max(.1, xf - px);
             const target = atan(sF < sR - .5 ? sR : (sR + sF)/2);
             ang += wrapPI(target - ang)*damp(28, dt);
-            baseY = py;
+            baseY = yc;
+            // the wheels follow the real ground, up and down on the suspension under the steady body
+            const along = x=> baseY + (x - px)*tan(ang);
+            offF = clampV(rideY(xf) - along(xf), -.2, .2); offR = clampV(rideY(xr) - along(xr), -.2, .2);
         }
         airBlend += (0 - airBlend)*damp(12, dt);
         wheelSpin -= sp*dt/(RW*RS);
@@ -2576,6 +2646,14 @@ function updateVisuals(dt)
         airBlend += (1 - airBlend)*damp(8, dt);
         wheelSpin -= .7*hypot(vx, vy)*dt/(RW*RS);
     }
+    wheelOffF += (offF - wheelOffF)*damp(40, dt); wheelOffR += (offR - wheelOffR)*damp(40, dt);
+    // the suspension, loaded by the body's own ups and downs, compressed when it lands and stretched out in the air
+    const vis = grounded || grinding ? baseY : py, visVy = (vis - visYWas)/max(dt, 1e-4);
+    const acc = grounded || grinding ? clampV((visVy - visVyWas)/max(dt, 1e-4), -40, 120) : -14;
+    visYWas = vis; visVyWas = visVy;
+    const sus = clampV(.035 + acc*.004, -.01, .16);
+    suspFV += (240*(sus - suspF) - 17*suspFV)*dt; suspF = clampV(suspF + suspFV*dt, -.02, .19);
+    suspRV += (240*(sus - suspR) - 17*suspRV)*dt; suspR = clampV(suspR + suspRV*dt, -.02, .19);
     landVis *= 1 - damp(10, dt);
     // on a branch: across to its line, turned along it, leaned into the berms and riding up their walls
     let tYaw = 0, tLean = 0, tY = 0;
@@ -2745,12 +2823,16 @@ function updateSky(dt)
     const top = lerp3(a[1], b[1], t), hor = lerp3(a[2], b[2], t), bot = lerp3(a[3], b[3], t), sun = lerp3(a[4], b[4], t);
     const bright = mix(a[5], b[5], t), height = mix(a[6], b[6], t);
     night = clamp01(1 - (top[0] + top[1] + top[2])/.35);
-    // recolor the dome in place, no new mesh each frame
+    // recolor the dome in place now and then: the day turns slowly enough that it never shows
     const sky = render3D.sky;
-    if (sky && frame % 2 == 0)
+    if (sky && frame % 12 == 0)
     {
-        const T = col3(top), Hc = col3(hor), B = col3(bot);
-        sky.colors = sky.points.map(p=> p.y < 0 ? Hc.lerp(B, -p.y) : Hc.lerp(T, p.y));
+        if (sky.colors.length != sky.points.length) sky.colors = sky.points.map(()=> new Color);
+        sky.points.forEach((p, i)=>
+        {
+            const c = sky.colors[i], to = p.y < 0 ? bot : top, t = abs(p.y);
+            c.r = mix(hor[0], to[0], t); c.g = mix(hor[1], to[1], t); c.b = mix(hor[2], to[2], t); c.a = 1;
+        });
         sky.dirty = true;
     }
     render3D.fogColor = col3(hor);
@@ -2897,18 +2979,18 @@ function dustBurst(x, y, count)
 }
 
 // drop the resolution and shadow detail on phones that cannot hold the frame rate
-let quality = 3, qualityT = 0;
+// looked at soon after the start and often at first, on the summit as well as riding, so a slow phone is on the
+// lighter settings within a second or two; one that is very slow drops two steps at once
+let quality = 3, qualityT = 0, qualityLooks = 0;
 function adaptQuality(dt)
 {
-    if ((qualityT += dt) < 3 || state != 'ride') return;
-    qualityT = 0;
-    if (averageFPS > 0 && averageFPS < 45 && quality > 0)
-    {
-        --quality;
-        if (quality == 2) setCanvasPixelRatio(min(window.devicePixelRatio || 1, 1.2));
-        if (quality == 1) { setCanvasPixelRatio(1); render3D.shadowMapSize = 1024; }
-        if (quality == 0) render3D.shadows = false;
-    }
+    if ((qualityT += dt) < (qualityLooks < 4 ? 1.2 : 3) || state != 'ride' && state != 'title') return;
+    qualityT = 0; ++qualityLooks;
+    if (!(averageFPS > 0 && averageFPS < 45 && quality > 0)) return;
+    quality = max(0, quality - (averageFPS < 28 ? 2 : 1));
+    setCanvasPixelRatio(quality == 3 ? min(window.devicePixelRatio || 1, 1.6) : quality == 2 ? min(window.devicePixelRatio || 1, 1.2) : 1);
+    if (quality <= 1) render3D.shadowMapSize = 1024;
+    if (quality == 0) render3D.shadows = false;
 }
 
 // ---------- forks: the line picked with a swipe before the split is taken at it, and scored at the merge
@@ -3742,17 +3824,18 @@ window.__mtb = {
         OX, OY, night, dayT, boostT, grindDist, seed, ride: ride ? ride.lane : 0, riderZ: riderZ(), battery, turboT, turbos, lines, proLines,
         forkAhead: !!forkAhead, laneWant, view: camViewName(), zoom: camZoomName(), splits: splits.map(s=> [s.x0|0, s.x1|0, s.kinds.join('+')]),
         lineDetail: splits.map(s=> Object.values(s.lines).map(b=> b.kind + ':' + (b.what || 'plain')).join(' ')),
-        dropCam, braking, sentIt, camLift, drops: feats.filter(f=> f.type == 'dropin').map(f=> [f.x0|0, f.x1|0, f.landX|0, +f.F.toFixed(1)]),
+        dropCam, braking, sentIt, camLift, baseY, wheelOffF, wheelOffR, drops: feats.filter(f=> f.type == 'dropin').map(f=> [f.x0|0, f.x1|0, f.landX|0, +f.F.toFixed(1)]),
         trickCounts, tricksTotal, style: style?.name, styleT, airHist, hardLandings, combosBanked, multSum, queued: trickQueued, swipeCount, mainHeld, secondHeld}),
     start: ()=> startRide(),
     // steps the game by hand, a 60th of a second at a time, with the engine paused
-    sim: (n, until)=> { for (let k = 0; k < n; ++k) { timeDelta = 1/frameRate; time += timeDelta; ++frame; gameUpdate(); gameUpdatePost(); if (until && until()) break; } return window.__mtb.info(); },
+    // (or by frames of another length, a number or a function giving one, as a screen at another rate would)
+    sim: (n, until, dt)=> { for (let k = 0; k < n; ++k) { timeDelta = typeof dt == 'function' ? dt() : dt || 1/frameRate; time += timeDelta; ++frame; gameUpdate(); gameUpdatePost(); if (until && until()) break; } return window.__mtb.info(); },
     autopilot: (on, flips)=> { window.__autopilot = on; window.__flipPilot = flips; },
     press: ()=> pressMain(), release: ()=> releaseMain(),
     press2: ()=> pressSecond(), release2: ()=> releaseSecond(),
     swipe: dir=> airSwipe(dir),
     wipe: reason=> crash(reason || 'HIT A ROCK'),
-    ground: x=> rideY(x), state: ()=> ({px, py, vx, vy, airT, grounded}),
+    ground: x=> rideY(x), state: ()=> ({px, py, vx, vy, airT, grounded, run: state}),
     teleport: x=> { trackEnsure(x + TRACK_AHEAD); placeRider(x); state = 'ride'; sp = 16; },
     setDay: t=> dayT = t,
     feats: ()=> feats.map(f=> ({type: f.type, x0: f.x0, x1: f.x1, x2: f.x2, carved: f.carved, apexes: f.apexes?.length, line: f.line?.kind})),

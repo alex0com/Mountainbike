@@ -284,6 +284,33 @@ Each phase is a separate commit (or a few), tested with the Phase 0 harness befo
     - Full regression (flips + tricks both ways, turbo, all-up, turbo all-down; 500 km): 0 crashes.
     - Fork test with real pointer events: each result matches the lines on offer.
 
+- **Phase 5: done.**
+  - **Balance:** each trick now charges the battery by its points, capped at 2000 (up to 12.5%). Orbs charge less (0.5%, or 0.9% in the air) but score more (20, or 50 in the air).
+
+    | Per km | Before | After |
+    |---|---|---|
+    | Turbos, trick-heavy riding | 2.8 | about 1.2 |
+    | Turbos, plain riding | 1.7 | about 0.75 |
+
+    Combos stay at ×10 max, averaging ×3 plain and ×5 trick-heavy. Score: about 22–25k per km plain, about 95–105k trick-heavy.
+  - **Difficulty ramp:** PRO lines go from 40% to 75% of blocks over 6 km. Set pieces go from 24% to 36% of sections. Drop, gap and step sizes already grew with distance.
+  - **Sounds:**
+    - SEND IT pop; a spray on each carved berm; a chime on finishing a line.
+    - A skid (the grit loop, brighter and louder) while braking on a ledge or run-in.
+    - A hollow, lower rumble on a wooden deck in place of the grind.
+  - **Feedback:** taking a line shows its name and what's on it.
+  - **Results card:**
+    - Best single trick with its points, and lines including PRO ones.
+    - Rows close up on short screens so the button never covers them.
+    - The best combo is saved with the best distance and score, shown on the title and counted for NEW BEST.
+  - **Title screen:** the help uses three columns on short landscape screens and spaces out to fill the room.
+  - **Cleanup:** removed the unused mid/far layer stubs (`updateMid`, `updateFar`, `midChunks`, `farLayers`). Added test hooks: `wipe()` and the scoring figures in `info()`.
+  - **Testing:**
+    - 600 km over six modes (flips + tricks both ways, turbo + tricks, all-PRO, turbo all-LOW, plain): 0 crashes.
+    - Fork and flick-while-holding tests pass. The second-finger style cycle checked directly.
+    - Results card and title checked at 390×844, 844×390, 667×375 and 1280×800.
+    - Sounds can't be heard in the headless tests; they ran without page errors.
+
 ## Running the tools
 
     node tools/sim.mjs [--seeds 20] [--km 5] [--flips back|front] [--tricks] [--lanes rand|up|down|main] [--turbo] [--json out.json] [--salt n] [--game other.html]

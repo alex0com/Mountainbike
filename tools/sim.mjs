@@ -38,7 +38,7 @@ for (let seed = FROM; seed < FROM + SEEDS; ++seed)
     const t0 = Date.now();
     const r = await page.evaluate(async ({KM, FLIPS, TRICKS, LANES, TURBO, SALT, seed})=>
     {
-        const m = window.__mtb;
+        const m = window.__mtb, max = Math.max;
         if (SALT)
         {
             let a = seed*7919 + SALT*104729;
@@ -56,6 +56,7 @@ for (let seed = FROM; seed < FROM + SEEDS; ++seed)
         const bank = i=>
         {
             stats.flips += i.flipsTotal; stats.score += i.score; stats.lines += i.lines; stats.turbos += i.turbos; stats.orbs += i.orbsGot;
+            stats.combos = (stats.combos || 0) + (i.combosBanked || 0); stats.mult = (stats.mult || 0) + (i.multSum || 0); stats.bestCombo = max(stats.bestCombo || 0, i.bestCombo || 0);
             for (const [k, v] of Object.entries(i.trickCounts || {})) stats.tricks[k] = (stats.tricks[k] || 0) + v;
             (i.airHist || []).forEach((v, k)=> stats.airs[k] += v);
             stats.hard = (stats.hard || 0) + (i.hardLandings || 0);
@@ -97,6 +98,12 @@ for (const [k, v] of Object.entries(reasons).sort((a, b)=> b[1] - a[1])) console
 // flights longer than .3 s, by how long they lasted
 const airs = [0, 0, 0, 0, 0, 0];
 for (const r of all) r.stats.airs.forEach((v, k)=> airs[k] += v);
+// how the scoring adds up
+{
+    const sum = k=> all.reduce((s, r)=> s + (r.stats[k] || 0), 0);
+    console.log('score per km ' + (sum('score')/km|0) + ', orbs per km ' + (sum('orbs')/km).toFixed(1) + ', turbos per km ' + (sum('turbos')/km).toFixed(2) +
+        ', combos per km ' + (sum('combos')/km).toFixed(1) + ' at x' + (sum('mult')/max1(sum('combos'))).toFixed(1) + ' on average, best combo ' + Math.max(...all.map(r=> r.stats.bestCombo || 0)));
+}
 console.log('hard landings per km: ' + (all.reduce((s, r)=> s + (r.stats.hard || 0), 0)/km).toFixed(2));
 console.log('air time per km:  ' + ['<.5s', '.5-1s', '1-1.5s', '1.5-2s', '2-2.5s', '2.5s+'].map((l, k)=> l + ' ' + (airs[k]/km).toFixed(1)).join('   '));
 if (Object.keys(tricks).length)

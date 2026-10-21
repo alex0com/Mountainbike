@@ -149,7 +149,7 @@ let ORB_V = 13;   // the launch speed air orbs are laid out for, measured from r
 
 let seed = 1, rnd, NA, NB, NC, NV;
 let ys = [], gapF = [], rails = [], rocks = [], orbs = [], signs = [], feats = [], gaps = [], pendingArcs = [];
-let genBase = 0, genGrade = 0, nextSignX = 500, lastLaunch = null, nextBooterX = 200, nextCanyonX = 900, nextMegaX = 380;
+let genBase = 0, genGrade = 0, nextSignX = 500, lastLaunch = null, nextBooterX = 200, nextCanyonX = 900, nextMegaX = 380, nextTyreX = 140;
 // line blocks: the trail splits into lines across the face of the mountain, reached by berms, each with its own
 // features, and they all come back together. PRO is up on the ridge, HIGH along the hillside behind the trail,
 // LOW down the slope in front; the main trail carries on between them.
@@ -897,6 +897,13 @@ function genSection()
     // a rock arch over the run in, where no jump can still be in the air
     if (!openSplit && genX() - start > 24 && rnd() < .2 && launchReach(lastLaunch) < start + 2) arches.push({x: start + 9, s: .95 + rnd()*.25, rot: rnd()});
     if (rnd() < .5) orbLine(start + 6, 5 + (rnd()*5 | 0), 2.4);
+    // a spare tyre, every so often
+    if (x > nextTyreX && !openSplit && genX() - start > 18)
+    {
+        const tx = start + 9 + rnd()*(genX() - start - 14);
+        if (!gapAt(tx)) addOrb({x: tx, y: groundY(tx) + 1.25, got: false, air: false, tyre: true}, orbSet('tyre'));
+        nextTyreX = genX() + 110 + rnd()*160;
+    }
     const r = rnd();
     if (x < 120) pendingArcs.push(lastLaunch = addKicker(1.15, 4.5));
     // a drop-in every so often, and a big jump every few hundred metres, each clear of the flight before it
@@ -986,7 +993,7 @@ function trackInit(s)
     NA = makeNoise(rnd); NB = makeNoise(rnd); NC = makeNoise(rnd); NV = makeNoise(rnd);
     ys = []; gapF = []; rails = []; rocks = []; orbs = []; signs = []; feats = []; gaps = []; pendingArcs = [];
     splits = []; openSplit = null; lastSplitEnd = 0; nextSplitGap = 0; ride = null; noSign = []; gullies = []; arches = [];
-    nextSignX = 500; lastLaunch = null; nextBooterX = 200; nextDropX = 450; nextCanyonX = 900; nextMegaX = 380; paces = []; bends = [];
+    nextSignX = 500; lastLaunch = null; nextBooterX = 200; nextDropX = 450; nextCanyonX = 900; nextMegaX = 380; nextTyreX = 140; paces = []; bends = [];
     // the summit: the back of the peak rising from the left, a flat top to stand on, then the drop in
     genBase = -14; genGrade = -.6;
     pushY(genBase);
@@ -1927,6 +1934,11 @@ let offGroundT = 0, jumpBuf = 0;
 let battery = 0, turboT = 0, turboGrace = 0, turbos = 0, laneWant = 0, forkAhead = null, bermStage = 0, lines = 0;
 let proLines = 0, linesRidden = new Set, allLines = false;
 const TURBO_LEN = 6, TURBO_V = 14;
+// spare tyres lie out on the trail now and then: three of them give the brakes enough grip to lock up the back wheel
+// and slide, for BRAKE_LEN seconds of holding them on, a little at a time or all at once
+const BRAKE_LEN = 5;
+let tyres = 0, brakeFuel = 0, brakeHeld = false, slideT = 0;
+const brakeOn = ()=> brakeHeld && brakeFuel > 0 && state == 'ride' && grounded && !grinding;
 // a full set of battery cells supercharges the motor: longer and harder than the turbo, and off the mega booter it
 // sends the rider at SEND_V. A full set of sprockets is leg power: a few seconds of hard pedalling
 const SUPER_LEN = 10, SEND_V = 30, LEG_LEN = 3;
@@ -1981,6 +1993,8 @@ for (const t of Object.values(TRICKS)) SWIPE_TRICKS[t.dir] = t.name;
 const STYLE_CYCLE = ['SUPERMAN', 'NO-HANDER', 'CAN-CAN', 'HEEL CLICKER'];
 // how long the flights of a run last, in half seconds, for the test rides
 let airHist = [0, 0, 0, 0, 0, 0], hardLandings = 0, combosBanked = 0, multSum = 0;
+// and for the score card: cased jumps, sketchy saves, perfect landings, the longest flight, the top speed, rocks smashed
+let cased = 0, sketchy = 0, perfects = 0, maxAir = 0, topSpeed = 0, smashes = 0, slides = 0, tyresGot = 0;
 let swipeCount = 0, bestTrick = {name: '', pts: 0}, trickQueued = null, trickBuf = 0, trickBufName = '', comboKeys = [], trickCounts = {}, tricksTotal = 0, everSwiped = false;
 const countTrick = (name, n=1)=> trickCounts[name] = (trickCounts[name] || 0) + n;
 
@@ -2005,12 +2019,18 @@ function stepGround(dt)
     if (boostT > 0) a += 7;
     if (legT > 0 && !pace) a += 10;
     if (turboT > 0 && !pace) a += superOn ? 24 : 16;
-    sp = clampV(sp + a*dt, state == 'ride' ? vFloor(px) : 0, VMAX + (turboT > 0 ? TURBO_V : legT > 0 ? 6 : boostT > 0 ? 4 : 0));
+    // never slower than a cruise, unless the brakes are on: then nearly to a stop, and a slow bike gets going again
+    // over a second or so rather than all at once
+    const lo = state != 'ride' ? 0 : brakeOn() ? 3 : min(vFloor(px), max(3, sp) + 9*dt);
+    sp = clampV(sp + a*dt, lo, VMAX + (turboT > 0 ? TURBO_V : legT > 0 ? 6 : boostT > 0 ? 4 : 0));
+    if (brakeOn()) { sp = max(3, sp - 24*dt); slideT += dt; }
     braking = !!pace && sp > pace.v;
     // the run in to a gap sets the speed that clears it, quickly, so even the last of it up the kicker brings the
     // rider close: a fast one brakes, a slow one pedals up
     if (braking) sp = max(pace.v, sp - (pace.hold ? 25 : 12)*dt);
     else if (pace?.hold && sp < pace.v) sp = min(pace.v, sp + 20*dt);
+    // the rider's own brakes skid the same way, dust and all
+    braking ||= brakeOn();
     // the face of a drop or a chasm wall is never ridden: off its edge the bike flies, into it the bike crashes
     if (s < -2.5) { vx = sp; vy = 0; takeoff(); return; }
     if (s > 2.5) { crash('HIT THE EDGE'); return; }
@@ -2160,6 +2180,11 @@ function land(gy)
     if (abs(err) > .8) { crash(abs(err) > 2 ? 'LANDED ON YOUR HEAD' : 'BAD LANDING'); return; }
     if (!finishTrick()) return;
     const perfect = abs(err) < .22;
+    maxAir = max(maxAir, airT);
+    if (perfect && airT > .45) ++perfects;
+    // short of a built landing, onto the flat by the lip: cased it
+    const f = takeoffFeat;
+    if (f?.x2 && (f.type == 'kicker' || f.type == 'booter' || f.type == 'stepdown') && airT > .25 && px - f.x1 < 4) { ++cased; showMessage('CASED IT!', '', hsl(.07,.9,.6)); }
     sp = vx*cos(th) + vy*sin(th);
     // the end of a super send is stomped, however hard it comes down: the landing is built for it
     const hard = impact > 22 && !superFlight;
@@ -2190,7 +2215,7 @@ function finishTrick()
     if (p < .4 && airT < .4) { style = undefined; trickQueued = null; return true; }
     if (p < .4) { crash(style.fail || 'FEET OFF THE PEDALS'); return false; }
     if (p >= .8) stylesDone.push(style);
-    else { showMessage('SKETCHY!', 'finish the trick before landing', hsl(.08,.9,.6)); sfx('landHard'); }
+    else { showMessage('SKETCHY!', 'finish the trick before landing', hsl(.08,.9,.6)); sfx('landHard'); ++sketchy; }
     style = undefined; trickQueued = null;
     return true;
 }
@@ -2333,7 +2358,7 @@ function checkRocks()
         {
             r.smashed = true;
             if (r.obj) r.obj.scale3D = vec3(0);
-            addTrick('SMASH', 150);
+            addTrick('SMASH', 150); ++smashes;
             rockBurst(r);
             sfx('landHard', .8);
             camShake = max(camShake, .6);
@@ -2375,6 +2400,7 @@ function crash(reason)
     window.__lastCrash = {reason, px: +px.toFixed(1), ride: ride ? ride.lane : 0, z: +riderZ().toFixed(1), turbo: +turboT.toFixed(2), tk: takeoffKind, tkx: +takeoffX.toFixed(1), rot: +(rot*57).toFixed(0), ang: +(ang*57).toFixed(0), slope: +(atan(rideSlope(px))*57).toFixed(0), airT: +airT.toFixed(2), sp: +sp.toFixed(1), vx: +vx.toFixed(1), vy: +vy.toFixed(1), style: style?.name, styleT: +styleT.toFixed(2), flightT: window.__flightT, grounded, frame};
     combo = comboPts = 0; comboNames = []; comboKeys = []; grinding = null; style = undefined; trickQueued = null;
     startWreck();
+    saveBest(); groanAt = 2.2;
     sfx('crash');
     camShake = 1;
     dustBurst(px, py, 90);
@@ -2475,6 +2501,23 @@ function stepWreck(dt)
                 p.vx += dx; p.vy += dy; sx += dx; sy += dy;
             }
             for (const p of P) { p.vx -= sx/P.length; p.vy -= sy/P.length; }
+        }
+        // down and hurt: a hand comes up and waves feebly, the legs kick slowly, the head lifts and drops back,
+        // steered like the flailing, with what it gives the limbs taken back off the body
+        if (state == 'crash' && crashT > 2)
+        {
+            const H = P[RAG_I.hip], k = 1 - damp(5, h), u = clamp01((crashT - 2)*1.5), w = t*1.1;
+            const goal = [[RAG_I.hdR, C.x + sin(t*4)*.35, C.y + .75 + .12*sin(t*2.3), C.z + .2],
+                [RAG_I.ftL, H.x + .45 + cos(w*2.3)*.3, H.y + .35 + .25*sin(w*2.3), H.z + .15],
+                [RAG_I.ftR, H.x + .45 + cos(w*2.3 + 2)*.3, H.y + .35 + .25*sin(w*2.3 + 2), H.z - .15],
+                [RAG_I.head, C.x + .1, C.y + .25 + .22*max(0, sin(t*.9)), C.z]];
+            let sx = 0, sy = 0, sz = 0;
+            for (const [i, gx, gy, gz] of goal)
+            {
+                const p = P[i], dx = ((gx - p.x)*4 - p.vx)*k*u, dy = ((gy - p.y)*4 - p.vy)*k*u, dz = ((gz - p.z)*4 - p.vz)*k*u;
+                p.vx += dx; p.vy += dy; p.vz += dz; sx += dx; sy += dy; sz += dz;
+            }
+            for (const p of P) { p.vx -= sx/P.length; p.vy -= sy/P.length; p.vz -= sz/P.length; }
         }
         for (const p of P)
         {
@@ -2892,6 +2935,17 @@ class RiderView extends EngineObject3D
             for (const p of pieces) G[p.key] = pieceMatrix(p);
             drawBike(G.frame, .05, .05, wheelSpinAtCrash, crank, 0, 0, 0, 0, G);
             drawRagdoll();
+            // seeing stars: a ring of them going round over the head
+            if (crashT > 1)
+            {
+                MC = new Matrix4;
+                const hp = ragdoll.pts[RAG_I.head], c = vec3(hp.x - OX, hp.y - OY + .55, hp.z);
+                for (let k = 0; k < 5; ++k)
+                {
+                    const a = time*3.2 + k*TAU/5;
+                    fball(c.add(vec3(cos(a)*.42, sin(a*2)*.05, sin(a)*.42)), .12, k % 2 ? PAL.lens2 : hsl(.15,1,.75));
+                }
+            }
             return;
         }
         const M = bikeMatrix(), t = trickAnim();
@@ -2938,9 +2992,9 @@ function newRun(s)
     state = 'title';
     placeRider(START_X);
     runTime = dist = score = orbsGot = orbStreak = 0;
-    bestCombo = 0; bestComboName = ''; flipsTotal = 0; grindDist = 0; crashReason = ''; trickCounts = {}; tricksTotal = 0; bestTrick = {name: '', pts: 0}; airHist = [0, 0, 0, 0, 0, 0]; hardLandings = 0; combosBanked = 0; multSum = 0;
+    bestCombo = 0; bestComboName = ''; flipsTotal = 0; grindDist = 0; crashReason = ''; trickCounts = {}; tricksTotal = 0; bestTrick = {name: '', pts: 0}; airHist = [0, 0, 0, 0, 0, 0]; hardLandings = 0; combosBanked = 0; multSum = 0; cased = sketchy = perfects = maxAir = topSpeed = smashes = slides = tyresGot = 0;
     titleT = 0; titleWreck = false; menu = 'main'; logoWob = logoWobV = logoFly = 0;
-    battery = 0; turboT = 0; turbos = 0; supers = legBoosts = sends = cellsGot = 0; setShown = null; setShownT = 0; lines = 0; proLines = 0; linesRidden = new Set; allLines = false; dayT = DAY_START; dropCam = crashCam = sendCam = 0; camLift = 0; ragdoll = null; pieces = []; pz = yawV = leanV = bermY = 0; camZ = camB = 0;
+    battery = 0; turboT = 0; turbos = 0; supers = legBoosts = sends = cellsGot = 0; tyres = brakeFuel = slideT = 0; brakeHeld = false; setShown = null; setShownT = 0; lines = 0; proLines = 0; linesRidden = new Set; allLines = false; dayT = DAY_START; dropCam = crashCam = sendCam = 0; camLift = 0; ragdoll = null; pieces = []; pz = yawV = leanV = bermY = 0; camZ = camB = 0;
     messages.length = 0; trickPops.length = 0; swipeFx.length = 0;
     riderView = new RiderView;
     new SprocketView; new OrbView; new OrbGlow; new LogoView; new SkyExtras; new TurboGlow;
@@ -3017,13 +3071,19 @@ function startRide()
 }
 let zoneNow = 0;
 
-function endRun()
+// the bests are kept the moment the run ends, so none is lost however long the rider lies there
+function saveBest()
 {
-    state = 'results'; resultsT = 0;
     isBest = dist > best.dist || score > best.score || bestCombo > (best.combo || 0);
     best.dist = max(best.dist, floor(dist)); best.score = max(best.score, score); best.combo = max(best.combo || 0, bestCombo);
     try { localStorage.setItem('dhside.best', JSON.stringify(best)); } catch(e) {}
 }
+function endRun()
+{
+    state = 'results'; resultsT = 0;
+}
+const GROANS = ['OUCH...', 'MOO-CH!', "I'M OK!", 'NOT THE HORNS', 'WHO MOVED THE GROUND?', 'MY TAIL...', 'FIVE MORE MINUTES'];
+let groanAt = 2;
 
 function gameUpdate()
 {
@@ -3041,7 +3101,8 @@ function gameUpdate()
     {
         crashT += dt;
         stepWreck(dt);
-        if (state == 'crash' && crashT > 2.4) endRun();
+        // the rider lies there groaning until a tap brings up the score card
+        if (state == 'crash' && crashT > groanAt) { groanAt += 4.2 + Math.random()*1.5; moo(.72, 1.05, .3); showMessage(GROANS[floor(Math.random()*GROANS.length)], '', hsl(.6,.4,.85)); }
         if (state == 'results') resultsT += dt;
     }
     else titleStep(dt);
@@ -3055,6 +3116,10 @@ function gameUpdate()
 function rideStep(dt)
 {
     runTime += dt; hintT += dt;
+    topSpeed = max(topSpeed, hypot(vx, vy));
+    // the brakes: their grip runs down while they are on, and a long enough slide scores when it ends
+    if (brakeOn()) brakeFuel = max(0, brakeFuel - dt);
+    else if (slideT > 0) { if (slideT > .6) { addTrick('POWER SLIDE', min(500, round(slideT*90/10)*10)); ++slides; } slideT = 0; }
     offGroundT = grounded || grinding ? 0 : offGroundT + dt;
     if (jumpQueued) jumpBuf = .15;
     jumpQueued = false;
@@ -3123,7 +3188,7 @@ function updateVisuals(dt)
             offF = clampV(rideY(xf) - along(xf), -.2, .2); offR = clampV(rideY(xr) - along(xr), -.2, .2);
         }
         airBlend += (0 - airBlend)*damp(12, dt);
-        wheelSpin -= sp*dt/(RW*RS);
+        wheelSpin -= sp*dt/(RW*RS)*(brakeOn() ? .2 : 1);
     }
     else
     {
@@ -3158,6 +3223,8 @@ function updateVisuals(dt)
     }
     // and leaned into the weave's turns
     if (state == 'ride') tLean += clampV(atan(sp*sp*wzK(bx)*weaveK(pz)/9.81)*.8, -.55, .55)*(grounded ? 1 : .4);
+    // locked up, the back wheel steps out
+    if (brakeOn()) tYaw += .34*clamp01(sp/8);
     yawV += (tYaw - yawV)*damp(12, dt);
     leanV += (tLean - leanV)*damp(10, dt);
     bermY += (tY - bermY)*damp(16, dt);
@@ -3435,6 +3502,14 @@ class SprocketView extends EngineObject3D
         {
             if (o.cell || !orbSeen(o, rz)) continue;
             const p = orbBob(o);
+            if (o.tyre)
+            {
+                const T = Matrix4.translation(p).multiply(Matrix4.rotation(vec3(0, atan2(eye.x - p.x, eye.z - p.z), 0)))
+                    .multiply(Matrix4.rotation(vec3(PI/2, 0, 0))).multiply(Matrix4.rotation(vec3(0, -time*2.5 - o.x, 0))).multiply(Matrix4.scaling(vec3(1.7)));
+                render3D.drawMesh(meshTyre, T);
+                render3D.drawMesh(meshRim, T, undefined, PAL.silver);
+                continue;
+            }
             buildMatrix(p, vec3(0, atan2(eye.x - p.x, eye.z - p.z), -time*3 - o.x), vec3(o.air ? 1.2 : 1.05), m);
             render3D.drawMesh(meshSprocket, m);
         }
@@ -3467,8 +3542,8 @@ class OrbGlow extends EngineObject3D
         for (const o of orbs)
         {
             if (!orbSeen(o, rz)) continue;
-            render3D.drawSoftDisc(orbBob(o), o.cell ? 3 : o.air ? 1.9 : 1.6,
-                o.cell ? hsl(.52,1,.6,.6 + night*.3) : hsl(.12,1,.55,.16 + night*.3));
+            render3D.drawSoftDisc(orbBob(o), o.cell ? 3 : o.tyre ? 2.6 : o.air ? 1.9 : 1.6,
+                o.cell ? hsl(.52,1,.6,.6 + night*.3) : o.tyre ? hsl(.07,1,.55,.35 + night*.3) : hsl(.12,1,.55,.16 + night*.3));
         }
     }
 }
@@ -3480,6 +3555,21 @@ function collectOrbs()
         if (o.got || abs(o.x - px) > 2.5 || abs((o.z || 0) - rz) > 2.4) continue;
         if ((o.x - px)**2 + (o.y - cy)**2 > (o.air ? 2.2 : 1.7)**2) continue;
         o.got = true; ++orbStreak;
+        if (o.tyre)
+        {
+            ++tyresGot; score += 50;
+            sfx('bonk');
+            new ParticleEmitter3D(W3(o.x, o.y, o.z || 0), .8, .08, 200, PI, undefined,
+                hsl(.07,1,.6), WHITE, hsl(.07,1,.6,0), CLEAR_WHITE, .5, .4, 0, .1, .92, -.002, .1, .4, true);
+            if (++tyres >= 3)
+            {
+                tyres = 0; brakeFuel = BRAKE_LEN;
+                showMessage('BRAKES READY!', 'hold BRAKE on the left to lock up and slide', hsl(.07,1,.62));
+                sfx('ready');
+            }
+            else showTrick('SPARE TYRE ' + tyres + '/3', 50);
+            continue;
+        }
         o.cell ? ++cellsGot : ++orbsGot;
         score += o.cell ? 100 : o.air ? 50 : 20;
         charge(o.cell ? 400 : o.air ? 140 : 80);
@@ -3695,16 +3785,20 @@ function tapScreen(key=false)
 {
     // on the menu a tap on the scene runs the rider into the logo again (a key starts the ride)
     if (state == 'title') { if (key) startRide(); else if (menu == 'main') titleReplay(); return true; }
-    // a tap once the tumble is under way rides again straight away, the run's bests saved first
-    if (state == 'crash') { if (crashT > .35) { endRun(); startRide(); } return true; }
-    if (state == 'results') { startRide(); return true; }
+    // a crash takes two taps to leave, so none is lost by accident: the first shows the score card, the next rides again
+    if (state == 'crash') { if (crashT > .6) endRun(); return true; }
+    if (state == 'results') { if (resultsT > .5) startRide(); return true; }
 }
 addEventListener('pointerdown', e=>
 {
     audioUnlock();
     for (const b of buttons)
         if (e.clientX >= b.x && e.clientX <= b.x + b.w && e.clientY >= b.y && e.clientY <= b.y + b.h)
-            { sfx('click'); b.act(); return; }
+        {
+            // one held down, like the brake, lets go when that finger lifts
+            if (b.hold) { holds.set(e.pointerId, b); b.down(); return; }
+            sfx('click'); b.act(); return;
+        }
     if (tapScreen()) return;
     ptStart.set(e.pointerId, {x: e.clientX, y: e.clientY, hist: [[e.clientX, e.clientY, e.timeStamp]], armed: true, fx: 0, fy: 0, lane: false});
     // at a fork a first finger that would jump may be a swipe, so it waits a moment before it does
@@ -3773,8 +3867,11 @@ function chooseLine(dir, id)
     if (want != laneWant) sfx('click');
     laneWant = want;
 }
+const holds = new Map;
 const pointerUp = e=>
 {
+    const held = holds.get(e.pointerId);
+    if (held) { holds.delete(e.pointerId); held.up(); return; }
     ptStart.delete(e.pointerId);
     const swiped = swipeDone.delete(e.pointerId);
     if (swipeP && e.pointerId === swipeP.id)
@@ -3790,7 +3887,7 @@ const pointerUp = e=>
 };
 addEventListener('pointerup', pointerUp);
 addEventListener('pointercancel', pointerUp);
-const MAIN_KEYS = ['Space', 'ArrowUp', 'KeyW'], SECOND_KEYS = ['ShiftLeft', 'ShiftRight', 'ArrowDown', 'KeyS'];
+const MAIN_KEYS = ['Space', 'ArrowUp', 'KeyW'], SECOND_KEYS = ['ShiftLeft', 'ShiftRight', 'ArrowDown', 'KeyS'], BRAKE_KEYS = ['KeyB', 'ArrowLeft', 'KeyA'];
 // swipes from the keyboard, laid out round K: I up, J back, K down, L forward, and U O N , between them
 const SWIPE_KEYS = {KeyL: 0, KeyO: 1, KeyI: 2, KeyU: 3, KeyJ: 4, KeyN: 5, KeyK: 6, Comma: 7};
 function keySwipe(dir)
@@ -3813,6 +3910,7 @@ addEventListener('keydown', e=>
     else if (e.code == 'Escape' && state == 'title') menu = 'main';
     else if (SECOND_KEYS.includes(e.code)) pressSecond();
     else if (e.code == 'KeyF') { pressSecond(); secondT = 0; releaseSecond(); }
+    else if (BRAKE_KEYS.includes(e.code)) brakeHeld = true;
     else if (e.code == 'KeyC') camNextView();
     else if (e.code == 'KeyV') camNextZoom();
     else if (e.code == 'KeyM') toggleSound();
@@ -3822,8 +3920,9 @@ addEventListener('keyup', e=>
     keys[e.code] = false;
     if (MAIN_KEYS.includes(e.code) || e.code == 'Enter') releaseMain();
     else if (SECOND_KEYS.includes(e.code)) releaseSecond();
+    else if (BRAKE_KEYS.includes(e.code)) brakeHeld = false;
 });
-addEventListener('blur', ()=> { mainP = secondP = swipeP = null; mainHeld = secondHeld = false; ptStart.clear(); swipeDone.clear(); });
+addEventListener('blur', ()=> { mainP = secondP = swipeP = null; mainHeld = secondHeld = brakeHeld = false; ptStart.clear(); swipeDone.clear(); holds.clear(); });
 
 function showMessage(title, sub, color)
 {
@@ -3913,54 +4012,59 @@ function drawHUD()
     drawBattery(14, top + 92);
     drawBoosts(14, top + 116);
     if (state == 'ride' && battery >= 1 && turboT <= 0) drawTurboButton(W, H, bottom);
+    if (state == 'ride' && brakeFuel > 0) drawBrakeButton(W, H, bottom);
+    drawTyres(64, top + 74);
     if (state == 'ride' && forkAhead && !ride) drawForkPrompt(W, H);
 
     const bw = 58, bh = 38;
     button(W - 12 - bw, top, bw, bh, soundOn ? 'SND' : 'MUTE', toggleSound, !soundOn);
     camButtons(W, top, bw, bh);
 
-    // the combo in progress, with the time left to keep it going
+    // the combo in progress, with the time left to keep it going. On a tall screen the rider is in the middle, so
+    // all the scoring goes smaller into the band below, clear of the buttons at the sides
+    const tall = W < H, band = H*.68, sc = tall ? .75 : 1, wide = tall ? W - 190 : W - 30;
+    const comboY = tall ? band : H*.16;
     if (combo && state == 'ride')
     {
         const s = comboNames.slice(-3).join(' + ');
-        txt(s, W/2, H*.16, fitSize(s, 24, W - 30), '#ffd23a', 'center', 900);
-        txt(comboPts.toLocaleString() + (combo > 1 ? '  x' + min(combo, 10) : ''), W/2, H*.16 + 28, 20, '#fff', 'center', 900);
+        txt(s, W/2, comboY, fitSize(s, 24*sc, wide), '#ffd23a', 'center', 900);
+        txt(comboPts.toLocaleString() + (combo > 1 ? '  x' + min(combo, 10) : ''), W/2, comboY + 28*sc, 20*sc, '#fff', 'center', 900);
         if (grounded)
         {
             const w = 120*clamp01(comboT/2.2);
-            rrect(W/2 - 60, H*.16 + 46, 120, 5, 2.5, 'rgba(10,14,24,.4)');
-            rrect(W/2 - 60, H*.16 + 46, w, 5, 2.5, '#ffd23a');
+            rrect(W/2 - 60, comboY + 46*sc, 120, 5, 2.5, 'rgba(10,14,24,.4)');
+            rrect(W/2 - 60, comboY + 46*sc, w, 5, 2.5, '#ffd23a');
         }
     }
-    if (state == 'ride') drawAirTricks(W, H);
+    if (state == 'ride') drawAirTricks(W, comboY + 54*sc, sc, wide);
     drawSwipes();
     // each trick pops up as it lands
     // below the combo, newest on top, older ones sliding down
-    const popY = max(H*.3, H*.16 + 74), land = W > H;
+    const popY = tall ? band + 74 : max(H*.3, H*.16 + 74);
     trickPops.forEach((p, i)=>
     {
         const k = trickPops.length - 1 - i;
-        if (land && k > 2) return;
-        const a = clamp01(min(p.t*8, (1.6 - p.t)*3)), y = popY + k*22;
+        if (k > 2) return;
+        const a = clamp01(min(p.t*8, (1.6 - p.t)*3)), y = popY + k*22*sc;
         ctx.globalAlpha = a;
         const s = p.name + '  +' + p.pts;
-        txt(s, W/2, y, fitSize(s, 18*(1 + .3*max(0, 1 - p.t*6)), W - 30, 900), '#bff4ff', 'center', 900);
+        txt(s, W/2, y, fitSize(s, 18*sc*(1 + .3*max(0, 1 - p.t*6)), wide, 900), '#bff4ff', 'center', 900);
         ctx.globalAlpha = 1;
     });
     if (bankMsg)
     {
-        const a = clamp01(min(bankMsg.t*6, (2.2 - bankMsg.t)*3)), pop = 1 + .3*max(0, 1 - bankMsg.t*5);
+        const a = clamp01(min(bankMsg.t*6, (2.2 - bankMsg.t)*3)), pop = 1 + .3*max(0, 1 - bankMsg.t*5), by = tall ? band - 4 : H*.25;
         ctx.globalAlpha = a;
-        txt(bankMsg.title, W/2, H*.25, 30*pop, '#ffd23a', 'center', 900);
-        txt('+' + bankMsg.total.toLocaleString(), W/2, H*.25 + 32, 22, '#fff', 'center', 900);
+        txt(bankMsg.title, W/2, by, 30*sc*pop, '#ffd23a', 'center', 900);
+        txt('+' + bankMsg.total.toLocaleString(), W/2, by + 32*sc, 22*sc, '#fff', 'center', 900);
         ctx.globalAlpha = 1;
     }
     messages.forEach((m, i)=>
     {
         ctx.globalAlpha = clamp01(min(m.t*5, (m.dur - m.t)*3));
-        const my = W > H ? H*.64 : H*.42;
-        txt(m.title, W/2, my + i*56, fitSize(m.title, 30, W - 30), m.color.toString(), 'center', 900);
-        if (m.sub) txt(m.sub, W/2, my + i*56 + 26, fitSize(m.sub, 15, W - 30, 700), '#fff', 'center', 700);
+        const my = W > H ? H*.64 : H*.8, step = tall ? 42 : 56;
+        txt(m.title, W/2, my + i*step, fitSize(m.title, 30*sc, wide), m.color.toString(), 'center', 900);
+        if (m.sub) txt(m.sub, W/2, my + i*step + 26*sc, fitSize(m.sub, 15*sc, wide, 700), '#fff', 'center', 700);
         ctx.globalAlpha = 1;
     });
 
@@ -3974,14 +4078,14 @@ function drawHUD()
         else if (everFlipped && hintT < 60 && !grounded && !grinding && airT > .2) hint = 'SECOND FINGER: HOLD TO FRONT FLIP';
         if (hint) txt(hint, W/2, bottom - 40, fitSize(hint, 20, W - 30), 'rgba(255,255,255,' + (.75 + .25*sin(time*6)) + ')', 'center', 900);
     }
-    if (state == 'crash' && crashT > .35)
-        txt('TAP TO RIDE AGAIN', W/2, bottom - (W > H ? 30 : 44), 24, 'rgba(255,255,255,' + clamp01((crashT - .35)*4)*(.65 + .35*sin(time*5)) + ')', 'center', 900);
+    if (state == 'crash' && crashT > .6)
+        txt('TAP FOR YOUR SCORE CARD', W/2, bottom - (W > H ? 30 : 44), fitSize('TAP FOR YOUR SCORE CARD', 22, W - 30), 'rgba(255,255,255,' + clamp01((crashT - .6)*4)*(.65 + .35*sin(time*5)) + ')', 'center', 900);
     if (state == 'results' && resultsT > .4) drawResults(W, H);
     ctx.restore();
 }
 
 // the tricks in this air so far and the one under way, scored when the wheels touch
-function drawAirTricks(W, H)
+function drawAirTricks(W, y, sc, wide)
 {
     if (grounded || grinding) return;
     const parts = [], n = abs(rot) > TAU*.7 ? max(1, round(abs(rot)/TAU)) : 0;
@@ -3990,7 +4094,7 @@ function drawAirTricks(W, H)
     if (style) parts.push(style.name + '...');
     if (!parts.length) return;
     const s = parts.join('  +  ');
-    txt(s, W/2, H*.16 + 54, fitSize(s, 18, W - 30), '#9dffb0', 'center', 900);
+    txt(s, W/2, y, fitSize(s, 18*sc, wide), '#9dffb0', 'center', 900);
 }
 // each swipe leaves a short fading streak with an arrow head, so the player sees it was taken
 function drawSwipes()
@@ -4080,6 +4184,30 @@ function drawTurboButton(W, H, bottom)
     drawBolt(x, y - 5, 15, '#7ff0ff');
     txt('TURBO', x, y + 22, 11, '#dffaff', 'center', 900);
     buttons.push({x: x - r - 6, y: y - r - 6, w: r*2 + 12, h: r*2 + 12, act: fireTurbo});
+}
+// the brake, on the left: held, not tapped, its ring showing the grip left
+function drawBrakeButton(W, H, bottom)
+{
+    const r = 38, x = r + 18, y = bottom - (W > H ? 70 : 150), on = brakeHeld, f = brakeFuel/BRAKE_LEN;
+    ctx.beginPath(); ctx.arc(x, y, r, 0, TAU);
+    ctx.fillStyle = on ? 'rgba(120,30,10,.9)' : 'rgba(40,16,10,.8)'; ctx.fill();
+    ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(255,255,255,.25)'; ctx.stroke();
+    ctx.beginPath(); ctx.arc(x, y, r - 1, -PI/2, -PI/2 + TAU*f);
+    ctx.lineWidth = 5; ctx.strokeStyle = on ? '#ffb070' : '#ff7a3a'; ctx.stroke();
+    // a disc and its calliper
+    ctx.beginPath(); ctx.arc(x, y - 6, 12, 0, TAU); ctx.lineWidth = 3; ctx.strokeStyle = '#ffd2b0'; ctx.stroke();
+    ctx.fillStyle = '#ff7a3a'; ctx.fillRect(x + 5, y - 15, 8, 12);
+    txt('BRAKE', x, y + 22, 11, '#ffe2d0', 'center', 900);
+    buttons.push({x: x - r - 6, y: y - r - 6, w: r*2 + 12, h: r*2 + 12, hold: true, down: ()=> brakeHeld = true, up: ()=> brakeHeld = false});
+}
+// the spare tyres picked up towards the next three, beside the sprocket count
+function drawTyres(x, y)
+{
+    for (let k = 0; k < 3; ++k)
+    {
+        ctx.beginPath(); ctx.arc(x + k*15, y, 5.5, 0, TAU);
+        ctx.lineWidth = 3; ctx.strokeStyle = k < tyres ? '#ff8a4a' : 'rgba(255,255,255,.35)'; ctx.stroke();
+    }
 }
 // coming up to a block of lines: a ladder of the lines it offers, top of the hill first, the one picked lit up
 function drawForkPrompt(W, H)
@@ -4178,9 +4306,10 @@ const HELP_TOUCH = [
     ['EVERY BLUE CELL IN A ROW', 'supercharge: a huge send off the booter, tricks x2'],
     ['LAND SQUARE TO THE SLOPE', 'chain tricks for a combo and a boost'],
     ['TAP AT A DROP-IN LIP', 'send it: a bigger pop off the big drops'],
+    ['THREE SPARE TYRES', 'hold BRAKE on the left to lock up and slide'],
     ['ON A KEYBOARD', 'space: jump, hold to backflip  ·  shift: front flip'],
     ['', 'U I O J L N K , : the eight tricks  ·  F: style trick'],
-    ['', 'up / down at a split  ·  T: turbo  ·  C / V: camera  ·  M: sound']];
+    ['', 'up / down at a split  ·  T: turbo  ·  B: brake  ·  C / V: camera  ·  M: sound']];
 function drawHelp(W, H, top, bottom)
 {
     // one column on a tall screen, two on a wide one, spaced out into whatever room there is
@@ -4215,29 +4344,51 @@ function camButtons(W, top, bw, bh)
     button(W - 12 - bw*2 - 7 - 70, top, 63, bh, camViewName(), camNextView, false, 12);
 }
 
+// the score card: a joke for how it ended, a rating, everything that went right and wrong, and then the points
+const CRASH_JOKES = {
+    'LANDED ON YOUR HEAD': 'HORNS FIRST. BOLD.', 'BAD LANDING': 'GRAVITY 1, COW 0', 'HIT A ROCK': 'THE ROCK WON',
+    'HIT THE EDGE': 'THE WALL IS UNDEFEATED', 'FELL INTO THE CHASM': 'MOOOOooooo...', 'MISSED THE RAIL': 'RAIL 1, COW 0',
+    'MISSED THE BARS': 'BARS MISSED. GROUND FOUND.', 'TANGLED IN THE WHIP': 'TAILWHIPPED', 'LANDED SIDEWAYS': 'SIDEWAYS IS NOT A DIRECTION',
+    'LANDED ON YOUR SIDE': 'TABLE FOR ONE, ON THE FLOOR', 'HANDS OFF THE BARS': 'LOOK MA, NO LANDING', 'FEET OFF THE PEDALS': 'PEDALS ARE FOR FEET'};
+const RATINGS = [[400000, 'LEGEN-DAIRY'], [150000, 'MOO-NSTROUS'], [60000, 'UDDERLY RADICAL'], [20000, 'HEIFER ON A MISSION'], [5000, 'MILD MOO'], [0, 'CALF IN TRAINING']];
 function drawResults(W, H)
 {
-    const cw = min(W - 28, 360), ch = min(H - 20, 410), cx = (W - cw)/2, cy = H*.5 - ch/2;
-    ctx.fillStyle = 'rgba(8,14,28,.4)'; ctx.fillRect(0, 0, W, H);
-    rrect(cx, cy, cw, ch, 18, 'rgba(12,18,30,.88)', 'rgba(255,210,70,.55)');
-    txt(crashReason || 'WIPEOUT', W/2, cy + 32, fitSize(crashReason || 'WIPEOUT', 22, cw - 30), '#ff8a6a', 'center', 900);
-    txt(floor(dist).toLocaleString() + ' m', W/2, cy + 80, 44, '#fff', 'center', 900);
-    txt(score.toLocaleString() + ' points', W/2, cy + 116, 18, '#ffd23a', 'center', 800);
-    const rows = [['Sprockets', orbsGot + (legBoosts || supers ? '  (' + [legBoosts && legBoosts + (legBoosts > 1 ? ' sets' : ' set'), supers && supers + ' super'].filter(Boolean).join(', ') + ')' : '')], ['Flips', flipsTotal], ['Tricks', tricksTotal],
-        ['Lines', lines + (proLines ? '  (' + proLines + ' pro)' : '')],
-        ['Best trick', bestTrick.pts ? bestTrick.name + '  ' + bestTrick.pts.toLocaleString() : '-'], ['Best combo', bestCombo]];
-    // rows close up on a short screen so the button never covers them
-    const rh = clampV((ch - 152 - 98)/rows.length, 17, 24);
-    let y = cy + 152;
-    for (const [a, b] of rows)
+    const wideCard = W > H && H < 560, cw = min(W - 28, wideCard ? 640 : 370), ch = min(H - 20, 560), cx = (W - cw)/2, cy = H*.5 - ch/2;
+    ctx.fillStyle = 'rgba(8,14,28,.45)'; ctx.fillRect(0, 0, W, H);
+    rrect(cx, cy, cw, ch, 18, 'rgba(12,18,30,.9)', 'rgba(255,210,70,.55)');
+    const joke = CRASH_JOKES[crashReason] || 'OUCH.', rating = RATINGS.find(r=> score >= r[0])[1];
+    txt(joke, W/2, cy + 30, fitSize(joke, 24, cw - 30), '#ff8a6a', 'center', 900);
+    txt((crashReason || 'wipeout').toLowerCase(), W/2, cy + 53, 13, 'rgba(255,255,255,.6)', 'center', 700);
+    txt('RATING:  ' + rating, W/2, cy + 78, fitSize('RATING:  ' + rating, 15, cw - 30), '#ffd23a', 'center', 900);
+    const rows = [
+        ['Distance moo-ved', floor(dist).toLocaleString() + ' m'],
+        ['Hard landings (ouch)', hardLandings],
+        ['Jumps cased (so close)', cased],
+        ['Sketchy saves', sketchy],
+        ['Butter-smooth landings', perfects],
+        ['Flips  ·  tricks', flipsTotal + '  ·  ' + tricksTotal],
+        ['Longest hang time', maxAir.toFixed(1) + ' s'],
+        ['Top speed', round(topSpeed*3.6) + ' km/h'],
+        ['Sprockets hoarded', orbsGot + (legBoosts || supers ? '  (' + [legBoosts && legBoosts + (legBoosts > 1 ? ' sets' : ' set'), supers && supers + ' super'].filter(Boolean).join(', ') + ')' : '')]];
+    if (smashes) rows.push(['Rocks obliterated', smashes]);
+    if (slides) rows.push(['Power slides', slides]);
+    if (lines) rows.push(['Lines ridden', lines + (proLines ? '  (' + proLines + ' pro)' : '')]);
+    rows.push(['Best trick', bestTrick.pts ? bestTrick.name + '  ' + bestTrick.pts.toLocaleString() : '-'], ['Best combo', bestCombo]);
+    // one column, or two on a short wide screen, the rows closing up to leave room for the points and the buttons
+    const cols = wideCard ? 2 : 1, per = ceil(rows.length/cols), top = cy + 100, room = ch - 100 - 128;
+    const rh = clampV(room/per, 15, 22), colW = (cw - 36)/cols, size = rh < 18 ? 12.5 : 14;
+    rows.forEach(([a, b], i)=>
     {
-        const v = b.toLocaleString();
-        txt(a, cx + 24, y, 15, 'rgba(255,255,255,.8)', 'left', 600);
-        txt(v, cx + cw - 24, y, fitSize(v, 15, cw - 140, 800), '#fff', 'right', 800);
-        y += rh;
-    }
+        const col = floor(i/per), x0 = cx + 18 + col*colW, y = top + (i % per)*rh, v = b.toLocaleString();
+        txt(a, x0 + 6, y, fitSize(a, size, colW*.58, 600), 'rgba(255,255,255,.78)', 'left', 600);
+        txt(v, x0 + colW - 6, y, fitSize(v, size, colW*.42, 800), '#fff', 'right', 800);
+    });
+    const py = cy + ch - 112;
+    ctx.fillStyle = 'rgba(255,255,255,.15)'; ctx.fillRect(cx + 24, py - 22, cw - 48, 1);
+    txt('POINTS', cx + 24, py + 2, 16, '#ffd23a', 'left', 900);
+    txt(score.toLocaleString(), cx + cw - 24, py + 2, fitSize(score.toLocaleString(), 32, cw - 140), '#fff', 'right', 900);
     txt(isBest ? 'NEW BEST!' : 'BEST  ' + best.dist.toLocaleString() + ' m  ·  ' + best.score.toLocaleString(),
-        W/2, y + 10, 14, isBest ? '#ffd23a' : 'rgba(255,255,255,.75)', 'center', 800);
+        W/2, py + 30, 13, isBest ? '#ffd23a' : 'rgba(255,255,255,.7)', 'center', 800);
     const bw = cw - 48, mw = 96;
     button(cx + 24, cy + ch - 58, bw - mw - 10, 42, 'RIDE AGAIN', ()=> startRide(), true, 16);
     button(cx + 24 + bw - mw, cy + ch - 58, mw, 42, 'MENU', ()=> newRun(nextSeed()), false, 15);
@@ -4276,17 +4427,18 @@ const SFX = {
 
 // a cow's moo, made from scratch: a buzzing voice through a mouth that opens from mmm to ooo and closes again,
 // its pitch rising, holding with a wobble and sliding away at the end
-function moo()
+// (pitch, length and loudness change it: low, short and quiet is a groan)
+function moo(pitch=1, d=1.7, loud=.5)
 {
     if (!soundOn || !audioContext || audioContext.state != 'running' || !audioMasterGain) return false;
-    const ac = audioContext, t = ac.currentTime + .02, d = 1.7;
+    const ac = audioContext, t = ac.currentTime + .02, u = d/1.7;
     const voice = (type, k, level)=>
     {
         const o = ac.createOscillator(), g = ac.createGain();
-        o.type = type;
+        o.type = type; k *= pitch;
         o.frequency.setValueAtTime(95*k, t);
-        o.frequency.linearRampToValueAtTime(146*k, t + .32);
-        o.frequency.linearRampToValueAtTime(134*k, t + 1.1);
+        o.frequency.linearRampToValueAtTime(146*k, t + .32*u);
+        o.frequency.linearRampToValueAtTime(134*k, t + 1.1*u);
         o.frequency.exponentialRampToValueAtTime(72*k, t + d);
         const lfo = ac.createOscillator(), lg = ac.createGain();
         lfo.frequency.value = 5.2; lg.gain.value = 3*k;
@@ -4299,13 +4451,13 @@ function moo()
     const mouth = ac.createBiquadFilter(), throat = ac.createBiquadFilter(), env = ac.createGain();
     mouth.type = 'lowpass'; mouth.Q.value = 5;
     mouth.frequency.setValueAtTime(240, t);
-    mouth.frequency.linearRampToValueAtTime(950, t + .45);
-    mouth.frequency.linearRampToValueAtTime(720, t + 1.15);
+    mouth.frequency.linearRampToValueAtTime(950, t + .45*u);
+    mouth.frequency.linearRampToValueAtTime(720, t + 1.15*u);
     mouth.frequency.linearRampToValueAtTime(260, t + d);
     throat.type = 'peaking'; throat.frequency.value = 620; throat.Q.value = 1.8; throat.gain.value = 9;
     env.gain.setValueAtTime(0, t);
-    env.gain.linearRampToValueAtTime(.5, t + .14);
-    env.gain.setValueAtTime(.5, t + 1.2);
+    env.gain.linearRampToValueAtTime(loud, t + .14*u);
+    env.gain.setValueAtTime(loud, t + 1.2*u);
     env.gain.linearRampToValueAtTime(0, t + d);
     voice('sawtooth', 1, .7).connect(mouth);
     voice('square', .5, .35).connect(mouth);
@@ -4544,7 +4696,7 @@ window.__mtb = {
         forkAhead: !!forkAhead, laneWant, view: camViewName(), zoom: camZoomName(), splits: splits.map(s=> [s.x0|0, s.x1|0, s.kinds.join('+')]),
         lineDetail: splits.map(s=> Object.values(s.lines).map(b=> b.kind + ':' + (b.what || 'plain')).join(' ')),
         dropCam, braking, sentIt, camLift, baseY, wheelOffF, wheelOffR, drops: feats.filter(f=> f.type == 'dropin').map(f=> [f.x0|0, f.x1|0, f.landX|0, +f.F.toFixed(1)]),
-        trickCounts, tricksTotal, legBoosts, supers, sends, cellsGot, legT, superOn, style: style?.name, styleT, airHist, hardLandings, combosBanked, multSum, queued: trickQueued, swipeCount, mainHeld, secondHeld}),
+        trickCounts, tricksTotal, legBoosts, supers, sends, cellsGot, legT, superOn, tyres, tyresGot, brakeFuel, slides, cased, sketchy, perfects, maxAir, topSpeed, style: style?.name, styleT, airHist, hardLandings, combosBanked, multSum, queued: trickQueued, swipeCount, mainHeld, secondHeld}),
     start: ()=> startRide(),
     // steps the game by hand, a 60th of a second at a time, with the engine paused
     // (or by frames of another length, a number or a function giving one, as a screen at another rate would)
@@ -4556,6 +4708,8 @@ window.__mtb = {
     wipe: reason=> crash(reason || 'HIT A ROCK'),
     buttons: ()=> buttons.map(({x, y, w, h, label})=> ({x, y, w, h, label})),
     moo: ()=> moo(),
+    brake: on=> { brakeHeld = on; }, tyresTo: n=> { brakeFuel = n >= 3 ? BRAKE_LEN : 0; },
+    endRun: ()=> endRun(),
     // the middle of rider and bike as drawn, for close-ups
     riderAt: ()=> wrecked() ? vec3(rag.x - OX, rag.y - OY, rag.z) : bikeMatrix().transformPoint(vec3(0, 1, 0)),
     // how well the rider is in view: how far off the middle of the screen (1 = at its edge) and how much of the

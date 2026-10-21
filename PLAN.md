@@ -455,6 +455,32 @@ Each phase is a separate commit (or a few), tested with the Phase 0 harness befo
     - Gameplay in SIDE and 3/4, the crash, and the menu smack.
     - Regression: 24 km with tricks: 0 crashes, no page errors.
 
+- **Portrait scoring, two-tap crash, funny score card, spare tyres and brakes: done.**
+  - **Portrait:**
+    - The combo, trick pops, in-air tricks, banked combo and messages now sit in a band from 68% of the screen down, below the rider, at 75% size.
+    - They stay clear of the turbo and brake buttons at the sides.
+  - **The crash:**
+    - It no longer moves on to the results by itself.
+    - **The hurt rider:** lies there under a ring of stars, a hand waving feebly, legs kicking and head lifting. Every 4–6 s it gives a low groaning moo and a message ("OUCH...", "MOO-CH!", "NOT THE HORNS"...).
+    - **Taps:** the first tap (after 0.6 s) shows the score card; the next (after 0.5 s more) rides again.
+    - **Bests:** saved at the moment of the crash.
+  - **The score card:**
+    - **Top:** a joke for how the run ended ("THE ROCK WON", "HORNS FIRST. BOLD.", "GRAVITY 1, COW 0"...) and a rating from CALF IN TRAINING to LEGEN-DAIRY.
+    - **Stats:** distance, hard landings, cased jumps, sketchy saves, perfect landings, flips and tricks, longest hang time, top speed and sprockets; rocks smashed, power slides and lines when there are any; best trick and best combo.
+    - **Bottom:** the points.
+    - **New counts:** cased (landing within 4 m of a built landing's lip, with a CASED IT! message), sketchy, perfects, maxAir, topSpeed, smashes, slides.
+  - **Spare tyres and the brakes:**
+    - **The tyres:** one every 110–270 m, lying on a run. Three fill the brakes with 5 s of grip.
+    - **The BRAKE button:** on the left; hold it with one thumb while the other rides (B, A or the left arrow on a keyboard).
+    - **Braking:** −24 m/s², down to 3 m/s. The back wheel steps out, dust flies, and the wheels nearly stop.
+    - **Scoring:** a slide over 0.6 s scores POWER SLIDE.
+    - **Speed afterwards:** a slow bike gets back up to cruising speed over about a second.
+  - **Fixed in testing:** a crash when braking away from a drop-in ledge.
+  - **Checks:**
+    - A crash stays down for 7 s; the first tap shows the card; an immediate second tap is ignored; a later tap rides.
+    - Braking slows the bike and scores a slide.
+    - Regression with tricks: 0 crashes.
+
 ## Running the tools
 
     node tools/sim.mjs [--seeds 20] [--km 5] [--flips back|front] [--tricks] [--lanes rand|up|down|main] [--turbo] [--json out.json] [--salt n] [--game other.html]

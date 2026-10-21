@@ -517,6 +517,8 @@ Each phase is a separate commit (or a few), tested with the Phase 0 harness befo
     - `tools/sim.mjs --bike n`. 24 km each with tricks and flips: All-Rounder 0 crashes; DH Sled 1 (a flip it was too slow for); Dirt Jumper 0, with 0.74 hard landings per km against 0.20; E-Beast 0.
     - The choices survive a reload, and the ride starts on the chosen bike.
 
+- **The logo falls over instead of flying away: done.** On PLAY the sign tips over backwards about the back edge of its foot (`stepLogoFall`): slowly at first, faster as it leans, then a thud, dust and a little bounce. It lies face up beside the trail, stopped where its top meets the hillside (`logoRest`). Its posts come out of the ground with it.
+
 ## Running the tools
 
     node tools/sim.mjs [--seeds 20] [--km 5] [--flips back|front] [--tricks] [--lanes rand|up|down|main] [--turbo] [--json out.json] [--salt n] [--game other.html] [--bike 0..3]

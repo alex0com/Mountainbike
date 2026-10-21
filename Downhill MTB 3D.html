@@ -1763,31 +1763,64 @@ function buildLogo(img)
     walls.doubleSided = true;
     return {front, back, walls, tex: new TextureInfo(img), w, h};
 }
-// where the logo stands, and how it is turned, rocked by a knock and flung away when the ride starts
-let logoWob = 0, logoWobV = 0, logoFly = 0;
+// where the logo stands, and how it is turned, rocked by a knock, and toppled over backwards when the ride starts
+let logoWob = 0, logoWobV = 0, logoFall = 0, logoFallV = 0, logoFallTo = PI/2, logoDown = false;
 const logoBase = ()=> vec3(LOGO_X, groundY(LOGO_X), wz(LOGO_X, 0));
 const logoH = ()=> logo ? logo.h : LOGO_W*.8;
 function logoMatrix()
 {
-    const b = logoBase(), f = logoFly*logoFly;
-    return Matrix4.translation(vec3(b.x - OX, b.y - OY + f*45, b.z - f*20))
-        .multiply(Matrix4.rotation(vec3(0, LOGO_YAW + f*5, 0)))
-        .multiply(Matrix4.rotation(vec3(-logoWob, 0, sin(time*.7)*.012)))
-        .multiply(Matrix4.scaling(vec3(1 - logoFly*.4)));
+    // it rocks and falls about the back edge of its foot
+    const b = logoBase();
+    return Matrix4.translation(vec3(b.x - OX, b.y - OY, b.z))
+        .multiply(Matrix4.rotation(vec3(0, LOGO_YAW, 0)))
+        .multiply(Matrix4.translation(vec3(0, 0, -.45)))
+        .multiply(Matrix4.rotation(vec3(-logoWob - logoFall, 0, logoFall ? 0 : sin(time*.7)*.012)))
+        .multiply(Matrix4.translation(vec3(0, 0, .45)));
 }
+// how far over it can go before its top meets the hillside behind it
+function logoRest()
+{
+    const b = logoBase(), back = vec3(-LOGO_N.x, 0, -LOGO_N.z), h = LOGO_LIFT + logoH();
+    for (let a = .3; a < PI/2; a += .02)
+    {
+        const p = b.add(vec3(0, cos(a)*h, 0)).add(back.scale(sin(a)*h));
+        if (p.y < terrainAt(p.x, p.z) + .35) return a;
+    }
+    return PI/2 - .03;
+}
+// over it goes: slowly at first, faster as it leans, a thud and a little bounce, and there it lies
+function stepLogoFall(dt)
+{
+    if (logoDown) return;
+    logoFallV += 4.5*sin(logoFall + .15)*dt;
+    logoFall += logoFallV*dt;
+    if (logoFall < logoFallTo) return;
+    logoFall = logoFallTo;
+    if (logoFallV > .9)
+    {
+        if (logoFallV > 2) { sfx('bonk'); sfx('landHard'); camShake = max(camShake, .5); }
+        const b = logoBase(), h = (LOGO_LIFT + logoH())*.6;
+        dustBurst(b.x - LOGO_N.x*h, groundY(b.x - LOGO_N.x*h), 70);
+        logoFallV *= -.22;
+    }
+    else { logoFallV = 0; logoDown = true; }
+}
+function startLogoFall() { logoFallTo = logoRest(); logoFall = .001; logoFallV = .5; logoDown = false; }
 class LogoView extends EngineObject3D
 {
     constructor() { super(vec3()); this.specular = .35; }
     render3D()
     {
-        if (!logo || logoFly >= 1 || state != 'title' && logoFly <= 0) return;
+        if (!logo || state != 'title' && logoFall <= 0) return;
         const L = logoMatrix(), sign = L.copy().multiply(Matrix4.translation(vec3(0, LOGO_LIFT, 0)));
         render3D.drawMesh(logo.front, sign, logo.tex);
         render3D.drawMesh(logo.back, sign, logo.tex, hsl(.6,.05,.09));
         render3D.drawMesh(logo.walls, sign, undefined, hsl(.6,.06,.12));
         // two posts down into the ground, far enough for the slope under either end
+        // (pulled out of the ground with it as it goes over)
+        const below = logoFall > 0 ? .3 : 1.7;
         for (const x of [-2.4, 2.4])
-            render3D.drawMesh(M.gatePost, L.copy().multiply(Matrix4.translation(vec3(x, LOGO_LIFT*.5, -.25))).multiply(Matrix4.scaling(vec3(1, (LOGO_LIFT + 3.4)/4.6, 1))), undefined, hsl(.07,.35,.3));
+            render3D.drawMesh(M.gatePost, L.copy().multiply(Matrix4.translation(vec3(x, (LOGO_LIFT + 1.7 - below)/2, -.25))).multiply(Matrix4.scaling(vec3(1, (LOGO_LIFT + 1.7 + below)/4.6, 1))), undefined, hsl(.07,.35,.3));
     }
 }
 
@@ -3048,7 +3081,7 @@ function newRun(s)
     placeRider(START_X);
     runTime = dist = score = orbsGot = orbStreak = 0;
     bestCombo = 0; bestComboName = ''; flipsTotal = 0; grindDist = 0; crashReason = ''; trickCounts = {}; tricksTotal = 0; bestTrick = {name: '', pts: 0}; airHist = [0, 0, 0, 0, 0, 0]; hardLandings = 0; combosBanked = 0; multSum = 0; cased = sketchy = perfects = maxAir = topSpeed = smashes = slides = tyresGot = 0;
-    titleT = 0; titleWreck = false; menu = 'main'; logoWob = logoWobV = logoFly = 0;
+    titleT = 0; titleWreck = false; menu = 'main'; logoWob = logoWobV = logoFall = logoFallV = 0; logoDown = false;
     battery = 0; turboT = 0; turbos = 0; supers = legBoosts = sends = cellsGot = 0; tyres = brakeFuel = slideT = 0; brakeHeld = false; setShown = null; setShownT = 0; lines = 0; proLines = 0; linesRidden = new Set; allLines = false; dayT = DAY_START; dropCam = crashCam = sendCam = 0; camLift = 0; ragdoll = null; pieces = []; pz = yawV = leanV = bermY = 0; camZ = camB = 0;
     messages.length = 0; trickPops.length = 0; swipeFx.length = 0;
     riderView = new RiderView;
@@ -3116,8 +3149,8 @@ function titleReplay()
 function startRide()
 {
     if (state == 'results') { newRun(nextSeed()); }
-    // off the menu: the rider back on the summit and the logo flung away
-    if (state == 'title') { resetTitleRider(); logoFly = .001; menu = 'main'; sfx('whoosh'); }
+    // off the menu: the rider back on the summit and the logo toppled over
+    if (state == 'title') { resetTitleRider(); startLogoFall(); menu = 'main'; }
     state = 'ride';
     sp = 6;
     hintT = 0;
@@ -3162,7 +3195,7 @@ function gameUpdate()
         if (state == 'results') resultsT += dt;
     }
     else titleStep(dt);
-    if (logoFly > 0 && logoFly < 1) logoFly = min(1, logoFly + dt/1.2);
+    if (logoFall > 0) stepLogoFall(dt);
     updateVisuals(dt);
     trackEnsure(px + TRACK_AHEAD);
     if (frame % 60 == 0) trackPrune(px - 260);

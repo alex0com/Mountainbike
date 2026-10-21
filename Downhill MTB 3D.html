@@ -142,7 +142,7 @@ let ORB_V = 13;   // the launch speed air orbs are laid out for, measured from r
 
 let seed = 1, rnd, NA, NB, NC, NV;
 let ys = [], gapF = [], rails = [], rocks = [], orbs = [], signs = [], feats = [], gaps = [], pendingArcs = [];
-let genBase = 0, genGrade = 0, nextSignX = 500, lastLaunch = null, nextBooterX = 200;
+let genBase = 0, genGrade = 0, nextSignX = 500, lastLaunch = null, nextBooterX = 200, nextCanyonX = 900;
 // forks: a high line up the hillside behind the trail and a low line down the slope in front, reached by berms
 const B_T = 22, LANE_UP = -10, LANE_DN = 9;
 let splits = [], openSplit = null, lastSplitEnd = 0, ride = null, noSign = [], paces = [], nextDropX = 450;
@@ -333,13 +333,13 @@ function addKicker(H, Lr, type='kicker')
 // The landing is laid out for a fast rider rolling off the lip, so anyone from a cruise to flat out comes down on its slope.
 function addBooter(d) { return addJump(2.2 + rnd()*.6 + d*.4, 7 + rnd()*1.5, .55 + rnd()*.12 + d*.08, 'booter', 17); }
 // a kicker with its own landing, steeper than the trail, laid along the flight off it
-function addJump(H, L, G, type='kicker', orbV=ORB_V)
+function addJump(H, L, G, type='kicker', orbV=ORB_V, knuckle=.5)
 {
     const f = addKicker(H, L, type), a = atan(f.lipSlope), v = VMAX + 2;
-    // a short knuckle off the lip, then the landing all the way past that flight
+    // a knuckle off the lip, a short one or a whole step down, then the landing all the way past that flight
     let x = 0, y = 0, vx = v*cos(a), vy = v*sin(a);
-    for (let t = 0; t < 6 && y > -.5 - G*x; t += 1/60) { x += vx/60; vy -= G_AIR/60; y += vy/60; }
-    genBase = f.lipY - .5; genGrade = G;
+    for (let t = 0; t < 6 && y > -knuckle - G*x; t += 1/60) { x += vx/60; vy -= G_AIR/60; y += vy/60; }
+    genBase = f.lipY - knuckle; genGrade = G; f.drop = knuckle;
     addRun(x + 12, G, 0);
     f.x2 = genX(); f.orbV = orbV;
     addRun(16, gradeTarget(clamp01(genX()/6000)), 0);
@@ -366,6 +366,87 @@ function addDropIn(d)
     addRun(24, gradeTarget(d), 0);
     return f;
 }
+// a step-down: a small kicker off a ledge onto a landing a few metres lower, no chasm between
+const addStepDown = d=> addJump(1 + rnd()*.4, 4.5 + rnd(), .5 + rnd()*.1, 'stepdown', 14, 3 + rnd()*3 + d*2);
+
+// drop stairs: three or four ledges stepping down the mountain, ridden at a steady pace, a little drop off each
+function addStairs(d)
+{
+    const n = 3 + (rnd() < .4 + d*.4 ? 1 : 0), v = 11 + rnd()*2, x0 = genX();
+    addRun(16, .12, 0);
+    const f = {type: 'stairs', x0, n, lips: [], airs: 0};
+    for (let k = 0; k < n; ++k)
+    {
+        if (k) addRun(7.5 + rnd()*2, .1, 0);
+        f.lips.push(genX());
+        // the face: the next point of ground is this much lower
+        genBase -= 1.5 + rnd()*1.2 + d*.6;
+    }
+    // a steep landing off the last one
+    genGrade = .5;
+    addRun(16, .5, 0);
+    f.x1 = genX();
+    feats.push(f);
+    paces.push({x0: x0 + 2, x1: f.lips[n - 1] + .5, v, f});
+    const last = f.lips[n - 1];
+    lastLaunch = {x1: last, lipY: groundY(last - .01), lipSlope: -.1};
+    addRun(14, gradeTarget(d), 0);
+    return f;
+}
+
+// a canyon gap: the trail sets the rider's speed on the run in, then a big kicker throws them across a wide chasm.
+// It is as wide as a rider at that speed, rolling off without a pop, clears with room to spare.
+function addCanyon(d)
+{
+    const v = 15 + rnd()*3;
+    addRun(10, min(genGrade, .3), 0);
+    const z0 = genX();
+    addRun(26, .2, 0);
+    const f = addKicker(1.9 + rnd()*.4, 6, 'canyon');
+    paces.push({x0: z0, x1: f.x1 + .2, v, hold: true, f});
+    const drop = 3 + rnd()*3, G = .55, a = atan(f.lipSlope), vx = v*cos(a), vy = v*sin(a);
+    const clears = W=> { const t = (W + 3)/vx; return vy*t - .5*G_AIR*t*t > -drop - 3*G + .8; };
+    let W = 26;
+    while (W > 10 && !clears(W)) W -= .5;
+    const n = round(W/DX), floorY = f.lipY - drop - 45;
+    for (let k = 1; k <= n; ++k) pushY(floorY, 1);
+    f.W = n*DX; f.x2 = genX() + DX*.5; f.drop = drop; f.landY = f.lipY - drop; f.camX0 = z0 + 6; f.orbV = v; f.camDist = 26;
+    gaps.push(f);
+    // the landing reaches past a rider who popped at the lip
+    let x = 0, y = 0, wx = vx, wy = vy + POP;
+    for (let t = 0; t < 6 && y > -drop - G*max(0, x - f.W); t += 1/60) { x += wx/60; wy -= G_AIR/60; y += wy/60; }
+    genBase = f.landY; genGrade = G;
+    addRun(max(12, x - f.W + 12), G, 0);
+    f.landX = f.x1 + x;
+    addRun(16, gradeTarget(d), 0);
+    return f;
+}
+
+// a wooden drop deck, North Shore style: a plank runway out over the slope as the mountain falls away beneath it,
+// ending in a drop off its end onto the slope below
+function addDeck(d)
+{
+    // held at one grade on the way in, so no crest throws the bike under the deck
+    addRun(20, genGrade, 0);
+    const len = 16 + rnd()*10, x0 = genX() + 1.5, G = .55 + rnd()*.1 + d*.05;
+    addRun(len + 1.5, G, 0);
+    const r = {x0, x1: x0 + len, y0: groundY(x0) + .15, slope: -.06, deck: true, mount: true};
+    r.y1 = railY(r, r.x1);
+    const h = r.y1 - groundY(r.x1);
+    // the landing, far enough down the slope for a fast rider off the end
+    let x = 0, y = 0, vx = VMAX + 2, vy = 0;
+    for (let t = 0; t < 6 && y > -h - G*x; t += 1/60) { x += vx/60; vy -= G_AIR/60; y += vy/60; }
+    addRun(x + 10, G, 0);
+    rails.push(r);
+    const f = {type: 'deck', x0: x0 - 3, x1: r.x1 + .5, x2: genX(), rail: r};
+    feats.push(f);
+    paces.push({x0: x0 + 3, x1: r.x1 - .5, v: 10 + rnd()*2, f});
+    for (let x = x0 + 4; x < r.x1 - 1; x += 3) orbs.push({x, y: railY(r, x) + 1.1, got: false, air: false});
+    lastLaunch = {x1: r.x1, lipY: r.y1, lipSlope: r.slope};
+    addRun(16, gradeTarget(d), 0);
+    return f;
+}
+
 // where the trail asks the rider to slow down, and to what speed
 const paceAt = x=> paces.find(p=> x > p.x0 && x < p.x1);
 const vFloor = x=> { const p = paceAt(x); return p ? p.v*.85 : VMIN; };
@@ -643,6 +724,16 @@ function genSection()
         pendingArcs.push(lastLaunch = addBooter(d));
         nextBooterX = genX() + 150 + rnd()*190;
     }
+    // the bigger set pieces, a little way down the mountain: step-downs, drop stairs, decks and now and then a canyon
+    else if (x > 300 && rnd() < .28)
+    {
+        const q = rnd(), reach = launchReach(lastLaunch);
+        if (reach > genX() - 4) addRun(reach - genX() + 10, genGrade);
+        if (q < .2 && x > nextCanyonX && !openSplit) { pendingArcs.push(lastLaunch = addCanyon(d)); nextCanyonX = genX() + 700 + rnd()*500; }
+        else if (q < .5 || x < 500) pendingArcs.push(lastLaunch = addStepDown(d));
+        else if (q < .75) addStairs(d);
+        else addDeck(d);
+    }
     else if (r < .2)
     {
         // the bigger ones come with a landing of their own, so they carry real air
@@ -692,7 +783,7 @@ function trackInit(s)
     NA = makeNoise(rnd); NB = makeNoise(rnd); NC = makeNoise(rnd); NV = makeNoise(rnd);
     ys = []; gapF = []; rails = []; rocks = []; orbs = []; signs = []; feats = []; gaps = []; pendingArcs = [];
     splits = []; openSplit = null; lastSplitEnd = 0; ride = null; noSign = []; gullies = []; arches = [];
-    nextSignX = 500; lastLaunch = null; nextBooterX = 200; nextDropX = 450; paces = []; bends = [];
+    nextSignX = 500; lastLaunch = null; nextBooterX = 200; nextDropX = 450; nextCanyonX = 900; paces = []; bends = [];
     // the summit: the back of the peak rising from the left, a flat top to stand on, then the drop in
     genBase = -14; genGrade = -.6;
     pushY(genBase);
@@ -1015,7 +1106,7 @@ function buildChunk(i)
 
     // things on the track in this chunk
     for (const r of rocks) if (r.x >= x0 && r.x < x0 + CH) ch.objs.push(makeRock(r));
-    for (const r of rails) if (r.x0 >= x0 && r.x0 < x0 + CH) ch.objs.push(makeRail(r));
+    for (const r of rails) if (r.x0 >= x0 && r.x0 < x0 + CH) ch.objs.push(r.deck ? makeDeck(r) : makeRail(r));
     for (const s of signs) if (s.x >= x0 && s.x < x0 + CH) ch.objs.push(...makeSign(s));
     if (i == 0) ch.objs.push(...makeSummit());
     for (const g of gullies) if (g.x0 >= x0 && g.x0 < x0 + CH) { ch.objs.push(makeWater(g)); if (g.bridge) ch.objs.push(makeBridge(g)); }
@@ -1103,6 +1194,32 @@ function makeRail(r)
     sceneMeshes.push(mesh);
     const o = new EngineObject3D(vec3(), mesh);
     return anchorW(o, r.x0, r.y0, 0);
+}
+
+// a plank deck on posts, with a ramp up onto it from the ground and stringers under the planks
+function makeDeck(r)
+{
+    const mesh = new Mesh, len = r.x1 - r.x0, w1 = hsl(.08,.42,.4), w2 = hsl(.07,.4,.3), w3 = hsl(.07,.35,.22);
+    const at = (x, y, z, size, color, rot=vec3())=> mesh.combine(buildBox(size).setColor(color), buildMatrix(vec3(x, y, z), rot));
+    const a = atan(r.slope);
+    let k = 0;
+    for (let x = .2; x < len; x += .42, ++k) at(x, r.slope*x - .06, 0, vec3(.36, .08, 2.2 + (k % 3)*.08), k % 2 ? w1 : w2, vec3(0, 0, a));
+    for (const z of [-.85, .85])
+    {
+        at(len/2, r.slope*len/2 - .2, z, vec3(len/cos(a), .2, .16), w3, vec3(0, 0, a));
+        for (let x = .6; x < len; x += 2.4)
+        {
+            const top = r.slope*x - .25, bottom = groundY(r.x0 + x) - r.y0 - .4, h = top - bottom;
+            if (h > .1) at(x, (top + bottom)/2, z, vec3(.2, h, .2), w3);
+            if (h > 2.2) at(x, top - h*.4, z, vec3(.1, h*.75, .1), w2, vec3(0, 0, .45));
+        }
+    }
+    // the ramp from the ground
+    const g = groundY(r.x0 - 2) - r.y0;
+    at(-1, g/2 - .06, 0, vec3(2.1, .08, 2), w1, vec3(0, 0, atan2(-g, 2)));
+    mesh.points = mesh.points.map(p=> vec3(p.x, p.y, wz(r.x0 + p.x, p.z)));
+    sceneMeshes.push(mesh);
+    return anchorW(new EngineObject3D(vec3(), mesh), r.x0, r.y0, 0);
 }
 
 function makeSign(s)
@@ -1462,7 +1579,18 @@ function stepGround(dt)
     sp = clampV(sp + a*dt, state == 'ride' ? vFloor(px) : 0, VMAX + (turboT > 0 ? TURBO_V : boostT > 0 ? 4 : 0));
     braking = !!pace && sp > pace.v;
     if (braking) sp = max(pace.v, sp - 12*dt);
+    // the run in to a canyon gap sets the speed that clears it: a slow rider pedals up to it
+    else if (pace?.hold && sp < pace.v) sp = min(pace.v, sp + 9*dt);
+    // the face of a drop or a chasm wall is never ridden: off its edge the bike flies, into it the bike crashes
+    if (s < -2.5) { vx = sp; vy = 0; takeoff(); return; }
+    if (s > 2.5) { crash('HIT THE EDGE'); return; }
     const ox = px, nx = px + sp*c*dt, gy = rideY(nx);
+    if (rideSlope(nx) < -2.5)
+    {
+        px = nx; py += sp*sn*dt; vx = sp*c; vy = sp*sn;
+        takeoff();
+        return;
+    }
     // the ground drops away faster than the bike can follow: off a lip, a drop or a big crest
     const vyNow = sp*sn, yStick = py + vyNow*dt - .5*G_AIR*2.2*dt*dt;
     if (gy < yStick - .002)
@@ -1565,9 +1693,9 @@ function stepAir(dt)
     const ox = px, oy = py;
     px += vx*dt; py += vy*dt;
     airT += dt;
-    // land on a rail from above
+    // land on a rail from above, or on the start of a deck from a little below its edge
     if (!onBranch(px)) for (const r of rails)
-        if (px >= r.x0 && px <= r.x1 && oy >= railY(r, ox) - .05 && py <= railY(r, px) && vy < 1)
+        if (px >= r.x0 && px <= r.x1 && (oy >= railY(r, ox) - .05 || r.deck && px < r.x0 + 3 && oy > railY(r, ox) - 1) && py <= railY(r, px) + (r.deck && px < r.x0 + 3 ? .9 : 0) && vy < 1)
         {
             startGrind(r);
             return;
@@ -1582,6 +1710,10 @@ function stepAir(dt)
 function land(gy)
 {
     const s = rideSlope(px), th = atan(s);
+    // over the face of a ledge that steps down, still above its foot: carries on down past it to the ground below;
+    // and one that only clips the very edge of a step, going on over it, carries on off it the same way
+    if (s < -2.5 && py > rideY(px + DX) - .05) return;
+    if (vx > 4 && rideY(px + .5) < gy - 1) return;
     // the far wall of a gap or the face of a step: arriving from the side, well below the surface
     if (abs(s) > 2.5 || gy - py > .5) { crash('HIT THE EDGE'); return; }
     const err = wrapPI(ang - th), nX = -sin(th), nY = cos(th), impact = -(vx*nX + vy*nY);
@@ -1681,6 +1813,9 @@ function scoreAir(perfect)
     });
     if (flipName) addTrick(flipName, flipPts);
     if (takeoffKind == 'gap' && airT > .3) addTrick('CHASM', 300);
+    if (takeoffKind == 'canyon' && airT > .3 && px > takeoffFeat?.x2) { addTrick('CANYON GAP', 600); countTrick('CANYON GAP'); }
+    if (takeoffKind == 'stepdown' && takeoffY - py > 3) { addTrick('STEP-DOWN', 200); countTrick('STEP-DOWN'); }
+    if (takeoffFeat?.type == 'deck' && takeoffY - py > 4) { addTrick('DECK DROP ' + round(takeoffY - py) + 'm', round((takeoffY - py)*40/10)*10); countTrick('DECK DROP'); }
     if (takeoffKind == 'cliff' && takeoffY - py > 4) addTrick('DROP ' + round(takeoffY - py) + 'm', round((takeoffY - py)*40));
     if (takeoffFeat?.type == 'dropin' && takeoffY - py > 4)
     {
@@ -1697,19 +1832,20 @@ function scoreAir(perfect)
 function startGrind(r)
 {
     const th = atan(r.slope), err = wrapPI(ang - th);
-    if (abs(err) > .85) { crash('MISSED THE RAIL'); return; }
+    if (abs(err) > .85) { crash(r.deck ? 'BAD LANDING' : 'MISSED THE RAIL'); return; }
     if (!grounded && !finishTrick()) return;
     if (!grounded) scoreAir(abs(err) < .22);
     grinding = r; grounded = false;
     sp = max(VMIN, vx*cos(th) + vy*sin(th));
     py = railY(r, px); ang = th; angVel = 0; landVis = err;
     grindStart = px;
-    sfx('grind');
+    sfx(r.deck ? (grounded ? 'click' : 'land') : 'grind');
 }
 function endGrind(popped)
 {
     const len = grinding ? px - grindStart : 0;
-    if (len > 2)
+    if (len > 2 && grinding.deck) addTrick('SHORE ' + round(len) + 'm', round(len*15));
+    else if (len > 2)
     {
         grindDist += len;
         addTrick('GRIND ' + round(len) + 'm', round(len*28));
@@ -1719,7 +1855,15 @@ function endGrind(popped)
 function stepGrind(dt)
 {
     const r = grinding, th = atan(r.slope), c = cos(th), sn = sin(th);
-    sp = clampV(sp + (-G_RIDE*sn - DRAG*sp*sp - .25 + (turboT > 0 ? 12 : 0))*dt, VMIN*.85, VMAX + (turboT > 0 ? TURBO_V : 0));
+    if (r.deck)
+    {
+        // a deck rolls like the ground, and brakes down to a roll before its end
+        const pace = paceAt(px);
+        sp = clampV(sp + (-G_RIDE*sn - DRAG*sp*sp - CRR*G_RIDE + (turboT > 0 && !pace ? 12 : 0))*dt, vFloor(px), VMAX + (turboT > 0 ? TURBO_V : 0));
+        braking = !!pace && sp > pace.v;
+        if (braking) sp = max(pace.v, sp - 12*dt);
+    }
+    else sp = clampV(sp + (-G_RIDE*sn - DRAG*sp*sp - .25 + (turboT > 0 ? 12 : 0))*dt, VMIN*.85, VMAX + (turboT > 0 ? TURBO_V : 0));
     px += sp*c*dt; py = railY(r, px);
     surfNow = S_WOOD;
     if (px >= r.x1)
@@ -2274,7 +2418,7 @@ function updateVisuals(dt)
         crank += wrapPI(level - crank)*damp(5, dt);
     }
     compressKick *= 1 - damp(4, dt);
-    compress = clamp01((suspF + suspR)*2.6 + compressKick - .12 + (grinding ? .25 : 0));
+    compress = clamp01((suspF + suspR)*2.6 + compressKick - .12 + (grinding && !grinding.deck ? .25 : 0));
 }
 
 // ---------- the camera: a view for portrait and one for landscape, picked by the player and remembered.
@@ -2289,7 +2433,7 @@ const CAM_VIEWS = {
     'HIGH':  {yaw: [1.25, .8], pitch: [.9, .82], lead: [.16, .16], up: [0, 0], dist: [32, 34], fixed: 1, follow: .8}};
 // the drop-in view, [portrait, landscape]: in front of the rider and to the side, low, close
 const DROP_VIEW = {yaw: [-.5, -.55], pitch: [.06, .05], lead: [.02, .02], up: [0, 0], dist: [15, 12], follow: .6, fixed: 1};
-let dropCam = 0;
+let dropCam = 0, dropDist = 15;
 const CAM_ORDER = Object.keys(CAM_VIEWS), CAM_ZOOMS = [['NEAR', .78], ['MID', 1], ['FAR', 1.32]];
 // side on and far back in portrait, three quarter at mid zoom in landscape
 let camView = {p: 'SIDE', l: '3/4', zp: 2, zl: 1}, camP;
@@ -2329,8 +2473,10 @@ function gameUpdatePost()
     const fy = state == 'crash' || state == 'results' ? rag.y : grounded || grinding ? baseY : py;
     // a drop-in: from rolling onto the ledge until just after the landing the camera comes in close, low and
     // round in front of the rider, so the drop and the tricks off it fill the screen, then eases back out
-    const di = state == 'ride' || state == 'crash' ? feats.find(f=> f.type == 'dropin' && fx > f.x0 - 6 && fx < f.landX + 6) : null;
+    const di = state == 'ride' || state == 'crash' ? feats.find(f=> (f.type == 'dropin' || f.type == 'canyon') && fx > (f.camX0 ?? f.x0) - 6 && fx < f.landX + 6) : null;
     dropCam += ((di ? 1 : 0) - dropCam)*damp(di ? 1.6 : 1.1, dt);
+    // a canyon gap is framed wider, to see across it
+    if (di) dropDist = di.camDist ?? DROP_VIEW.dist[o];
     const C = dropCam < .001 ? camP : {};
     if (C != camP) for (const key in camP) C[key] = mix(camP[key], DROP_VIEW[key][o] ?? DROP_VIEW[key], dropCam);
     airZoom += ((state == 'ride' && !grounded && !grinding && airT > .5 ? 1 : 0) - airZoom)*damp(1.5, dt);
@@ -2339,7 +2485,7 @@ function gameUpdatePost()
     // a fixed view is set back by its own distance, the others far enough to fit the trail across the screen;
     // eased between the two through a change of view
     const D = mix(mix(fit*(C.fixed > .99 ? 1 : C.dist), (C.fixed < .01 ? 1 : C.dist) + speed*.3 + airZoom*4, C.fixed),
-        DROP_VIEW.dist[o] + speed*.12, dropCam), vs = 2*D*tan(vfov/2);
+        dropDist + speed*.12, dropCam), vs = 2*D*tan(vfov/2);
     camD += (D - camD)*damp(2.5, dt);
     const lead = state == 'title' ? min(C.lead, .3) - .18 : C.lead, reach = mix(hs, D*1.1, C.fixed);
     const tx = fx + reach*lead;
@@ -2519,7 +2665,7 @@ function updateEffects(dt)
     const head = -atan(wzD(px, pz)) + yawV;
     dust.pos3D = W3(px - .75*RS, py + .15 + bermY, pz + .2);
     dust.rotation3D = vec3(0, head, .9);
-    sparks.emitRate = riding && grinding ? 90 : 0;
+    sparks.emitRate = riding && grinding && !grinding.deck ? 90 : 0;
     sparks.pos3D = W3(px - .3, py + .05, .2);
     sparks.rotation3D = vec3(0, head, 1.1);
     zap.emitRate = riding && turboT > 0 ? 160 : 0;
@@ -2595,7 +2741,9 @@ function updateFork(pxWas)
     }
 }
 
-// ---------- creeks, bridges and whoops as the rider meets them
+// ---------- creeks, bridges and whoops as the rider meets them, and a word for the big set pieces as they come up
+const FEAT_WORDS = {dropin: ['DROP-IN', 'tap at the lip to send it'], canyon: ['CANYON GAP', 'the trail sets your speed'],
+    stairs: ['DROP STAIRS', 'drop off every ledge'], deck: ['DROP DECK', 'roll it out and drop off the end']};
 function updateFeatures(dt, pxWas)
 {
     const took = groundedWas && !grounded && !grinding;
@@ -2603,6 +2751,11 @@ function updateFeatures(dt, pxWas)
     if (onBranch(px)) return;
     for (const f of feats)
     {
+        if (!f.warned && FEAT_WORDS[f.type] && px > (f.camX0 ?? f.x0) - 2 - (f.type == 'canyon' ? 0 : 6))
+        {
+            f.warned = true;
+            showMessage(...FEAT_WORDS[f.type], hsl(.13,.95,.6));
+        }
         if (f.x0 > px + 2 || (f.x2 ?? f.x1) < pxWas - 20) continue;
         if (f.type == 'creek' && !f.done && pxWas < f.g.xc && px >= f.g.xc)
         {
@@ -2616,12 +2769,12 @@ function updateFeatures(dt, pxWas)
             if (px > f.x0 && px < f.x1 && grounded) f.on = (f.on || 0) + dt;
             if (!f.done && px > f.x1) { f.done = true; if (f.on > .4) addTrick('BRIDGE', 100); }
         }
-        if (f.type == 'dropin' && !f.warned && px > f.x0 - 2)
-        {
-            f.warned = true;
-            showMessage('DROP-IN', 'tap at the lip to send it', hsl(.13,.95,.6));
-        }
         if (f.type == 'dropin' && !f.braked && px > f.x0) { f.braked = true; if (sp > f.v + 2) sfx('berm'); }
+        if (f.type == 'stairs')
+        {
+            if (took && px > f.x0 && px < f.x1 + 1) ++f.airs;
+            if (!f.done && px > f.x1 + 4) { f.done = true; if (f.airs >= 3) { addTrick('DROP STAIRS x' + f.airs, 120*f.airs); countTrick('DROP STAIRS'); } }
+        }
         if (f.type == 'whoops')
         {
             if (took && px > f.x0 && px < f.x1) ++f.airs;
@@ -3070,7 +3223,7 @@ function drawTitle(W, H, top, bottom)
         ['SWIPE UP OR DOWN AT A FORK', 'berm off onto the high or low line'],
         ['FILL THE BATTERY', 'tap the bolt for eBike turbo'],
         ['LAND SQUARE TO THE SLOPE', 'chain tricks for a combo and a boost'],
-        ['VIEW AND ZOOM BUTTONS', 'chase, 3/4, side or high · near, mid or far']];
+        ['TAP AT A DROP-IN LIP', 'send it: a bigger pop off the big drops']];
     const two = W > H, per = two ? 4 : lines.length, lh = two ? 30 : 34;
     const cw = min(W - 28, two ? 680 : 420), cx = (W - cw)/2, boxH = per*lh + 18, colW = two ? cw/2 : cw;
     const y0 = bottom - (two ? 70 : 92) - boxH;
@@ -3210,7 +3363,7 @@ function audioUpdate()
         return;
     }
     const now = audioContext.currentTime, set = (param, v, tc=.07)=> param.setTargetAtTime(v, now, tc);
-    const riding = state == 'ride', speed = riding ? hypot(vx, vy) : 0, onGround = riding && grounded;
+    const riding = state == 'ride', speed = riding ? hypot(vx, vy) : 0, onGround = riding && (grounded || !!grinding?.deck);
     const snow = surfNow == S_SNOW;
     set(au.roll.gain.gain, onGround ? clamp01(speed/12)*(snow ? .4 : .75) : 0);
     set(au.roll.filter.frequency, 120 + speed*24);
@@ -3218,7 +3371,7 @@ function audioUpdate()
     set(au.grit.filter.frequency, snow ? 2200 + speed*40 : 700 + speed*50);
     set(au.wind.gain.gain, riding ? clamp01((speed - 4)/24)**2*.55 + (grounded ? 0 : .06) + (boostT > 0 ? .1 : 0) : 0);
     set(au.wind.filter.frequency, 450 + speed*40);
-    set(au.grind.gain.gain, riding && grinding ? .3 + .08*sin(now*40) : 0, .03);
+    set(au.grind.gain.gain, riding && grinding && !grinding.deck ? .3 + .08*sin(now*40) : 0, .03);
     set(au.motor.g.gain, riding && turboT > 0 ? .085 : 0, .05);
     set(au.motor.o.frequency, 110 + speed*11);
     set(au.motor.f.frequency, 900 + speed*60);
@@ -3357,7 +3510,7 @@ function gameRenderPost() { drawHUD(); }
 
 // a handle for automated checks
 window.__mtb = {
-    info: ()=> ({state, px, py, vx, vy, sp, grounded, grinding: !!grinding, ang, rot, airT, dist, score, orbsGot, flipsTotal,
+    info: ()=> ({state, frame, px, py, vx, vy, sp, grounded, grinding: !!grinding, ang, rot, airT, dist, score, orbsGot, flipsTotal,
         combo, comboPts, bestCombo, crashReason, runTime, fps: averageFPS, objects: engineObjects.length, chunks: chunks.size,
         OX, OY, night, dayT, boostT, grindDist, seed, ride: ride ? ride.dir : 0, riderZ: riderZ(), battery, turboT, turbos, lines,
         forkAhead: !!forkAhead, laneWant, view: camViewName(), zoom: camZoomName(), splits: splits.map(s=> [s.x0|0, s.x1|0]),
@@ -3370,6 +3523,7 @@ window.__mtb = {
     press: ()=> pressMain(), release: ()=> releaseMain(),
     press2: ()=> pressSecond(), release2: ()=> releaseSecond(),
     swipe: dir=> airSwipe(dir),
+    ground: x=> rideY(x), state: ()=> ({px, py, vx, vy, airT, grounded}),
     teleport: x=> { trackEnsure(x + 720); placeRider(x); state = 'ride'; sp = 16; },
     setDay: t=> dayT = t,
     feats: ()=> feats.map(f=> ({type: f.type, x0: f.x0, x1: f.x1, x2: f.x2})),

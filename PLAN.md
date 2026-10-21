@@ -230,7 +230,22 @@ Each phase is a separate commit (or a few), tested with the Phase 0 harness befo
     - Standard suite: 0 crashes in no-flip, flips + tricks and turbo modes (about 100 km each), apart from one rock crash in one turbo run that didn't repeat. 60 new seeds with turbo (303 km): 0 crashes.
     - Not yet re-run after the last two small edits: smaller lip flags, and resetting the braking flag on takeoff.
 
+- **Phase 2: done.** The drop-ins came in round 3; this round adds the rest.
+  - **Step-down:** a small kicker off a ledge onto a landing 3–8 m lower.
+  - **Drop stairs:** 3–4 ledges ridden at about 12 m/s, a 1.5–3 m drop off each. Scores DROP STAIRS ×n.
+  - **Canyon gap:** the run-in sets the speed (a slow rider pedals up, a fast one brakes). The gap is sized so that speed clears it rolling. About 16 m wide, with a long landing for a popped lip. Uses the close camera, framed wider. Scores CANYON GAP.
+  - **Drop deck:** a North Shore plank trestle out over a steepening slope. The rider rolls it like ground (not a grind), braking to about 11 m/s, then drops 8–14 m off the end. Scores SHORE and DECK DROP.
+  - **Generator:** 28% of sections after 300 m are one of these: step-downs from 300 m, the rest from 500 m, canyons from 900 m and at most one per 700–1200 m. Together with drop-ins and big kickers, average speed is about 19 m/s, down from 21, with the slow-fast rhythm intended.
+  - **Fairness fixes found in testing:**
+    - A bike over the face of a down-step keeps falling to the ground below it instead of "landing" on the face.
+    - Clipping the very edge of a step while moving forward carries on off it.
+    - The bike never rides down a drop face or a chasm wall on the ground. At turbo speed it once rode down into a chasm, along its floor and up the far wall. It now flies off the edge, and riding into a wall is a crash.
+  - **Testing:**
+    - Every mode (no flips, flips + tricks both ways, turbo, turbo + flips), about 100 km each, plus extra seeded runs (well over 1500 km in all): 0 crashes after these fixes.
+    - Touch-control tests (forks, flick while holding) still pass.
+    - `sim.mjs --salt n` makes the autopilot's random choices repeatable, so a rare crash can be replayed.
+
 ## Running the tools
 
-    node tools/sim.mjs [--seeds 20] [--km 5] [--flips back|front] [--tricks] [--lanes rand|up|down|main] [--turbo] [--json out.json]
+    node tools/sim.mjs [--seeds 20] [--km 5] [--flips back|front] [--tricks] [--lanes rand|up|down|main] [--turbo] [--json out.json] [--salt n] [--game other.html]
     node tools/shot.mjs --seed 3 --at 800 --view SIDE --zoom 1 --day .3 --out shot.png [--size 390x844] [--js "code"]

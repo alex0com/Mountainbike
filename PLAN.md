@@ -437,6 +437,24 @@ Each phase is a separate commit (or a few), tested with the Phase 0 harness befo
     - `moo()` runs with sound allowed and no page errors.
     - Regression: 40 km with tricks: 0 crashes.
 
+- **The Bluecow rider: done.** After the concept sheet in `art/bluecow-rider-concept.png`.
+  - **The look:** faceted low-poly parts (`meshFTube`, `meshFBall`, flat shaded) in place of the smooth jersey and helmet.
+  - **The rider:**
+    - **Body:** a broad blue body with white patches on the chest, shoulders and forearms.
+    - **Kit:** a black backpack, black pants with dark knee pads, blue shins with white socks, black gloves and shoes.
+    - **Tail:** a blue tail with a white tuft, swinging as the bike goes and lifting in the air. It takes the red scarf's place, and the scarf is gone.
+    - **Head** (`cowHead`, shared by rider and ragdoll):
+      - A blue skull, white muzzle, blue nose with nostrils, and the white flame on the brow.
+      - Cream horns curling up and in, and blue ears with pale insides.
+      - Orange-to-yellow goggle lenses in a black frame and strap.
+  - **The bike:** a royal-blue frame, a navy shock with a gold coil, the gold stanchions kept, and knobbly tyres (two staggered rows of 30 blocks round the tread).
+  - **The ragdoll:** wears the same kit; its head is turned with a basis matrix built from the body.
+  - **New test hooks:** `__mtb.riderAt()`, and `window.__camAt = {pos, look}` to hold the camera for close-ups.
+  - **Checks:**
+    - Close-ups from the side, front 3/4, rear 3/4 and front.
+    - Gameplay in SIDE and 3/4, the crash, and the menu smack.
+    - Regression: 24 km with tricks: 0 crashes, no page errors.
+
 ## Running the tools
 
     node tools/sim.mjs [--seeds 20] [--km 5] [--flips back|front] [--tricks] [--lanes rand|up|down|main] [--turbo] [--json out.json] [--salt n] [--game other.html]

@@ -519,7 +519,42 @@ Each phase is a separate commit (or a few), tested with the Phase 0 harness befo
 
 - **The logo falls over instead of flying away: done.** On PLAY the sign tips over backwards about the back edge of its foot (`stepLogoFall`): slowly at first, faster as it leans, then a thud, dust and a little bounce. It lies face up beside the trail, stopped where its top meets the hillside (`logoRest`). Its posts come out of the ground with it.
 
-## Two players: the plan (not built yet)
+## Two players: built (core)
+Decisions: the server can run Node; online only; the match just keeps going; a crash costs time rather than the run; a breakaway wins and restarts. The slipstream is on, and each player keeps their own collectibles.
+
+- **Relay** (`server/relay.js`, `ws`):
+  - Rooms with four-letter codes; it passes each player's messages to the other.
+  - When one leaves, the other stays in the room as its host. Idle rooms are dropped after 30 minutes, and dead connections are pinged out.
+  - `server/README.md` has the systemd unit and the Apache lines (`proxy_wstunnel`, `ProxyPass /mp ws://127.0.0.1:8090/`).
+- **Joining:**
+  - Menu → 2 PLAYERS → HOST A RIDE (starts riding with a room open), or INVITE while riding alone. Either shows the code and a SHARE button.
+  - The friend uses the link `?join=CODE` or JOIN WITH A CODE.
+  - The host answers with the seed, its distance, speed, ride time and time of day. The joiner builds the mountain up to there and drops in a few metres back, on solid ground.
+  - If the host was off the bike at the time, both start over together.
+- **Riding together:**
+  - **Snapshots:** each game sends its rider 20 times a second (`mpPose`). Riding: position, angle, line, flip pivot, yaw, lean, the trick and its progress, suspension, wheels, crank, crouch, kit, bike, turbo, score. Crashed: the ragdoll's points and the pieces' transforms.
+  - **Drawing the rival** (`RemoteView`): 120 ms behind real time, between the snapshots either side; angles taken the short way round. The same drawing code as the local rider, in the rival's kit and bike (`asRemote`), 0.8 m to the side. It cannot be hit.
+  - **On screen:** a RIVAL tag over them, or an arrow at the screen edge with the gap.
+  - **Slipstream:** within 25 m behind the rival, +4 m/s² and +2 m/s on the top speed, with a SLIPSTREAM label.
+- **Rounds** (the host's clock):
+  - Every 30 s, one star each for more distance, more points, and a clean round while the other crashed. The round goes to the one with more stars, or more points if tied.
+  - A banner on both screens ("ROUND 4: YOU WIN IT, faster by 38 m · +2,400 style"). Stars total up in the round box at the top.
+- **Breakaway:**
+  - 150 m or more ahead for 30 s straight wins. Both get "BREAKAWAY! YOU WIN" or "RIVAL BROKE AWAY", and 3 s later both start over on the same new seed at the top, with a 3-2-1 countdown.
+  - The wins are counted (1-0, 2-1...).
+  - For 6 s after a restart the clock and the breakaway wait, while the other game catches up.
+- **A crash in a match** (`mpRecoverStep`), about 4 s lost:
+  - The ragdoll tumbles for 2 s.
+  - Then the rider is posed up onto their feet beside the trail, with a line like "SHAKE IT OFF" or "STILL GOT IT".
+  - They shake their head and flap their hands while the bike's pieces fly back together beside them.
+  - At 4.2 s they're back on, rolling away at 5 m/s from solid ground (out of any chasm, off any wall).
+  - The rival sees all of it through the snapshots. No score card in a match.
+- **Tests:**
+  - Two headless browsers through a local relay: host, join from the link, ride on autopilot, a round decided, the joiner crashes and gets back on, a forced breakaway, both restart on the same seed with no false breakaway, the host leaves and the joiner keeps the room as host.
+  - Portrait and landscape HUD checked. Solo regression unchanged: 0 crashes.
+- **Still to come:** each bike's own power, and the head-to-head crates (below).
+
+## Two players: the plan
 
 A second player joins a run already under way and rides the same mountain alongside the first. Neither can hit the other. Each has their own power-ups and uses them their own way. Every 30 seconds a round is decided, on who went faster and who scored more.
 

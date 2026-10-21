@@ -2051,11 +2051,12 @@ function stepGround(dt)
     const pace = state == 'ride' && paceAt(px);
     if (boostT > 0) a += 7;
     if (legT > 0 && !pace) a += 10;
+    if (mp.draft && !pace) a += 4;
     if (turboT > 0 && !pace) a += superOn ? 24 : 16;
     // never slower than a cruise, unless the brakes are on: then nearly to a stop, and a slow bike gets going again
     // over a second or so rather than all at once
     const lo = state != 'ride' ? 0 : brakeOn() ? 3 : min(vFloor(px), max(3, sp) + 9*dt);
-    sp = clampV(sp + a*dt, lo, VMAX + bike.speed + (turboT > 0 ? TURBO_V : legT > 0 ? 6 : boostT > 0 ? 4 : 0));
+    sp = clampV(sp + a*dt, lo, VMAX + bike.speed + (mp.draft ? 2 : 0) + (turboT > 0 ? TURBO_V : legT > 0 ? 6 : boostT > 0 ? 4 : 0));
     if (brakeOn()) { sp = max(3, sp - 24*dt); slideT += dt; }
     braking = !!pace && sp > pace.v;
     // the run in to a gap sets the speed that clears it, quickly, so even the last of it up the kicker brings the
@@ -2435,6 +2436,7 @@ function crash(reason)
     combo = comboPts = 0; comboNames = []; comboKeys = []; grinding = null; style = undefined; trickQueued = null;
     startWreck();
     saveBest(); groanAt = 2.2;
+    if (inMatch()) { mp.rec = {}; ++mp.crashes; }
     sfx('crash');
     camShake = 1;
     dustBurst(px, py, 90);
@@ -2512,7 +2514,8 @@ function wreckSound(name, hit)
 }
 function stepWreck(dt)
 {
-    const n = 3, h = dt/n, P = ragdoll.pts;
+    // (getting up in a match the rider is posed by hand, so the ragdoll's physics has nothing to move)
+    const n = 3, h = dt/n, P = mp.rec && crashT > REC.down ? [] : ragdoll.pts;
     for (let s = 0; s < n; ++s)
     {
         // the ragdoll: moved, then its bones pulled back to length, then kept out of the ground
@@ -2522,7 +2525,7 @@ function stepWreck(dt)
         // moves the arms and legs, never carries the rider anywhere. Only up in the air, and only a limb clear
         // of the ground: a foot paddling the dirt would run the body off up the hill
         const C = P[RAG_I.chest];
-        if (flail && C.y - (C.g ?? -1e9) > .7)
+        if (flail && C && C.y - (C.g ?? -1e9) > .7)
         {
             const k = 1 - damp(10, h);
             let sx = 0, sy = 0;
@@ -2538,7 +2541,7 @@ function stepWreck(dt)
         }
         // down and hurt: a hand comes up and waves feebly, the legs kick slowly, the head lifts and drops back,
         // steered like the flailing, with what it gives the limbs taken back off the body
-        if (state == 'crash' && crashT > 2)
+        if (state == 'crash' && crashT > 2 && !mp.rec)
         {
             const H = P[RAG_I.hip], k = 1 - damp(5, h), u = clamp01((crashT - 2)*1.5), w = t*1.1;
             const goal = [[RAG_I.hdR, C.x + sin(t*4)*.35, C.y + .75 + .12*sin(t*2.3), C.z + .2],
@@ -2564,7 +2567,7 @@ function stepWreck(dt)
         // the bones and the ground worked out together, so neither drags the other through
         for (let it = 0; it < 5; ++it)
         {
-            RAG_BONES.forEach(([a, b], j)=>
+            if (P.length) RAG_BONES.forEach(([a, b], j)=>
             {
                 const A = P[a], B = P[b], dx = B.x - A.x, dy = B.y - A.y, dz = B.z - A.z, d = hypot(dx, dy, dz) || 1e-6, f = (d - ragdoll.len[j])/d*.5;
                 A.x += dx*f; A.y += dy*f; A.z += dz*f; B.x -= dx*f; B.y -= dy*f; B.z -= dz*f;
@@ -2590,7 +2593,7 @@ function stepWreck(dt)
             if (sp > 30) { p.vx *= 30/sp; p.vy *= 30/sp; p.vz *= 30/sp; }
         }
         // the pieces of the bike: tumbling, bouncing, and the wheels rolling on down the slope
-        for (const p of pieces)
+        if (!(mp.rec && crashT > REC.stood)) for (const p of pieces)
         {
             p.vy -= G_AIR*h;
             p.x += p.vx*h; p.y += p.vy*h; p.z += p.vz*h;
@@ -2618,15 +2621,15 @@ function stepWreck(dt)
             }
         }
     }
-    const hip = P[RAG_I.hip];
+    const hip = ragdoll.pts[RAG_I.hip];
     rag.x = hip.x; rag.y = hip.y; rag.z = hip.z;
 }
 // a piece of the bike where it is now, turning about its own middle
 const pieceMatrix = p=> Matrix4.translation(vec3(p.x - OX, p.y - OY, p.z)).multiply(p.R).multiply(Matrix4.translation(p.c.scale(-1)));
-function drawRagdoll()
+function drawRagdoll(pts = ragdoll.pts)
 {
     MC = new Matrix4;
-    const P = ragdoll.pts.map(p=> vec3(p.x - OX, p.y - OY, p.z)), q = n=> P[RAG_I[n]], k = RS;
+    const P = pts.map(p=> vec3(p.x - OX, p.y - OY, p.z)), q = n=> P[RAG_I[n]], k = RS;
     // which way the rider faces: up the back and across the shoulders
     const up = q('head').subtract(q('hip')).normalize(), fwd = up.cross(q('shL').subtract(q('shR'))).normalize();
     tube(q('hip'), q('chest'), .31*k, PAL.jersey);
@@ -3012,6 +3015,17 @@ function trickAnim()
     return TA;
 }
 
+// seeing stars: a ring of them going round over the head
+function drawStars(hp)
+{
+    MC = new Matrix4;
+    const c = vec3(hp.x - OX, hp.y - OY + .55, hp.z);
+    for (let k = 0; k < 5; ++k)
+    {
+        const a = time*3.2 + k*TAU/5;
+        ball(c.add(vec3(cos(a)*.42, sin(a*2)*.05, sin(a)*.42)), .12, k % 2 ? PAL.lens2 : hsl(.15,1,.75));
+    }
+}
 class RiderView extends EngineObject3D
 {
     constructor() { super(vec3()); this.specular = .45; }
@@ -3023,17 +3037,7 @@ class RiderView extends EngineObject3D
             for (const p of pieces) G[p.key] = pieceMatrix(p);
             drawBike(G.frame, .05, .05, wheelSpinAtCrash, crank, 0, 0, 0, 0, G);
             drawRagdoll();
-            // seeing stars: a ring of them going round over the head
-            if (crashT > 1)
-            {
-                MC = new Matrix4;
-                const hp = ragdoll.pts[RAG_I.head], c = vec3(hp.x - OX, hp.y - OY + .55, hp.z);
-                for (let k = 0; k < 5; ++k)
-                {
-                    const a = time*3.2 + k*TAU/5;
-                    ball(c.add(vec3(cos(a)*.42, sin(a*2)*.05, sin(a)*.42)), .12, k % 2 ? PAL.lens2 : hsl(.15,1,.75));
-                }
-            }
+            if (crashT > 1 && !(mp.rec && crashT > REC.down)) drawStars(ragdoll.pts[RAG_I.head]);
             return;
         }
         const M = bikeMatrix(), t = trickAnim();
@@ -3073,6 +3077,7 @@ try { best = JSON.parse(localStorage.getItem('dhside.best')) || best; } catch(e)
 
 function newRun(s)
 {
+    runSeed = s;
     engineObjectsDestroy();
     resetScene();
     trackInit(s);
@@ -3085,7 +3090,7 @@ function newRun(s)
     battery = 0; turboT = 0; turbos = 0; supers = legBoosts = sends = cellsGot = 0; tyres = brakeFuel = slideT = 0; brakeHeld = false; setShown = null; setShownT = 0; lines = 0; proLines = 0; linesRidden = new Set; allLines = false; dayT = DAY_START; dropCam = crashCam = sendCam = 0; camLift = 0; ragdoll = null; pieces = []; pz = yawV = leanV = bermY = 0; camZ = camB = 0;
     messages.length = 0; trickPops.length = 0; swipeFx.length = 0;
     riderView = new RiderView;
-    new SprocketView; new OrbView; new OrbGlow; new LogoView; new SkyExtras; new TurboGlow;
+    new SprocketView; new OrbView; new OrbGlow; new LogoView; new RemoteView; new SkyExtras; new TurboGlow;
     dust = new ParticleEmitter3D(vec3(), .4, 0, 0, PI*.3, undefined,
         hsl(.08,.3,.55,.6), hsl(.09,.25,.45,.5), hsl(.08,.2,.6,0), hsl(.08,.2,.5,0),
         .9, .3, 1.4, .06, .94, -.0002, .3, .5, false);
@@ -3180,7 +3185,9 @@ function gameUpdate()
     readInput(dt);
     if (window.__autopilot && state == 'ride') autopilotInput();
     updateMessages(dt);
-    if (state == 'ride')
+    mpStep(dt);
+    if (state == 'ride' && mp.hold > 0) { py = groundY(px); sp = vx = vy = 0; }
+    else if (state == 'ride')
     {
         // the ride in steps of no more than a 60th of a second, so a slow frame never lets the bike skip past a rock
         const n = max(1, ceil(dt*60 - .01));
@@ -3190,8 +3197,9 @@ function gameUpdate()
     {
         crashT += dt;
         stepWreck(dt);
+        mpRecoverStep();
         // the rider lies there groaning until a tap brings up the score card
-        if (state == 'crash' && crashT > groanAt) { groanAt += 4.2 + Math.random()*1.5; moo(1.3, .55, .22); showMessage(GROANS[floor(Math.random()*GROANS.length)], '', hsl(.6,.4,.85)); }
+        if (state == 'crash' && !mp.rec && crashT > groanAt) { groanAt += 4.2 + Math.random()*1.5; moo(1.3, .55, .22); showMessage(GROANS[floor(Math.random()*GROANS.length)], '', hsl(.6,.4,.85)); }
         if (state == 'results') resultsT += dt;
     }
     else titleStep(dt);
@@ -3344,7 +3352,7 @@ const CAM_VIEWS = {
 const DROP_VIEW = {yaw: [-.5, -.55], pitch: [.06, .05], lead: [.02, .02], up: [0, 0], dist: [15, 12], follow: .6, fixed: 1};
 // a crash: in close on the tumbling rider, from a little in front and above, to watch the yard sale
 const CRASH_VIEW = {yaw: [.5, .45], pitch: [.24, .22], lead: [0, 0], up: [0, 0], dist: [10, 8.5], follow: .3, fixed: 1};
-let dropCam = 0, dropDist = 15, camLift = 0, sendCam = 0;
+let dropCam = 0, dropDist = 15, camLift = 0, sendCam = 0, camLook = null;
 const CAM_ORDER = Object.keys(CAM_VIEWS), CAM_ZOOMS = [['NEAR', .78], ['MID', 1], ['FAR', 1.32]];
 // side on and far back in portrait, three quarter at mid zoom in landscape
 let camView = {p: 'SIDE', l: '3/4', zp: 2, zl: 1}, camP;
@@ -3479,6 +3487,7 @@ function gameUpdatePost()
     if (window.__camAt) { eye = window.__camAt.pos; look = window.__camAt.look; }
     cam.pos = eye;
     cam.lookAt(look);
+    camLook = look;
     render3D.shadowCenter = state == 'title' ? vec3(LOGO_X - OX, groundY(LOGO_X) - OY, wz(LOGO_X, 0)) : vec3(fx - OX + 6, fy - OY, wz(fx, camZ - 3));
     updateChunks(camX, false, Cw.lead > .6 ? 140 : 0);
     updateRings(cam.pos, camY, camX);
@@ -3892,7 +3901,7 @@ function tapScreen(key=false)
     // on the menu a tap on the scene runs the rider into the logo again (a key starts the ride)
     if (state == 'title') { if (key) startRide(); else if (menu == 'main') titleReplay(); return true; }
     // a crash takes two taps to leave, so none is lost by accident: the first shows the score card, the next rides again
-    if (state == 'crash') { if (crashT > .6) endRun(); return true; }
+    if (state == 'crash') { if (crashT > .6 && !mp.rec) endRun(); return true; }
     if (state == 'results') { if (resultsT > .5) startRide(); return true; }
 }
 addEventListener('pointerdown', e=>
@@ -4119,6 +4128,8 @@ function drawHUD()
     drawBoosts(14, top + 116);
     if (state == 'ride' && battery >= 1 && turboT <= 0) drawTurboButton(W, H, bottom);
     if (state == 'ride' && brakeFuel > 0) drawBrakeButton(W, H, bottom);
+    drawMatch(W, H, top, bottom);
+    if (state == 'ride' && !mp.code && !mp.ws) button(W - 12 - 58*2 - 7 - 70 - 82, top, 75, 38, 'INVITE', mpHost, false, 12);
     drawTyres(64, top + 74);
     if (state == 'ride' && forkAhead && !ride) drawForkPrompt(W, H);
 
@@ -4129,7 +4140,7 @@ function drawHUD()
     // the combo in progress, with the time left to keep it going. On a tall screen the rider is in the middle, so
     // all the scoring goes smaller into the band below, clear of the buttons at the sides
     const tall = W < H, band = H*.68, sc = tall ? .75 : 1, wide = tall ? W - 190 : W - 30;
-    const comboY = tall ? band : H*.16;
+    const mo = inMatch() && !tall ? 58 : 0, comboY = tall ? band : H*.16 + mo;
     if (combo && state == 'ride')
     {
         const s = comboNames.slice(-3).join(' + ');
@@ -4146,7 +4157,7 @@ function drawHUD()
     drawSwipes();
     // each trick pops up as it lands
     // below the combo, newest on top, older ones sliding down
-    const popY = tall ? band + 74 : max(H*.3, H*.16 + 74);
+    const popY = tall ? band + 74 : max(H*.3, H*.16 + 74) + mo;
     trickPops.forEach((p, i)=>
     {
         const k = trickPops.length - 1 - i;
@@ -4159,7 +4170,7 @@ function drawHUD()
     });
     if (bankMsg)
     {
-        const a = clamp01(min(bankMsg.t*6, (2.2 - bankMsg.t)*3)), pop = 1 + .3*max(0, 1 - bankMsg.t*5), by = tall ? band - 4 : H*.25;
+        const a = clamp01(min(bankMsg.t*6, (2.2 - bankMsg.t)*3)), pop = 1 + .3*max(0, 1 - bankMsg.t*5), by = tall ? band - 4 : H*.25 + mo;
         ctx.globalAlpha = a;
         txt(bankMsg.title, W/2, by, 30*sc*pop, '#ffd23a', 'center', 900);
         txt('+' + bankMsg.total.toLocaleString(), W/2, by + 32*sc, 22*sc, '#fff', 'center', 900);
@@ -4184,7 +4195,7 @@ function drawHUD()
         else if (everFlipped && hintT < 60 && !grounded && !grinding && airT > .2) hint = 'SECOND FINGER: HOLD TO FRONT FLIP';
         if (hint) txt(hint, W/2, bottom - 40, fitSize(hint, 20, W - 30), 'rgba(255,255,255,' + (.75 + .25*sin(time*6)) + ')', 'center', 900);
     }
-    if (state == 'crash' && crashT > .6)
+    if (state == 'crash' && crashT > .6 && !mp.rec)
         txt('TAP FOR YOUR SCORE CARD', W/2, bottom - (W > H ? 30 : 44), fitSize('TAP FOR YOUR SCORE CARD', 22, W - 30), 'rgba(255,255,255,' + clamp01((crashT - .6)*4)*(.65 + .35*sin(time*5)) + ')', 'center', 900);
     if (state == 'results' && resultsT > .4) drawResults(W, H);
     ctx.restore();
@@ -4361,31 +4372,34 @@ function drawTitle(W, H, top, bottom)
         txt('RAGER', W/2, (band[0] + band[1])/2*H + t1*.7, t1, '#fff', 'center', 900);
     }
     if (menu == 'garage') drawGarage(W, H, top, bottom);
+    else if (menu == 'two') drawTwo(W, H, top, bottom);
     else if (menu == 'help') drawHelp(W, H, top, bottom);
     else if (menu == 'about') drawAbout(W, H, top, bottom);
     else
     {
         // play, help and about: a column under the logo on a tall screen, a row along the bottom on a wide one
-        const bw = two ? min(180, (W - 90)/4) : min(W - 56, 330), bh = two ? 50 : 58;
+        const bw = two ? min(160, (W - 100)/5) : min(W - 56, 330), bh = two ? 50 : 56;
         let y;
         if (two)
         {
-            // garage, help, PLAY, about
+            // garage, help, PLAY, 2 players, about
             y = bottom - bh - 16;
-            const x0 = W/2 - (bw*4 + 42)/2;
-            button(x0, y, bw, bh, 'GARAGE', ()=> menu = 'garage', false, 17);
-            button(x0 + bw + 14, y, bw, bh, 'HELP', ()=> menu = 'help', false, 17);
-            button(x0 + (bw + 14)*2, y, bw, bh, 'PLAY', startRide, true, 22);
-            button(x0 + (bw + 14)*3, y, bw, bh, 'ABOUT', ()=> menu = 'about', false, 17);
+            const x0 = W/2 - (bw*5 + 48)/2, at = k=> x0 + k*(bw + 12);
+            button(at(0), y, bw, bh, 'GARAGE', ()=> menu = 'garage', false, 16);
+            button(at(1), y, bw, bh, 'HELP', ()=> menu = 'help', false, 16);
+            button(at(2), y, bw, bh, 'PLAY', startRide, true, 22);
+            button(at(3), y, bw, bh, '2 PLAYERS', ()=> menu = 'two', false, 15);
+            button(at(4), y, bw, bh, 'ABOUT', ()=> menu = 'about', false, 16);
         }
         else
         {
-            y = max(band[1]*H + 70, bottom - bh*2 - 40);
+            y = max(band[1]*H + 60, bottom - bh*2 - 102);
             button(W/2 - bw/2, y, bw, bh, 'PLAY', startRide, true, 24);
-            const tw = (bw - 20)/3;
-            button(W/2 - bw/2, y + bh + 12, tw, bh - 6, 'GARAGE', ()=> menu = 'garage', false, 15);
-            button(W/2 - bw/2 + tw + 10, y + bh + 12, tw, bh - 6, 'HELP', ()=> menu = 'help', false, 15);
-            button(W/2 - bw/2 + (tw + 10)*2, y + bh + 12, tw, bh - 6, 'ABOUT', ()=> menu = 'about', false, 15);
+            button(W/2 - bw/2, y + bh + 10, bw, bh - 10, '2 PLAYERS', ()=> menu = 'two', false, 17);
+            const tw = (bw - 20)/3, y3 = y + bh*2 + 10;
+            button(W/2 - bw/2, y3, tw, bh - 8, 'GARAGE', ()=> menu = 'garage', false, 15);
+            button(W/2 - bw/2 + tw + 10, y3, tw, bh - 8, 'HELP', ()=> menu = 'help', false, 15);
+            button(W/2 - bw/2 + (tw + 10)*2, y3, tw, bh - 8, 'ABOUT', ()=> menu = 'about', false, 15);
         }
         if (best.dist)
         {
@@ -4437,6 +4451,18 @@ function drawGarage(W, H, top, bottom)
     const by = py + ph - 52, bw2 = two ? 150 : (pw - 44)/2, bxs = two ? kx + colW/2 - bw2 - 6 : px + 16;
     button(bxs, by, bw2, 40, 'BACK', ()=> menu = 'main', false, 16);
     button(bxs + bw2 + 12, by, bw2, 40, 'PLAY', startRide, true, 18);
+}
+// two players: host a ride, which starts it and opens a room, or join one with its code
+function drawTwo(W, H, top, bottom)
+{
+    const P = menuPanel(W, H, top, bottom, '2 PLAYERS', 420, 360), cx = W/2;
+    let y = P.y0 + 6;
+    for (const l of ['Ride with a friend on the same mountain.', 'Every 30 s the faster and the more stylish', 'wins the round. Stay 150 m ahead for 30 s', 'to break away and win.'])
+        txt(l, cx, y, fitSize(l, 13.5, P.pw - 30, 600), 'rgba(255,255,255,.85)', 'center', 600), y += 19;
+    y += 12;
+    button(cx - 120, y, 240, 46, 'HOST A RIDE', ()=> { mpHost(); startRide(); }, true, 17);
+    button(cx - 120, y + 58, 240, 46, 'JOIN WITH A CODE', ()=> { const c = prompt('Room code'); if (c) mpJoin(c); }, false, 16);
+    if (mp.status) txt(mp.status, cx, y + 124, 13, '#7fd0ff', 'center', 700);
 }
 // a panel over the scene, with a back button at its foot; gives the panel's box and the room inside it
 function menuPanel(W, H, top, bottom, title, maxW, wantH)
@@ -4838,8 +4864,395 @@ function gameInit()
     readSafeArea();
     addEventListener('resize', readSafeArea);
     newRun(nextSeed());
+    const join = new URLSearchParams(location.search).get('join');
+    if (join) { menu = 'two'; mpJoin(join); }
 }
 function gameRenderPost() { drawHUD(); }
+
+
+// ============================================================================
+// TWO PLAYERS - a second rider joins a run under way through a small relay (server/relay.js) and rides the same
+// mountain, built from the same seed. Each game sends its rider twenty times a second and draws the other's, a
+// ghost that cannot be hit, a little to the side. The host's game keeps the clock: a round every 30 s, with stars
+// for the faster and the higher scoring; and a breakaway, staying far ahead for 30 s, wins, after which both drop
+// in again together on a new mountain. A crash in a match costs time rather than the run: the rider gets up,
+// shakes it off, the bike comes back together, and they ride on
+// ============================================================================
+const MP = {rate: 1/20, delay: .12, side: -.8, round: 30, gap: 150, breakLen: 30, draft: 25};
+const mp = {ws: null, code: '', you: 0, peer: false, status: '', buf: [], last: null, sendT: 0, peerKit: 0, peerBike: 0,
+    round: 0, roundT: 0, start: null, peerStart: null, stars: [0, 0], wins: [0, 0], breakT: 0, breakBy: -1,
+    crashes: 0, hold: 0, grace: 0, draft: false, clock: null, restartT: 0, restartSeed: 0};
+let runSeed = 1;
+const inMatch = ()=> mp.peer && mp.ws?.readyState == 1;
+function mpURL()
+{
+    const q = new URLSearchParams(location.search).get('mp');
+    if (q) return q;
+    if (location.protocol == 'file:') return 'ws://localhost:8090';
+    return (location.protocol == 'https:' ? 'wss://' : 'ws://') + location.host + '/mp';
+}
+function mpConnect(then)
+{
+    if (mp.ws?.readyState == 1) return then();
+    if (mp.ws?.readyState == 0) return;
+    mp.status = 'connecting...';
+    let ws;
+    try { ws = mp.ws = new WebSocket(mpURL()); } catch(e) { mp.status = 'no connection'; return; }
+    ws.onopen = ()=> { mp.status = ''; then(); };
+    ws.onmessage = e=> { let m; try { m = JSON.parse(e.data); } catch(x) { return; } mpMessage(m); };
+    ws.onerror = ()=> { mp.status = 'no connection'; };
+    ws.onclose = ()=>
+    {
+        if (mp.ws != ws) return;
+        const was = mp.peer;
+        mp.ws = null; mp.peer = false; mp.code = ''; mp.buf = []; mp.last = null;
+        if (was) showMessage('CONNECTION LOST', 'riding on solo', hsl(.6,.4,.8));
+    };
+}
+const mpSend = m=> { if (mp.ws?.readyState == 1) mp.ws.send(JSON.stringify(m)); };
+// host: open a room, and keep riding until someone joins; or start riding first, from the menu
+function mpHost() { mpConnect(()=> mpSend({t: 'host'})); }
+function mpJoin(code) { code = String(code || '').toUpperCase().replace(/[^A-Z]/g, '').slice(0, 4); if (code.length < 4) return; mp.status = 'joining ' + code + '...'; mpConnect(()=> mpSend({t: 'join', code})); }
+function mpLeave() { const ws = mp.ws; mp.ws = null; mp.peer = false; mp.code = ''; mp.buf = []; mp.last = null; ws?.close(); }
+const mpLink = ()=> location.href.split('?')[0] + '?join=' + mp.code;
+function mpShare()
+{
+    const url = mpLink();
+    if (navigator.share) navigator.share({title: 'Bluecow Rager', text: 'Ride with me! Room ' + mp.code, url}).catch(()=> {});
+    else { navigator.clipboard?.writeText(url).catch(()=> {}); showMessage('LINK COPIED', mp.code, hsl(.13,.95,.6)); }
+}
+
+function mpMessage(m)
+{
+    if (m.t == 'room') { mp.code = m.code; mp.you = 0; showMessage('ROOM ' + m.code, 'share the code and ride', hsl(.13,.95,.6)); }
+    else if (m.t == 'joined') { mp.code = m.code; mp.you = 1; mp.status = 'dropping in...'; mpSend({t: 'hello', kit: kitI, bike: bikeI}); }
+    else if (m.t == 'error') { mp.status = m.msg; showMessage("COULDN'T JOIN", m.msg, hsl(.02,.9,.62)); mpLeave(); }
+    else if (m.t == 'peer')
+    {
+        if (m.on) { mp.peer = true; mp.buf = []; mp.last = null; }
+        // whoever stays keeps the room, as its host, for the next rider to join
+        else { mp.peer = false; mp.you = 0; mp.buf = []; mp.last = null; mp.breakBy = -1; mp.stars = [0, 0]; mp.wins = [0, 0]; mp.clock = null; showMessage('RIVAL LEFT', 'riding on solo', hsl(.6,.4,.8)); }
+    }
+    // the host learns the new rider's kit and bike, and either brings them in beside it or, off the bike, starts both over
+    else if (m.t == 'hello')
+    {
+        mp.peerKit = m.kit; mp.peerBike = m.bike;
+        if (state == 'ride' || state == 'crash' && mp.rec)
+            mpSend({t: 'start', seed: runSeed, x: px, sp, runT: runTime, dayT, kit: kitI, bike: bikeI, stars: mp.stars, wins: mp.wins, round: mp.round});
+        else mpRestartAll();
+        showMessage('RIVAL JOINED', 'every 30 s: faster and more style wins the round', hsl(.13,.95,.6));
+        mpNewRound();
+    }
+    else if (m.t == 'start')
+    {
+        mp.peer = true; mp.status = ''; mp.peerKit = m.kit; mp.peerBike = m.bike; mp.stars = m.stars; mp.wins = m.wins; mp.round = m.round;
+        mpDropInAt(m.seed, m.x, m.sp, m.runT, m.dayT);
+        showMessage('JOINED!', 'room ' + mp.code + ' · ride!', hsl(.13,.95,.6));
+    }
+    else if (m.t == 's')
+    {
+        mp.buf.push({t: performance.now()/1000, s: m});
+        if (mp.buf.length > 30) mp.buf.shift();
+        mp.last = m;
+    }
+    else if (m.t == 'round') mpShowRound(m);
+    else if (m.t == 'break') mpShowBreak(m);
+    else if (m.t == 'restart') mpRestart(m.seed);
+}
+
+// drop in beside the host, wherever they are: the mountain built up to there, on solid ground a few metres back
+function mpDropInAt(s, x, v, runT, day)
+{
+    newRun(s);
+    trackEnsure(x + TRACK_AHEAD);
+    let at = max(START_X, x - 4);
+    for (let k = 0; k < 80 && (gapAt(at) || abs(groundSlope(at)) > 1.2); ++k) at -= 1;
+    placeRider(at);
+    state = 'ride'; sp = max(10, v || 12); titleCamW = 0; logoFall = 1; logoDown = true; menu = 'main';
+    runTime = runT || 0; dayT = day ?? dayT;
+    camX = at + 8; camY = groundY(at);
+    mpNewRound();
+}
+// both start over on a new mountain, at the top, after a count of three
+function mpRestartAll() { const s2 = nextSeed(); mpSend({t: 'restart', seed: s2}); mpRestart(s2); }
+function mpRestart(s2)
+{
+    newRun(s2);
+    startRide();
+    mp.hold = 3; mp.crashes = 0; mp.breakBy = -1; mp.restartT = 0;
+    // a few seconds for the other game to start over too, before the clock and the breakaway look at the gap again
+    mp.grace = 6; mp.buf = []; mp.last = null; mp.peerStart = null;
+    mpNewRound();
+}
+
+// ---------- the rounds, kept by the host
+function mpNewRound()
+{
+    ++mp.round; mp.roundT = MP.round;
+    mpMark();
+}
+// where both riders stand as a round starts, to measure it from
+function mpMark()
+{
+    mp.start = {sc: score, x: px, cc: mp.crashes};
+    mp.peerStart = mp.last ? {sc: mp.last.sc, x: mp.last.x, cc: mp.last.cc} : null;
+}
+function mpHostStep(dt)
+{
+    if (mp.grace > 0) { if ((mp.grace -= dt) <= 0) { mp.roundT = MP.round; mpMark(); } return; }
+    if (mp.you != 0 || !inMatch() || !mp.last || mp.restartT > 0) return;
+    if (!mp.peerStart) mp.peerStart = {sc: mp.last.sc, x: mp.last.x, cc: mp.last.cc};
+    if ((mp.roundT -= dt) <= 0) mpEndRound();
+    // a breakaway: one of them far enough ahead for long enough wins, and they start over
+    const gap = px - mp.last.x, lead = abs(gap) > MP.gap ? (gap > 0 ? 0 : 1) : -1;
+    if (lead != mp.breakBy) { mp.breakBy = lead; mp.breakT = MP.breakLen; }
+    else if (lead >= 0 && (mp.breakT -= dt) <= 0)
+    {
+        ++mp.wins[lead];
+        const m = {t: 'break', w: lead, wins: mp.wins, seed: nextSeed()};
+        mpSend(m); mpShowBreak(m);
+    }
+}
+function mpEndRound()
+{
+    const r = mp.last, d = [px - mp.start.x, r.x - mp.peerStart.x], p = [score - mp.start.sc, r.sc - mp.peerStart.sc];
+    const c = [mp.crashes - mp.start.cc, (r.cc || 0) - mp.peerStart.cc], st = [0, 0];
+    // a star each for the faster and the higher scoring, and one for riding it clean while the other crashed
+    if (d[0] != d[1]) ++st[d[0] > d[1] ? 0 : 1];
+    if (p[0] != p[1]) ++st[p[0] > p[1] ? 0 : 1];
+    for (const i of [0, 1]) if (!c[i] && c[1 - i]) ++st[i];
+    const w = st[0] != st[1] ? (st[0] > st[1] ? 0 : 1) : p[0] != p[1] ? (p[0] > p[1] ? 0 : 1) : -1;
+    mp.stars[0] += st[0]; mp.stars[1] += st[1];
+    const m = {t: 'round', n: mp.round, d: d.map(round), p, st, w, stars: mp.stars};
+    mpSend(m); mpShowRound(m);
+    mpNewRound();
+}
+function mpShowRound(m)
+{
+    mp.stars = m.stars;
+    const me = mp.you, them = 1 - me, won = m.w == me;
+    const why = [];
+    if (m.d[me] != m.d[them]) why.push((m.d[me] > m.d[them] ? 'faster' : 'slower') + ' by ' + abs(m.d[me] - m.d[them]) + ' m');
+    if (m.p[me] != m.p[them]) why.push((m.p[me] > m.p[them] ? '+' : '-') + abs(m.p[me] - m.p[them]).toLocaleString() + ' style');
+    showMessage('ROUND ' + m.n + ': ' + (m.w < 0 ? 'A DRAW' : won ? 'YOU WIN IT' : 'RIVAL WINS'), why.join('  ·  '), won ? hsl(.13,.95,.6) : hsl(.02,.85,.65));
+    sfx(won ? 'bank' : 'landHard');
+}
+function mpShowBreak(m)
+{
+    mp.wins = m.wins;
+    const won = m.w == mp.you;
+    showMessage(won ? 'BREAKAWAY! YOU WIN' : 'RIVAL BROKE AWAY', 'new mountain in 3...', won ? hsl(.13,.95,.6) : hsl(.02,.85,.65));
+    sfx(won ? 'bank' : 'landHard');
+    mp.restartT = 3; mp.restartSeed = m.seed;
+}
+
+// ---------- every frame of a match: send this rider, follow the other, the slipstream, the clock
+function mpStep(dt)
+{
+    if (!inMatch()) { mp.draft = false; return; }
+    if (mp.hold > 0) mp.hold -= dt;
+    if (mp.restartT > 0 && (mp.restartT -= dt) <= 0) mpRestart(mp.restartSeed);
+    if ((mp.sendT -= dt) <= 0) { mp.sendT = MP.rate; mpSend(mpPose()); }
+    mpHostStep(dt);
+    if (mp.you == 1 && mp.last && mp.last.rl !== undefined) mp.clock = {rl: mp.last.rl, rn: mp.last.rn, bk: mp.last.bk, bb: mp.last.bb};
+    // close behind the other rider, the air is easier
+    mp.draft = state == 'ride' && !!mp.last && mp.last.st == 'r' && mp.last.x > px && mp.last.x - px < MP.draft;
+}
+const r3 = v=> round(v*1000)/1000;
+function riderComp(t) { return clamp01(compress + (grounded || grinding ? 0 : clamp01(abs(angVel)/5)*.7) + (t.spin || t.table ? .3*t.amt : 0)); }
+function mpPose()
+{
+    const s = {t: 's', x: r3(px), sc: score, cc: mp.crashes, kit: kitI, bike: bikeI, tu: turboT > 0 ? 1 : 0, ba: r3(battery)};
+    if (wrecked())
+    {
+        s.st = 'c'; s.ct = r3(crashT);
+        s.rag = []; for (const p of ragdoll.pts) s.rag.push(r3(p.x), r3(p.y), r3(p.z));
+        s.pc = pieces.map(p=> [r3(p.x), r3(p.y), r3(p.z), ...[0, 1, 2, 4, 5, 6, 8, 9, 10].map(i=> r3(p.R.m[i]))]);
+    }
+    else
+    {
+        const on = grounded || grinding, t = trickAnim();
+        Object.assign(s, {st: 'r', y: r3((on ? baseY : py) + bermY), a: r3(on ? ang + landVis : ang), pv: r3(.85*RS*airBlend), z: r3(pz),
+            yw: r3(yawV + t.spin), ln: r3(leanV), tb: r3(t.table), cF: r3(suspF), cR: r3(suspR), ws: r3(wheelSpin), cr: r3(crank),
+            wh: r3(t.whip), br: r3(t.bar), oF: r3(wheelOffF), oR: r3(wheelOffR), cp: r3(riderComp(t)), tn: t.name, ta: r3(t.amt)});
+    }
+    if (mp.you == 0) Object.assign(s, {rl: r3(mp.roundT), rn: mp.round, bk: mp.breakBy >= 0 ? r3(mp.breakT) : -1, bb: mp.breakBy});
+    return s;
+}
+// the other rider as it was a moment ago, between the two snapshots either side of then
+function mpRemote()
+{
+    const b = mp.buf;
+    if (!b.length) return null;
+    const t = performance.now()/1000 - MP.delay;
+    let i = b.length - 1;
+    while (i > 0 && b[i].t > t) --i;
+    const A = b[i].s, B = b[min(i + 1, b.length - 1)].s;
+    if (A == B || A.st != B.st) return B;
+    const u = clamp01((t - b[i].t)/max(1e-3, b[i + 1].t - b[i].t)), o = {...B};
+    for (const k in A)
+        if (typeof A[k] == 'number' && typeof B[k] == 'number')
+            o[k] = k == 'a' || k == 'yw' ? A[k] + wrapPI(B[k] - A[k])*u : mix(A[k], B[k], u);
+    if (A.rag && B.rag) o.rag = A.rag.map((v, k)=> mix(v, B.rag[k], u));
+    if (A.pc && B.pc) o.pc = A.pc.map((p, k)=> p.map((v, j)=> mix(v, B.pc[k][j], u)));
+    return o;
+}
+// drawn in its own kit, on its own bike
+function asRemote(r, draw)
+{
+    const keepBike = bike, keepPal = {...PAL}, keepTurbo = turboT, keepBattery = battery;
+    bike = BIKES[r.bike] || BIKES[0];
+    Object.assign(PAL, PAL_BASE, KITS[r.kit]?.[1] || {});
+    turboT = r.tu ? 1 : 0; battery = r.ba || 0;
+    try { draw(); } finally { bike = keepBike; Object.assign(PAL, keepPal); turboT = keepTurbo; battery = keepBattery; }
+}
+class RemoteView extends EngineObject3D
+{
+    constructor() { super(vec3()); this.specular = .45; }
+    render3D()
+    {
+        if (!inMatch() || state == 'title') return;
+        const r = mpRemote();
+        if (!r) return;
+        mp.view = r;
+        asRemote(r, ()=>
+        {
+            if (r.st == 'c' && r.rag)
+            {
+                const P = [];
+                for (let k = 0; k < r.rag.length; k += 3) P.push({x: r.rag[k], y: r.rag[k + 1], z: r.rag[k + 2]});
+                const G = {};
+                (r.pc || []).forEach((q, k)=>
+                {
+                    const R = new Matrix4([q[3], q[4], q[5], 0, q[6], q[7], q[8], 0, q[9], q[10], q[11], 0, 0, 0, 0, 1]);
+                    G[PIECES[k][0]] = pieceMatrix({x: q[0], y: q[1], z: q[2], R, c: vec3(PIECES[k][1], PIECES[k][2], PIECES[k][3])});
+                });
+                if (G.frame) drawBike(G.frame, .05, .05, 0, 0, 0, 0, 0, 0, G);
+                drawRagdoll(P);
+                if (r.ct > 1 && r.ct < 2.2) drawStars(P[RAG_I.head]);
+                return;
+            }
+            const M = sideMatrix(r.x, r.y, r.a, 0, r.pv, r.z + MP.side, r.yw, r.ln);
+            if (r.tb) M.multiply(buildMatrix(vec3(0, .8, 0), vec3(0, 0, r.tb))).multiply(Matrix4.translation(vec3(0, -.8, 0)));
+            const pts = drawBike(M, r.cF, r.cR, r.ws, r.cr, r.wh, r.br, r.oF, r.oR);
+            drawRider(M, pts, r.cp, r.tn, r.ta);
+        });
+    }
+}
+
+// ---------- a crash in a match: down for a moment, then up on their feet, shaking it off while the bike comes back
+// together, and back on it. It costs about four seconds, time for the one behind to catch up
+const STAND_POSE = {head: [0, 1.72, -.05], chest: [0, 1.42, 0], hip: [0, 1.02, .02], shL: [.2, 1.44, 0], shR: [-.2, 1.44, 0],
+    elL: [.3, 1.2, -.04], hdL: [.32, .98, -.08], elR: [-.3, 1.2, -.04], hdR: [-.32, .98, -.08], hpL: [.11, 1.02, .02], hpR: [-.11, 1.02, .02],
+    knL: [.13, .56, -.02], ftL: [.13, .08, 0], knR: [-.13, .56, -.02], ftR: [-.13, .08, 0]};
+const REC = {down: 2, stood: 2.8, back: 4.2};
+function mpRecoverStep()
+{
+    const R = mp.rec;
+    if (!R || crashT < REC.down) return;
+    if (!R.from)
+    {
+        // where to get up: on solid ground, out of any chasm, off any wall
+        let x = rag.x;
+        for (let k = 0; k < 120 && (rideGap(x) || abs(rideSlope(x)) > 1.4); ++k) x += .5;
+        const zr = riderZ(), S = sideMatrix(x, rideY(x), 0, 0, 0, zr + .8), B = sideMatrix(x + .6, rideY(x + .6), atan(rideSlope(x + .6)), 0, 0, zr);
+        R.x = x + .6; R.S = S; R.B = B;
+        R.from = ragdoll.pts.map(p=> ({x: p.x, y: p.y, z: p.z}));
+        showMessage(['SHAKE IT OFF', "I'M GOOD!", 'WALK IT OFF', 'STILL GOT IT'][floor(Math.random()*4)], '', hsl(.6,.4,.85));
+    }
+    // up onto their feet, then shaking it off: the head going, the hands flapping
+    const u = sstep(clamp01((crashT - REC.down)/(REC.stood - REC.down))), k = max(0, crashT - REC.stood), sh = k > 0 ? 1 - k/(REC.back - REC.stood) : 0;
+    RAG_POSE.forEach(([n], i)=>
+    {
+        const q = STAND_POSE[n], o = vec3(q[0], q[1], q[2]);
+        if (n == 'head') o.x += sin(k*24)*.07*sh;
+        if (n == 'hdL' || n == 'hdR' || n == 'elL' || n == 'elR') o.y += sin(k*28 + (n.endsWith('R') ? 1.5 : 0))*.1*sh;
+        o.y += sin(k*9)*.02*sh;
+        const w = R.S.transformPoint(o), p = ragdoll.pts[i], f = R.from[i];
+        p.x = mix(f.x, w.x + OX, u); p.y = mix(f.y, w.y + OY, u); p.z = mix(f.z, w.z, u);
+    });
+    rag.x = ragdoll.pts[RAG_I.hip].x; rag.y = ragdoll.pts[RAG_I.hip].y; rag.z = ragdoll.pts[RAG_I.hip].z;
+    // the bike's pieces fly back together beside them
+    if (crashT > REC.stood)
+    {
+        if (!R.pfrom) R.pfrom = pieces.map(p=> ({x: p.x, y: p.y, z: p.z, R: p.R.copy()}));
+        const v = sstep(clamp01((crashT - REC.stood)/.9)), Rb = R.B.copy();
+        Rb.m[12] = Rb.m[13] = Rb.m[14] = 0;
+        pieces.forEach((p, i)=>
+        {
+            const f = R.pfrom[i], to = R.B.transformPoint(p.c);
+            p.x = mix(f.x, to.x + OX, v); p.y = mix(f.y, to.y + OY, v); p.z = mix(f.z, to.z, v);
+            for (let j = 0; j < 16; ++j) p.R.m[j] = mix(f.R.m[j], Rb.m[j], v);
+        });
+    }
+    if (crashT >= REC.back)
+    {
+        // and back on: rolling away slowly from the bike's spot
+        state = 'ride'; mp.rec = null; ragdoll = null; pieces = [];
+        px = R.x; py = baseY = rideY(px); vx = vy = 0; sp = 5; grounded = true; grinding = null;
+        ang = atan(rideSlope(px)); angVel = 0; landVis = 0; airT = rot = 0; style = undefined; stylesDone = []; trickQueued = null;
+        showMessage('BACK ON IT!', '', hsl(.13,.95,.6));
+        sfx('go');
+    }
+}
+
+// ---------- on screen: where the other rider is, a tag over them or an arrow to them, and the match
+function project(p)
+{
+    const c = render3D.camera, fw = (camLook || p).subtract(c.pos).normalize(), rt = fw.cross(vec3(0, 1, 0)).normalize(), up = rt.cross(fw);
+    const d = p.subtract(c.pos), z = d.dot(fw), W = mainCanvasSize.x, H = mainCanvasSize.y, t = tan((c.fov || .78)/2);
+    if (z <= .1) return null;
+    return {x: W/2*(1 + d.dot(rt)/(z*t*W/H)), y: H/2*(1 - d.dot(up)/(z*t))};
+}
+const fmtT = t=> '0:' + String(max(0, ceil(t))).padStart(2, '0');
+function drawMatch(W, H, top, bottom)
+{
+    // a room open, waiting: its code and a share button
+    if (mp.code && !mp.peer)
+    {
+        rrect(W/2 - 110, top + 48, 220, 54, 12, 'rgba(12,18,30,.75)', 'rgba(255,210,70,.6)');
+        txt('ROOM ' + mp.code, W/2, top + 64, 18, '#ffd23a', 'center', 900);
+        txt('waiting for a rider', W/2, top + 86, 12, 'rgba(255,255,255,.8)', 'center', 700);
+        button(W/2 + 116, top + 52, 70, 34, 'SHARE', mpShare, true, 13);
+        return;
+    }
+    if (!inMatch()) return;
+    // the clock and the score: rounds and stars, and a breakaway counting down
+    const c = mp.you == 0 ? {rl: mp.roundT, rn: mp.round, bk: mp.breakBy >= 0 ? mp.breakT : -1, bb: mp.breakBy} : mp.clock;
+    if (c)
+    {
+        // across the top on a wide screen, under the buttons at the right on a tall one, clear of the counts at the left
+        const y = top + 54, me = mp.you, cx = W > H ? W/2 : W - 12 - 115;
+        rrect(cx - 115, y - 14, 230, 46, 12, 'rgba(12,18,30,.6)');
+        txt('ROUND ' + c.rn + '  ' + fmtT(c.rl), cx, y, 14, '#fff', 'center', 900);
+        txt('YOU ★' + mp.stars[me] + '   ·   RIVAL ★' + mp.stars[1 - me] + (mp.wins[0] + mp.wins[1] ? '   ·   ' + mp.wins[me] + '-' + mp.wins[1 - me] : ''), cx, y + 19, 12.5, '#ffd23a', 'center', 800);
+        if (c.bk >= 0)
+        {
+            const mine = c.bb == me, s = (mine ? 'BREAKAWAY! HOLD IT ' : 'RIVAL BREAKING AWAY ') + fmtT(c.bk);
+            txt(s, W/2, y + 46, fitSize(s, 16, W - 30), mine ? '#9dffb0' : '#ff8a6a', 'center', 900);
+        }
+    }
+    if (mp.hold > 0) txt('' + ceil(mp.hold), W/2, H*.4, 90, '#ffd23a', 'center', 900);
+    if (mp.draft) txt('SLIPSTREAM', W/2, bottom - 70, 15, '#bff4ff', 'center', 900);
+    // the other rider: a tag over them on screen, an arrow at the edge with the gap when not
+    const r = mp.view;
+    if (!r || !mp.last) return;
+    const p = r.st == 'c' && r.rag ? project(vec3(r.rag[6] - OX, r.rag[7] - OY + 2.2, r.rag[8])) : project(vec3(r.x - OX, r.y - OY + 3.1, wz(r.x, (r.z || 0) + MP.side)));
+    const gap = round(mp.last.x - px);
+    const col = (KITS[r.kit]?.[1].jersey || PAL_BASE.jersey).toString();
+    if (p && p.x > 20 && p.x < W - 20 && p.y > top + 40 && p.y < bottom)
+    {
+        rrect(p.x - 34, p.y - 12, 68, 22, 8, 'rgba(12,18,30,.7)', col);
+        txt('RIVAL', p.x, p.y, 12, '#fff', 'center', 900);
+    }
+    else
+    {
+        const ahead = gap > 0, x = ahead ? W - 26 : 26, y = H*.5;
+        ctx.fillStyle = col;
+        ctx.beginPath(); ctx.moveTo(x + (ahead ? 14 : -14), y); ctx.lineTo(x - (ahead ? 6 : -6), y - 13); ctx.lineTo(x - (ahead ? 6 : -6), y + 13); ctx.closePath(); ctx.fill();
+        txt('RIVAL ' + (gap > 0 ? '+' : '') + gap + ' m', ahead ? W - 44 : 44, y + 26, 12, '#fff', ahead ? 'right' : 'left', 900);
+    }
+}
 
 // a handle for automated checks
 window.__mtb = {
@@ -4864,6 +5277,10 @@ window.__mtb = {
     // try out a colour scheme: the rider's and bike's colours by name
     palette: o=> Object.assign(PAL, o),
     kit: i=> setKit(i), bike: i=> setBike(i), garage: ()=> menu = 'garage',
+    mp: ()=> ({code: mp.code, you: mp.you, peer: mp.peer, status: mp.status, round: mp.round, roundT: mp.roundT, stars: mp.stars, wins: mp.wins,
+        breakBy: mp.breakBy, breakT: mp.breakT, hold: mp.hold, draft: mp.draft, rec: !!mp.rec, crashes: mp.crashes, runSeed, buf: mp.buf.length,
+        remote: mp.last && {x: mp.last.x, st: mp.last.st, sc: mp.last.sc}, clock: mp.clock}),
+    mpHost: ()=> { mpHost(); startRide(); }, mpJoin: c=> mpJoin(c), mpLeave: ()=> mpLeave(), mpTune: o=> Object.assign(MP, o),
     brake: on=> { brakeHeld = on; }, tyresTo: n=> { brakeFuel = n >= 3 ? BRAKE_LEN : 0; },
     endRun: ()=> endRun(),
     // the middle of rider and bike as drawn, for close-ups

@@ -1,0 +1,13 @@
+{
+  "name": "bluecow-relay",
+  "version": "1.0.0",
+  "description": "Two-player relay for Bluecow Rager",
+  "main": "relay.js",
+  "private": true,
+  "scripts": {
+    "start": "node relay.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

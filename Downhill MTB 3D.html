@@ -4710,6 +4710,8 @@ window.__mtb = {
     wipe: reason=> crash(reason || 'HIT A ROCK'),
     buttons: ()=> buttons.map(({x, y, w, h, label})=> ({x, y, w, h, label})),
     moo: ()=> moo(),
+    // try out a colour scheme: the rider's and bike's colours by name
+    palette: o=> Object.assign(PAL, o),
     brake: on=> { brakeHeld = on; }, tyresTo: n=> { brakeFuel = n >= 3 ? BRAKE_LEN : 0; },
     endRun: ()=> endRun(),
     // the middle of rider and bike as drawn, for close-ups

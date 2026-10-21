@@ -401,6 +401,15 @@ Each phase is a separate commit (or a few), tested with the Phase 0 harness befo
   - **Rock gardens:** the boosts raise average speed (18.9 → 21.4 m/s on one seed), so rocks now sit 18 m past their crest, up from 14 m, to leave room for a faster flight off it.
   - **Regression:** 500 km over five modes (plain, tricks and flips, turbo, pro, high with tricks): 0 crashes. The autopilot gets 1–2 supercharges per 3 km.
 
+- **Rider lost from view over the LOW line's chute + gap: fixed.**
+  - **Cause:** the camera frames the ground a little ahead of the rider. Over a chasm that ground is the bottom of the pit, about 45 m down, so the camera dived toward it. In 3/4, SIDE and CHASE the rider went off the top of the screen for 25–69 frames on every chute + gap.
+  - **Fix:** the camera frames a chasm as the straight line from its lip to its far edge (`camGround`).
+  - **Landing past the far edge:** the rider could drop out of sight behind it. The sight check now tests 24 points along the line to the rider instead of 10, and in the air it also checks where the rider will be 0.3 s ahead, so the camera is already lifting.
+  - **Portrait 3/4 (found on the way):** the rider was often at or past the left edge, on any line. The look-ahead runs partly across the screen at that angle and brings the rider nearer the camera than what it aims at, and the weave shifts the trail ahead sideways. The look-ahead is now shortened until the rider is within 60% of the way to the edge. Landscape views are unchanged.
+  - **New test hook:** `__mtb.view()` reports how far off-centre the rider is (1 = the screen edge) and how much of them terrain hides.
+  - **Result:** LOW lines over 6 seeds and the main trail over 3 seeds, in all four views, landscape and portrait, are clean. A few 3–4 frame wheel clips remain, plus the summit start in portrait SIDE.
+  - **Regression:** 40 km with tricks: 0 crashes.
+
 ## Running the tools
 
     node tools/sim.mjs [--seeds 20] [--km 5] [--flips back|front] [--tricks] [--lanes rand|up|down|main] [--turbo] [--json out.json] [--salt n] [--game other.html]

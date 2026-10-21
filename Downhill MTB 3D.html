@@ -235,6 +235,16 @@ function rideSlope(x)
     return (ride.ys[i + 1] - ride.ys[i])/DX;
 }
 const rideGap = x=> onBranch(x) ? brGap(ride, x) : gapAt(x);
+// the ground the camera frames: across a chasm, the straight line from its lip to its far edge rather than the
+// bottom of it far below, so a jump over one is framed as a jump and the view does not dive into the pit
+function camGround(x)
+{
+    if (!rideGap(x)) return rideY(x);
+    let a = x, b = x;
+    for (let k = 0; k < 120 && rideGap(a); ++k) a -= DX;
+    for (let k = 0; k < 120 && rideGap(b); ++k) b += DX;
+    return mix(rideY(a), rideY(b), (x - a)/max(DX, b - a));
+}
 // the main trail heavily smoothed, chasms bridged, for a branch to follow at a distance
 function wideY(x)
 {
@@ -1155,9 +1165,10 @@ function terrainAt(x, zw)
 function sightLift(rx, ry, rz, cx, cy, cz)
 {
     let need = cy;
-    for (let k = 1; k <= 10; ++k)
+    // closely enough spaced to catch a sharp edge, like the far side of a chasm
+    for (let k = 1; k <= 24; ++k)
     {
-        const u = k/11, t = terrainAt(mix(rx, cx, u), mix(rz, cz, u)) + .6;
+        const u = k/25, t = terrainAt(mix(rx, cx, u), mix(rz, cz, u)) + .6;
         if (t > mix(ry, cy, u)) need = max(need, ry + (t - ry)/u);
     }
     return min(need - cy, 25);
@@ -3021,10 +3032,23 @@ function gameUpdatePost()
         dropDist + speed*.12, dropCam), D = mix(D0, CRASH_VIEW.dist[o], crashCam), vs = 2*D*tan(vfov/2);
     camD += (D - camD)*damp(2.5, dt);
     const lead = state == 'title' ? min(Cw.lead, .3) - .18 : Cw.lead*(1 - sendCam*.7), reach = mix(hs, D*1.1, Cw.fixed);
-    const tx = fx + reach*lead;
+    // never so far ahead that the rider is pushed off the side of the screen: from a view at an angle the lead
+    // runs partly across the screen, brings the rider nearer the camera than what it looks at (which makes it
+    // look wider still) and the weave puts the trail ahead off to one side, and a tall screen is narrow.
+    // Shortened until the rider is no more than 60% of the way to the edge
+    const al0 = Cw.yaw + camB*Cw.follow, th = tan(hf/2), ca = cos(al0), sa = sin(al0), ce = cos(Cw.pitch);
+    const rz0 = state == 'ride' ? wz(fx, pz) : state == 'title' ? wz(fx, 0) : rag.z;
+    let ahead0 = reach*lead;
+    for (let i = 0; i < 8; ++i)
+    {
+        const dz = rz0 - wz(fx + ahead0, camZ), depth = max(2, D - (ahead0*sa + dz*ca)*ce);
+        if (abs(-ahead0*ca + dz*sa)/(depth*th) <= .6) break;
+        ahead0 *= .8;
+    }
+    const tx = fx + ahead0;
     // close in on a drop it looks at the rider, not the ground ahead, and keeps up with the fall
     const ahead = 1 - max(close, sendCam*.8)*.85;
-    const ty = fy - vs*Cw.up + ((rideY(fx + hs*.45) - fy)*.32*min(1, .6 + Cw.lead*.4) + (rideY(tx) - fy)*max(0, Cw.lead - .4)*.6)*ahead;
+    const ty = fy - vs*Cw.up + ((camGround(fx + hs*.45) - fy)*.32*min(1, .6 + Cw.lead*.4) + (camGround(tx) - fy)*max(0, Cw.lead - .4)*.6)*ahead;
     camX += (tx - camX)*damp(state == 'title' ? 3 : 9, dt);
     camY += (ty - camY)*damp(mix(4.5, 10, close), dt);
     // keep the numbers small: move the world's origin along with the rider
@@ -3046,13 +3070,19 @@ function gameUpdatePost()
     const al = Cw.yaw + camB*Cw.follow, el = Cw.pitch;
     const cx = camX - sin(al)*cos(el)*camD, cz = zW + cos(al)*cos(el)*camD;
     // never down in the ground, neither the line behind the rider nor the hillside the camera is over
-    let cy = max(camY + sin(el)*camD, rideY(cx) + 2.6, terrainAt(cx, cz) + 2);
+    let cy = max(camY + sin(el)*camD, camGround(cx) + 2.6, terrainAt(cx, cz) + 2);
     // and the rider always in sight: where the ground between rises into the view, the camera lifts to see over it,
     // quickly, and settles back down slowly once it is clear
     if (state != 'title')
     {
         // looking at the wheels, so the whole of bike and rider is in view, not just a head over a crest
-        const need = sightLift(fx, fy + .35*RS, state == 'ride' ? wz(fx, pz) : rag.z, cx, cy, cz);
+        let need = sightLift(fx, fy + .35*RS, state == 'ride' ? wz(fx, pz) : rag.z, cx, cy, cz);
+        // and where a flight will be a moment from now, so the camera is already up as the rider drops in behind an edge
+        if (state == 'ride' && !grounded && !grinding)
+        {
+            const t = .3, ax = px + vx*t, ay = max(py + vy*t - G_AIR*t*t/2, rideY(ax));
+            need = max(need, sightLift(ax, ay + .35*RS, wz(ax, pz), cx, cy, cz));
+        }
         camLift += (need - camLift)*damp(need > camLift ? 6 : 1.2, dt);
         cy += max(0, camLift);
     }
@@ -4186,6 +4216,30 @@ window.__mtb = {
     press2: ()=> pressSecond(), release2: ()=> releaseSecond(),
     swipe: dir=> airSwipe(dir),
     wipe: reason=> crash(reason || 'HIT A ROCK'),
+    // how well the rider is in view: how far off the middle of the screen (1 = at its edge) and how much of the
+    // body the ground hides from the camera
+    view: ()=>
+    {
+        const c = render3D.camera, M = bikeMatrix(), aspect = mainCanvasSize.x/max(1, mainCanvasSize.y), vf = c.fov ?? .78;
+        const look = vec3(camX - OX, camY - OY, wz(camX, camZ)), fw = look.subtract(c.pos).normalize();
+        const rt = fw.cross(vec3(0, 1, 0)).normalize(), up = rt.cross(fw);
+        let off = 0, hid = 0, ov = 0, oh = 0;
+        const pts = [vec3(0, .37, .62), vec3(0, .37, -.64), vec3(0, 1.2, 0), vec3(0, 1.78, -.21)].map(p=> M.transformPoint(p));
+        for (const p of pts)
+        {
+            const d = p.subtract(c.pos), z = d.dot(fw);
+            const v = z <= 0 ? 9 : d.dot(up)/z/tan(vf/2), hz = z <= 0 ? 9 : d.dot(rt)/z/(tan(vf/2)*aspect);
+            if (abs(v) > abs(ov)) ov = v;
+            if (abs(hz) > abs(oh)) oh = hz;
+            off = max(off, abs(v), abs(hz));
+            for (let k = 1; k < 40; ++k)
+            {
+                const u = k/40, q = c.pos.add(d.scale(u));
+                if (terrainAt(q.x + OX, q.z) > q.y + OY) { ++hid; break; }
+            }
+        }
+        return {off: +off.toFixed(2), ov: +ov.toFixed(2), oh: +oh.toFixed(2), hid, px, ride: ride ? ride.lane : 0, what: ride?.what, grounded, airT};
+    },
     wreck: ()=> ({rag: {...rag}, crashT, crashCam, pts: ragdoll?.pts.map(p=> ({x: p.x, y: p.y, z: p.z, vx: p.vx, vy: p.vy, g: terrainAt(p.x, p.z)})), pieces: pieces.map(p=> ({key: p.key, x: p.x, y: p.y, z: p.z, g: terrainAt(p.x, p.z)}))}),
     ground: x=> rideY(x), state: ()=> ({px, py, vx, vy, airT, grounded, run: state}),
     teleport: x=> { trackEnsure(x + TRACK_AHEAD); placeRider(x); state = 'ride'; sp = 16; },

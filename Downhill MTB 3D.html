@@ -2197,7 +2197,10 @@ function startWreck()
 {
     const M = bikeMatrix(), rnd = ()=> Math.random() - .5, spin = -(6 + Math.random()*6);
     const pts = RAG_POSE.map(([n, x, y, z, rad])=> { const p = M.transformPoint(vec3(x, y, z)); return {x: p.x + OX, y: p.y + OY, z: p.z, r: rad*RS}; });
-    const hip = pts[RAG_I.hip], ux = vx*.65, uy = max(vy, 0)*.5 + 3.5;
+    // a rider coming down on their head starts partly in the ground: lifted out of it first
+    const lift = max(0, ...pts.map(p=> terrainAt(p.x, p.z) + p.r - p.y));
+    for (const p of pts) p.y += lift;
+    const hip = pts[RAG_I.hip], ux = vx*.65, uy = max(vy, 0)*.3 + 2.5;
     // thrown on at the bike's speed, tumbling head over heels, every limb a little its own way
     for (const p of pts)
     {
@@ -2213,7 +2216,7 @@ function startWreck()
         const c = vec3(x, y, z), w = M.transformPoint(c), R = M.copy(), out = w.subtract(mid);
         R.m[12] = R.m[13] = R.m[14] = 0;
         return {key, c, x: w.x + OX, y: w.y + OY, z: w.z, r: rad*RS, wheel, R, tipAt: 1.5 + Math.random()*2,
-            vx: vx*(wheel ? .6 : .5) + out.x*3 + rnd()*3, vy: max(vy, 0)*.4 + 2 + out.y*3 + Math.random()*2.5, vz: out.z*4 + rnd()*5,
+            vx: vx*(wheel ? .65 : .6) + out.x*3 + rnd()*3, vy: max(vy, 0)*.4 + 2 + out.y*3 + Math.random()*2.5, vz: out.z*4 + rnd()*5,
             w: wheel ? vec3(rnd()*2, rnd()*2, -vx/(rad*RS)*.6) : vec3(rnd()*14, rnd()*14, rnd()*14)};
     });
     wheelSpinAtCrash = wheelSpin;
@@ -2233,40 +2236,58 @@ function stepWreck(dt)
     {
         // the ragdoll: moved, then its bones pulled back to length, then kept out of the ground
         const flail = crashT < 3.5, t = time + s*h;
-        // arms and legs windmilling while it flies, for comic effect: each end swung round in its own circle
-        // about the chest, steered towards that rather than pushed, so the body as a whole is not flung about
-        if (flail)
+        // arms and legs windmilling while it flies, for comic effect: each end steered round its own circle about
+        // the chest, and whatever that gives the limbs taken back off the whole body, so the flailing only ever
+        // moves the arms and legs, never carries the rider anywhere. Only up in the air, and only a limb clear
+        // of the ground: a foot paddling the dirt would run the body off up the hill
+        const C = P[RAG_I.chest];
+        if (flail && C.y - (C.g ?? -1e9) > .7)
         {
-            const C = P[RAG_I.chest], k = 1 - damp(10, h);
+            const k = 1 - damp(10, h);
+            let sx = 0, sy = 0;
             for (const i of LIMB_ENDS)
             {
-                const p = P[i], a = t*(i < RAG_I.ftL ? 14 : 10) + p.phase, w = i < RAG_I.ftL ? 6 : 4.5;
-                p.vx += (C.vx - sin(a)*w - p.vx)*k; p.vy += (C.vy + cos(a)*w - p.vy)*k;
+                const p = P[i];
+                if (p.hit) continue;
+                const a = t*(i < RAG_I.ftL ? 14 : 10) + p.phase, w = i < RAG_I.ftL ? 6 : 4.5;
+                const dx = (C.vx - sin(a)*w - p.vx)*k, dy = (C.vy + cos(a)*w - p.vy)*k;
+                p.vx += dx; p.vy += dy; sx += dx; sy += dy;
             }
+            for (const p of P) { p.vx -= sx/P.length; p.vy -= sy/P.length; }
         }
         for (const p of P)
         {
             p.ox = p.x; p.oy = p.y; p.oz = p.z;
             p.vy -= G_AIR*h;
+            p.fall = p.vy;
             p.x += p.vx*h; p.y += p.vy*h; p.z += p.vz*h;
+            p.g = terrainAt(p.x, p.z) + p.r; p.hit = false;
         }
+        // the bones and the ground worked out together, so neither drags the other through
         for (let it = 0; it < 5; ++it)
+        {
             RAG_BONES.forEach(([a, b], j)=>
             {
                 const A = P[a], B = P[b], dx = B.x - A.x, dy = B.y - A.y, dz = B.z - A.z, d = hypot(dx, dy, dz) || 1e-6, f = (d - ragdoll.len[j])/d*.5;
                 A.x += dx*f; A.y += dy*f; A.z += dz*f; B.x -= dx*f; B.y -= dy*f; B.z -= dz*f;
             });
+            for (const p of P) if (p.y < p.g) { p.y = p.g; p.hit = true; }
+        }
         for (const p of P)
         {
-            const g = terrainAt(p.x, p.z) + p.r, hit = p.y < g;
-            if (hit) p.y = g;
             p.vx = (p.x - p.ox)/h; p.vy = (p.y - p.oy)/h; p.vz = (p.z - p.oz)/h;
-            if (hit)
+            // being pushed out of the ground (onto a rock, up a bank) is not a throw: a contact only bounces
+            // back a little of the speed it hit with, and nothing is ever flung up faster than a tumble goes
+            if (p.hit)
             {
-                if (p.vy < 0) { wreckSound('thud', -p.vy); p.vy *= -.3; }
-                const f = 1 - damp(18, h);
+                if (p.fall < 0) wreckSound('thud', -p.fall);
+                p.vy = min(p.vy, max(0, -p.fall)*.3 + 1);
+                const f = 1 - damp(9, h);
                 p.vx *= f; p.vz *= f;
             }
+            p.vy = min(p.vy, 8);
+            const sp = hypot(p.vx, p.vy, p.vz);
+            if (sp > 30) { p.vx *= 30/sp; p.vy *= 30/sp; p.vz *= 30/sp; }
         }
         // the pieces of the bike: tumbling, bouncing, and the wheels rolling on down the slope
         for (const p of pieces)
@@ -2290,7 +2311,7 @@ function stepWreck(dt)
                 }
                 else
                 {
-                    const f = 1 - damp(4, h);
+                    const f = 1 - damp(2.5, h);
                     p.vx *= f; p.vz *= f; p.w = p.w.scale(1 - damp(3, h));
                 }
             }
@@ -3991,7 +4012,7 @@ window.__mtb = {
     press2: ()=> pressSecond(), release2: ()=> releaseSecond(),
     swipe: dir=> airSwipe(dir),
     wipe: reason=> crash(reason || 'HIT A ROCK'),
-    wreck: ()=> ({rag: {...rag}, crashT, crashCam, pts: ragdoll?.pts.map(p=> ({x: p.x, y: p.y, z: p.z, g: terrainAt(p.x, p.z)})), pieces: pieces.map(p=> ({key: p.key, x: p.x, y: p.y, z: p.z, g: terrainAt(p.x, p.z)}))}),
+    wreck: ()=> ({rag: {...rag}, crashT, crashCam, pts: ragdoll?.pts.map(p=> ({x: p.x, y: p.y, z: p.z, vx: p.vx, vy: p.vy, g: terrainAt(p.x, p.z)})), pieces: pieces.map(p=> ({key: p.key, x: p.x, y: p.y, z: p.z, g: terrainAt(p.x, p.z)}))}),
     ground: x=> rideY(x), state: ()=> ({px, py, vx, vy, airT, grounded, run: state}),
     teleport: x=> { trackEnsure(x + TRACK_AHEAD); placeRider(x); state = 'ride'; sp = 16; },
     setDay: t=> dayT = t,

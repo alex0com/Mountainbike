@@ -364,6 +364,17 @@ Each phase is a separate commit (or a few), tested with the Phase 0 harness befo
     - **Crash screen:** shows "YARD SALE!" with the reason. After 0.35 s, "TAP TO RIDE AGAIN" pulses and any tap or key rides a new run straight away. The run's bests are saved first.
     - **Results screen:** a tap anywhere restarts immediately. The 0.8 s wait is gone.
     - The tumble now lasts 2.4 s before the results appear.
+  - **Fix: rider shooting into the sky.**
+    - **Cause:** two bugs.
+      - Joints pushed out of the ground turned into upward speed, because velocity was worked out from position. This was worst landing on the head, which starts with joints inside the ground.
+      - The windmilling limbs added momentum. Feet paddling the dirt drove the body backwards and up the hill.
+    - **Fix:**
+      - Ground contact is solved inside the bone loop and only bounces back 30% of the impact speed.
+      - Upward speed is capped at 8 m/s and any joint at 30 m/s.
+      - The body is lifted clear of the ground at the start.
+      - The flailing is momentum-neutral, and only in the air with limbs clear of the ground.
+      - The bike parts carry on at closer to the rider's speed, so they tumble down beside him.
+    - **Result over 86 forced and head-first crashes:** highest rise above the crash point 100 m → 2.4 m. The rider tumbles 9–37 m down the trail, with the parts mostly within about 15 m either side.
   - **Checks:**
     - Forced crashes over 5 seeds in 3/4, SIDE, CHASE and portrait views.
     - An early tap is ignored and a later tap restarts, both paused and in real time.

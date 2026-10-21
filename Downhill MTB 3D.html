@@ -703,16 +703,27 @@ function buildLine(sp, kind)
     // its features, made smaller until they fit between the turn off and the turn back; a plain line if none do
     let plan = null;
     for (let t = 0, sc = 1; t < 6 && !plan; ++t, sc *= .82) plan = lineFeatures(b, lane, kind, sc);
+    // a line up the hill never sinks below the main trail beside it, where the hill would hide it from the camera:
+    // its floor is a metre over the highest of the trail nearby, and never rises going down the mountain, so a line
+    // held up on it still falls all the way; a drop-in onto it just has a shorter face
+    const floor = new Float32Array(n).fill(-1e9);
+    if (L.dir > 0)
+    {
+        for (let k = 0; k < n; ++k) { let h = -1e9; for (let d = -8; d <= 8; d += 2) h = max(h, groundY(b.x0 + (k + d)*DX)); floor[k] = h + 1; }
+        for (let k = n - 2; k >= 0; --k) floor[k] = max(floor[k], floor[k + 1]);
+    }
     for (let k = 0; k < n; ++k)
     {
         const x = b.x0 + k*DX;
-        b.ys.push(mix(groundY(x), lane[k] + (plan ? plan.off[k] + plan.add[k] : 0), brT(b, x)));
+        b.ys.push(mix(groundY(x), max(floor[k], lane[k] + (plan ? plan.off[k] + plan.add[k] : 0)), brT(b, x)));
         b.gap.push(plan ? plan.gap[k] : 0);
     }
     // the features, pace zones and chasms belong to the line; orbs along it and arcs off its launches
     if (plan)
     {
         b.what = plan.what;
+        const di = plan.feats.find(f=> f.type == 'dropin');
+        if (di) { di.F = brY(b, di.x1) - brY(b, di.x1 + DX); b.what = 'DROP-IN ' + round(di.F) + 'm'; }
         for (const f of plan.feats)
         {
             f.line = b; f.lipY = brY(b, f.x1); f.lipSlope = (brY(b, f.x1) - brY(b, f.x1 - DX))/DX;
@@ -793,10 +804,11 @@ function lineFeatures(b, lane, kind, sc)
     }
     else if (kind == 'high')
     {
-        // rollers, then a steady pace onto a kicker off a step down onto a long landing
-        follow(14);
+        // a flatter traverse up the hillside over the rollers, then a steady pace onto a kicker off a step down
+        // onto a long landing
+        run(30, max(.04, fall - .18));
         const p0 = k;
-        follow(14);
+        run(14, max(.04, fall - .15));
         const s0 = k, lip = kick(.9 + rnd()*.4, 4.5), S = (2.5 + rnd()*2)*sc + .5, v = 14 + rnd()*2, G = clampV(fall + .2, .4, .55);
         o -= S;
         const xl = landing(slopeAt(lip), v + 2, POP, S, G);
@@ -1036,6 +1048,13 @@ function carve(bs, x, z, y, out)
         out.w = max(out.w, 1 - sstep((d - 1.6)/(1.2 + m.h)));
         out.lift = max(out.lift, lift*w);
     }
+    // the slope in front of a line down the hill falls away from it, so nothing stands between it and the camera
+    for (const b of bs)
+    {
+        if (b.dir > 0 || x <= b.x0 || x >= b.x1 || brGap(b, x)) continue;
+        const zc = brZ(b, x);
+        if (z > zc + 2) out.y = min(out.y, mix(out.y, brY(b, x) - .4 - (z - zc - 2)*.45, brT(b, x)));
+    }
     return out;
 }
 function rowY(kind, z, x, p, s, gap)
@@ -1081,6 +1100,33 @@ function hillY(x, z)
             return mix(rowY(ka, za, x, p, s, g), rowY(kb, zb, x, p, s, g), (za - z)/(za - zb)) - gullyCut(x, z, 'hill');
     }
     return rowY('hill', z, x, p, s, g) - gullyCut(x, z, 'hill');
+}
+
+// the ground's height under a point of the bent world, as the ground mesh has it, lines cut in and all
+const TCV = {};
+function terrainAt(x, zw)
+{
+    // back from the bent world to across the trail: the weave moves the ground less the farther it is from the trail
+    const w = weaveZ(x);
+    let zr = zw - w;
+    for (let k = 0; k < 3; ++k) zr = zw - w*weaveK(zr);
+    const p = groundY(x), s = smoothY(x), g = gapAt(x), bs = branchesNear(x - 1, x + 1);
+    const at = r=> { const [z, kind] = ROWS[r]; return carve(bs, x, z, rowY(kind, z, x, p, s, g) - gullyCut(x, z, kind), TCV).y; };
+    if (zr >= ROWS[0][0]) return at(0);
+    for (let r = 0; r < ROWS.length - 1; ++r)
+        if (zr <= ROWS[r][0] && zr >= ROWS[r + 1][0]) return mix(at(r), at(r + 1), (ROWS[r][0] - zr)/(ROWS[r][0] - ROWS[r + 1][0]));
+    return at(ROWS.length - 1);
+}
+// how far the camera has to rise to see the rider over the ground between them, looked at a few points along the way
+function sightLift(rx, ry, rz, cx, cy, cz)
+{
+    let need = cy;
+    for (let k = 1; k <= 10; ++k)
+    {
+        const u = k/11, t = terrainAt(mix(rx, cx, u), mix(rz, cz, u)) + .6;
+        if (t > mix(ry, cy, u)) need = max(need, ry + (t - ry)/u);
+    }
+    return min(need - cy, 25);
 }
 
 function buildChunkMesh(ch)
@@ -1177,7 +1223,7 @@ function buildChunk(i)
     const w = biomeW(x0 + CH/2, {}), lists = {pine: [], snowPine: [], broad: [], bush: [], rock: [], crag: []};
     // nothing grows on a branch, or between it and the camera
     const bsN = branchesNear(x0 - 6, x0 + CH + 6);
-    const clearOf = (x, z)=> !bsN.some(b=> x > b.x0 - 5 && x < b.x1 + 5 && (b.dir > 0 ? z > b.z - 4.5 : z < b.z + 4.5 && z > 1))
+    const clearOf = (x, z)=> !bsN.some(b=> x > b.x0 - 5 && x < b.x1 + 5 && (b.dir > 0 ? z > b.z - 4.5 : z < b.z + 34 && z > 1))
         && !gullies.some(g=> abs(x - g.xc) < (g.bridge ? 4 : 3.5)) && !arches.some(a=> abs(x - a.x) < 4 && abs(z) < 11);
     const nTrees = round(8*w.snow + 14*w.alpine + 60*w.forest + 46*w.autumn + 10*w.desert);
     for (let k = 0; k < nTrees*1.4; ++k)
@@ -2402,7 +2448,7 @@ function newRun(s)
     placeRider(START_X);
     runTime = dist = score = orbsGot = orbStreak = 0;
     bestCombo = 0; bestComboName = ''; flipsTotal = 0; grindDist = 0; crashReason = ''; trickCounts = {}; tricksTotal = 0; bestTrick = {name: '', pts: 0}; airHist = [0, 0, 0, 0, 0, 0]; hardLandings = 0; combosBanked = 0; multSum = 0;
-    battery = 0; turboT = 0; turbos = 0; lines = 0; proLines = 0; linesRidden = new Set; allLines = false; dayT = DAY_START; dropCam = 0; pz = yawV = leanV = bermY = 0; camZ = camB = 0;
+    battery = 0; turboT = 0; turbos = 0; lines = 0; proLines = 0; linesRidden = new Set; allLines = false; dayT = DAY_START; dropCam = 0; camLift = 0; pz = yawV = leanV = bermY = 0; camZ = camB = 0;
     messages.length = 0; trickPops.length = 0; swipeFx.length = 0;
     riderView = new RiderView;
     new OrbView; new OrbGlow; new SkyExtras; new TurboGlow;
@@ -2577,7 +2623,7 @@ const CAM_VIEWS = {
     'HIGH':  {yaw: [1.25, .8], pitch: [.9, .82], lead: [.16, .16], up: [0, 0], dist: [32, 34], fixed: 1, follow: .8}};
 // the drop-in view, [portrait, landscape]: in front of the rider and to the side, low, close
 const DROP_VIEW = {yaw: [-.5, -.55], pitch: [.06, .05], lead: [.02, .02], up: [0, 0], dist: [15, 12], follow: .6, fixed: 1};
-let dropCam = 0, dropDist = 15;
+let dropCam = 0, dropDist = 15, camLift = 0;
 const CAM_ORDER = Object.keys(CAM_VIEWS), CAM_ZOOMS = [['NEAR', .78], ['MID', 1], ['FAR', 1.32]];
 // side on and far back in portrait, three quarter at mid zoom in landscape
 let camView = {p: 'SIDE', l: '3/4', zp: 2, zl: 1}, camP;
@@ -2655,10 +2701,19 @@ function gameUpdatePost()
     const lineD = wzD(fx, camZ) + (ride && fx > ride.x0 && fx < ride.x1 ? brZ(ride, fx + .5) - brZ(ride, fx - .5) : 0);
     camB += (atan(lineD) - camB)*damp(mix(1.2, 3, behind), dt);
     const al = C.yaw + camB*C.follow, el = C.pitch;
-    const cx = camX - sin(al)*cos(el)*camD;
-    // never down in the ground behind the rider
-    const cy = max(camY + sin(el)*camD, rideY(cx) + 2.6);
-    cam.pos = vec3(cx - OX + j(), cy - OY + j(), zW + cos(al)*cos(el)*camD);
+    const cx = camX - sin(al)*cos(el)*camD, cz = zW + cos(al)*cos(el)*camD;
+    // never down in the ground, neither the line behind the rider nor the hillside the camera is over
+    let cy = max(camY + sin(el)*camD, rideY(cx) + 2.6, terrainAt(cx, cz) + 2);
+    // and the rider always in sight: where the ground between rises into the view, the camera lifts to see over it,
+    // quickly, and settles back down slowly once it is clear
+    if (state != 'title')
+    {
+        // looking at the wheels, so the whole of bike and rider is in view, not just a head over a crest
+        const need = sightLift(fx, fy + .35*RS, wz(fx, state == 'ride' ? pz : ragZ(fx)), cx, cy, cz);
+        camLift += (need - camLift)*damp(need > camLift ? 6 : 1.2, dt);
+        cy += max(0, camLift);
+    }
+    cam.pos = vec3(cx - OX + j(), cy - OY + j(), cz);
     cam.lookAt(vec3(camX - OX, camY - OY, zW));
     render3D.shadowCenter = vec3(fx - OX + 6, fy - OY, wz(fx, camZ - 3));
     updateChunks(camX, false, C.lead > .6 ? 140 : 0);
@@ -3687,7 +3742,7 @@ window.__mtb = {
         OX, OY, night, dayT, boostT, grindDist, seed, ride: ride ? ride.lane : 0, riderZ: riderZ(), battery, turboT, turbos, lines, proLines,
         forkAhead: !!forkAhead, laneWant, view: camViewName(), zoom: camZoomName(), splits: splits.map(s=> [s.x0|0, s.x1|0, s.kinds.join('+')]),
         lineDetail: splits.map(s=> Object.values(s.lines).map(b=> b.kind + ':' + (b.what || 'plain')).join(' ')),
-        dropCam, braking, sentIt, drops: feats.filter(f=> f.type == 'dropin').map(f=> [f.x0|0, f.x1|0, f.landX|0, +f.F.toFixed(1)]),
+        dropCam, braking, sentIt, camLift, drops: feats.filter(f=> f.type == 'dropin').map(f=> [f.x0|0, f.x1|0, f.landX|0, +f.F.toFixed(1)]),
         trickCounts, tricksTotal, style: style?.name, styleT, airHist, hardLandings, combosBanked, multSum, queued: trickQueued, swipeCount, mainHeld, secondHeld}),
     start: ()=> startRide(),
     // steps the game by hand, a 60th of a second at a time, with the engine paused

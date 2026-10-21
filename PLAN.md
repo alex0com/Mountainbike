@@ -311,6 +311,21 @@ Each phase is a separate commit (or a few), tested with the Phase 0 harness befo
     - Results card and title checked at 390×844, 844×390, 667×375 and 1280×800.
     - Sounds can't be heard in the headless tests; they ran without page errors.
 
+- **Feedback round 4: done.** *The rider got lost behind the terrain on line step-downs, in SIDE and other views.*
+  - **Cause:** lines up the hill (HIGH, PRO) could sink below the main trail after a step-down or drop-in landing, up to 16 m below at the PRO landing. The hillside and main trail then stood between the camera and the rider. In CHASE the camera also went inside the hill: its "not underground" check measured the line being ridden, not the ground under the camera.
+  - **Lines:**
+    - A line up the hill has a floor 1 m above the highest main trail nearby. The floor never rises going down the mountain, so the line still falls all the way. A drop-in onto it gets a shorter face, and the ladder shows the real height.
+    - HIGH traverses flatter before its step-down, so it sits higher on the hillside.
+    - The slope in front of the LOW line is cut to fall away from it, with no trees there.
+  - **Camera:**
+    - It never goes below the real ground under itself (`terrainAt`, matching the ground mesh).
+    - It checks its line of sight to the bike's wheels against the terrain each frame and rises (up to 25 m) to see over anything in the way, quickly, settling back slowly.
+    - Measured over 4 km: lifted 30% of the time in SIDE (mostly under 5 m, as banked turns raise the near edge), 19% in 3/4, 8% in CHASE, 7% in HIGH. Average movement 0.2–2.2 cm per frame, about 0.02 ms per frame.
+  - **Checked:**
+    - Screenshots of HIGH, LOW and PRO landings and airs in SIDE, 3/4 and CHASE: the rider is in view in all.
+    - Lines with features: about 96% as before.
+    - Regression over 500 km (pro, high, low lanes, plain, turbo): 0 crashes. Fork and flick tests pass.
+
 ## Running the tools
 
     node tools/sim.mjs [--seeds 20] [--km 5] [--flips back|front] [--tricks] [--lanes rand|up|down|main] [--turbo] [--json out.json] [--salt n] [--game other.html]

@@ -481,6 +481,17 @@ Each phase is a separate commit (or a few), tested with the Phase 0 harness befo
     - Braking slows the bike and scores a slide.
     - Regression with tricks: 0 crashes.
 
+- **A downhill racer on a downhill bike: done.** The bull look is dropped; the Bluecow logo and its moo stay on the menu as the brand.
+  - **The rider:**
+    - **Helmet** (`helmetHead`, shared with the ragdoll): a white full-face shell with a red band and peak, a chin bar with its vent, and orange mirrored goggles on a black strap.
+    - **Kit:** a black jersey with a red chest panel, red shoulders and sleeves and white cuffs; red gloves; a slim hydration pack; grey pants over black knee pads; flat shoes with gum soles.
+  - **The bike:**
+    - **Frame:** race red, with a brace from the top tube to the down tube and a white decal on the top tube. The eBike battery is painted into the down tube.
+    - **Suspension:** gold stanchions on the dual-crown fork; an orange coil shock with a gold piggyback reservoir.
+    - **Drivetrain and brakes:** a chain from the ring to the cassette and back through the mech, a chain guide, and callipers on both rotors.
+    - **Wheels:** grey spokes, and yellow lettering marks on the knobbly tyres' sidewalls.
+  - **Words:** the crash groans and score-card jokes no longer talk about horns or cows ("HEAD FIRST. BOLD.", "GRAVITY 1, YOU 0", "THAT WILL BRUISE").
+
 ## Running the tools
 
     node tools/sim.mjs [--seeds 20] [--km 5] [--flips back|front] [--tricks] [--lanes rand|up|down|main] [--turbo] [--json out.json] [--salt n] [--game other.html]

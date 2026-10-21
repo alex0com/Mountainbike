@@ -2595,24 +2595,23 @@ function drawRagdoll()
     const P = ragdoll.pts.map(p=> vec3(p.x - OX, p.y - OY, p.z)), q = n=> P[RAG_I[n]], k = RS;
     // which way the rider faces: up the back and across the shoulders
     const up = q('head').subtract(q('hip')).normalize(), fwd = up.cross(q('shL').subtract(q('shR'))).normalize();
-    ftube(q('hip'), q('chest'), .33*k, PAL.cow);
-    fball(q('chest'), .38*k, PAL.cow);
-    ftube(q('chest').add(fwd.scale(-.15*k)), q('hip').add(fwd.scale(-.15*k)), .27*k, PAL.pack);
-    fball(q('hip'), .32*k, PAL.pants);
-    ftube(q('chest'), q('head'), .15*k, PAL.cow);
-    cowTail(q('hip').add(fwd.scale(-.14*k)), fwd.scale(-1), up, 1, k);
-    // the head, turned the way the body faces
+    tube(q('hip'), q('chest'), .31*k, PAL.jersey);
+    ball(q('chest'), .35*k, PAL.jersey);
+    tube(q('chest').add(fwd.scale(-.14*k)), q('chest').lerp(q('hip'), .6).add(fwd.scale(-.14*k)), .16*k, PAL.pack);
+    ball(q('hip'), .31*k, PAL.pants);
+    tube(q('chest'), q('head'), .11*k, PAL.black);
+    // the helmet, turned the way the body faces
     const z = fwd.scale(-1), x = up.cross(z).normalize(), y = z.cross(x);
     const h = q('head');
-    cowHead(new Matrix4([x.x, x.y, x.z, 0, y.x, y.y, y.z, 0, z.x, z.y, z.z, 0, h.x, h.y, h.z, 1]).multiply(Matrix4.scaling(vec3(k))));
+    helmetHead(new Matrix4([x.x, x.y, x.z, 0, y.x, y.y, y.z, 0, z.x, z.y, z.z, 0, h.x, h.y, h.z, 1]).multiply(Matrix4.scaling(vec3(k))));
     for (const s of ['L', 'R'])
     {
         const sh = q('sh' + s), el = q('el' + s), hd = q('hd' + s), hp = q('hp' + s), kn = q('kn' + s), ft = q('ft' + s);
-        fball(sh, .2*k, PAL.cow);
-        ftube(sh, el, .15*k, PAL.cow); fball(el, .13*k, PAL.cow);
-        ftube(el, hd, .125*k, PAL.cow2); fball(hd, .115*k, PAL.glove);
-        ftube(hp, kn, .17*k, PAL.pants); fball(kn, .155*k, PAL.pad);
-        ftube(kn, ft, .12*k, PAL.cow); fball(ft, .14*k, PAL.shoe);
+        ball(sh, .16*k, PAL.jersey2);
+        tube(sh, el, .12*k, PAL.jersey2); ball(el, .11*k, PAL.jersey);
+        tube(el, hd, .1*k, PAL.jersey); ball(hd, .1*k, PAL.glove);
+        tube(hp, kn, .17*k, PAL.pants); ball(kn, .17*k, PAL.pad);
+        tube(kn, ft, .13*k, PAL.pants); ball(ft, .14*k, PAL.shoe);
     }
 }
 
@@ -2620,13 +2619,14 @@ function drawRagdoll()
 // BIKE AND RIDER - drawn from parts each frame so the suspension, cranks, legs
 // and arms can move; poses for riding, tucking and the style tricks
 // ============================================================================
-let meshTube, meshBall, meshBox, meshTyre, meshRim, meshSpokes, meshDisc, meshRing, meshSprocket, meshFTube, meshFBall;
-// the Bluecow and its bike: royal blue and white, black kit, orange goggles, gold fork
+let meshTube, meshBall, meshBox, meshTyre, meshRim, meshSpokes, meshDisc, meshRing, meshSprocket, meshHelmet;
+// a downhill racer on a downhill bike: race red frame, gold stanchions, an orange coil; black and red kit, white lid
 const PAL = {
-    frame: hsl(.625,.85,.45), frameDark: hsl(.63,.35,.13), gold: hsl(.11,.85,.55), black: hsl(0,0,.09),
-    silver: hsl(.6,.05,.72), spring: hsl(.12,.85,.55), tyre: hsl(0,0,.07), glove: hsl(0,0,.1),
-    cow: hsl(.625,.85,.45), cow2: hsl(.625,.8,.55), cowWhite: hsl(.1,.25,.93), horn: hsl(.11,.3,.95), nose: hsl(.63,.75,.34),
-    lens: hsl(.025,1,.52), lens2: hsl(.11,1,.58), pants: hsl(0,0,.11), pad: hsl(.63,.15,.17), shoe: hsl(0,0,.08), pack: hsl(0,0,.1),
+    frame: hsl(.995,.82,.47), frameDark: hsl(0,0,.12), gold: hsl(.085,.72,.52), black: hsl(0,0,.09),
+    silver: hsl(.6,.05,.72), chain: hsl(.6,.04,.42), spring: hsl(.07,.95,.55), tyre: hsl(0,0,.07), mark: hsl(.14,1,.55), decal: hsl(0,0,.95),
+    jersey: hsl(0,0,.13), jersey2: hsl(.995,.8,.5), white: hsl(0,0,.94), pants: hsl(.6,.06,.27), pad: hsl(0,0,.1),
+    shoe: hsl(0,0,.1), sole: hsl(.07,.45,.32), glove: hsl(.995,.8,.46), pack: hsl(0,0,.11),
+    helmet: hsl(0,0,.95), helmet2: hsl(.995,.82,.5), lens: hsl(.06,1,.55), lens2: hsl(.13,1,.6),
     battery: hsl(.6,.08,.16), motor: hsl(.6,.05,.22)};
 
 function buildRiderMeshes()
@@ -2641,9 +2641,13 @@ function buildRiderMeshes()
         const a = k/30*TAU, side = k % 2 ? .032 : -.032;
         meshTyre.combine(buildBox(vec3(.035, .045, .05)).setColor(PAL.tyre), buildMatrix(vec3(cos(a)*.372, side, sin(a)*.372), vec3(0, -a, 0)));
     }
-    // faceted, for the Bluecow's low-poly look
-    meshFTube = buildCylinder(1, 1, 6, false);
-    meshFBall = buildSphere(1, 7, 5, false);
+    // and the yellow lettering on the sidewalls, a word each side of the wheel
+    for (const side of [-1, 1]) for (const a0 of [0, PI]) for (let k = 0; k < 6; ++k)
+    {
+        const a = a0 + (k - 2.5)*.075;
+        meshTyre.combine(buildBox(vec3(.035, .012, .045)).setColor(PAL.mark), buildMatrix(vec3(cos(a)*.31, side*.056, sin(a)*.31), vec3(0, -a, 0)));
+    }
+    meshHelmet = buildSphere(1, 12, 8, true);
     meshRim = buildTorus(.6, .04, 22, 5, true).setColor(PAL.black);
     meshDisc = buildCylinder(.2, .012, 14).setColor(PAL.silver);
     meshRing = buildTorus(.22, .03, 14, 4).setColor(PAL.silver);
@@ -2665,7 +2669,7 @@ function buildRiderMeshes()
     meshSprocket.combine(sp, buildMatrix(vec3(), vec3(PI/2, 0, 0)));
     meshSpokes = new Mesh;
     for (let k = 0; k < 8; ++k)
-        meshSpokes.combine(buildBox(vec3(.006, .008, .56)), buildMatrix(vec3(), vec3(k*PI/8, 0, 0)), PAL.silver);
+        meshSpokes.combine(buildBox(vec3(.006, .008, .56)), buildMatrix(vec3(), vec3(k*PI/8, 0, 0)), PAL.chain);
 }
 
 // the transform the parts are drawn under, and its scratch space
@@ -2675,50 +2679,33 @@ function drawPart(mesh, local, color)
 {
     render3D.drawMesh(mesh, MC.copy().multiply(local), undefined, color);
 }
-function tube(a, b, dia, color, mesh=meshTube)
+function tube(a, b, dia, color)
 {
     const dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z, len = hypot(dx, dy, dz);
     if (len < 1e-4) return;
     const rot = vec3(acos(clampV(dy/len, -1, 1)), atan2(dx, dz), 0);
-    drawPart(mesh, buildMatrix(vec3((a.x + b.x)/2, (a.y + b.y)/2, (a.z + b.z)/2), rot, vec3(dia, len, dia), scratch), color);
+    drawPart(meshTube, buildMatrix(vec3((a.x + b.x)/2, (a.y + b.y)/2, (a.z + b.z)/2), rot, vec3(dia, len, dia), scratch), color);
 }
-function ball(p, dia, color, mesh=meshBall) { drawPart(mesh, buildMatrix(p, undefined, vec3(dia), scratch), color); }
-const ftube = (a, b, dia, color)=> tube(a, b, dia, color, meshFTube), fball = (p, dia, color)=> ball(p, dia, color, meshFBall);
+function ball(p, dia, color) { drawPart(meshBall, buildMatrix(p, undefined, vec3(dia), scratch), color); }
 
-// the Bluecow's head in its own space (forward -z, up +y), drawn under H: a faceted blue skull and white muzzle,
-// a blue nose, white horns, blue ears, the white flame on the brow and the orange goggles on their black strap
-function cowHead(H)
+// a full-face downhill helmet in its own space (forward -z, up +y), drawn under H: the shell and its red band, the
+// chin bar with its vent, the peak, and the goggles on their strap
+function helmetHead(H)
 {
     const keep = MC;
-    MC = keep.copy().multiply(H).multiply(Matrix4.scaling(vec3(1.18)));
-    fball(vec3(0, .03, .01), .33, PAL.cow);
-    drawPart(meshFBall, buildMatrix(vec3(0, -.08, -.16), undefined, vec3(.23, .18, .23), scratch), PAL.cowWhite);
-    drawPart(meshFBall, buildMatrix(vec3(0, -.075, -.262), undefined, vec3(.17, .095, .07), scratch), PAL.nose);
-    for (const x of [-.042, .042]) drawPart(meshFBall, buildMatrix(vec3(x, -.07, -.296), undefined, vec3(.04, .03, .02), scratch), PAL.black);
-    box(vec3(0, .15, -.11), vec3(.045, .1, .03), PAL.cowWhite, vec3(.55, 0, 0));
-    box(vec3(0, .045, .005), vec3(.34, .045, .33), PAL.black);
-    box(vec3(0, .05, -.163), vec3(.3, .105, .05), PAL.black);
-    box(vec3(0, .033, -.19), vec3(.265, .052, .02), PAL.lens);
-    box(vec3(0, .07, -.19), vec3(.265, .028, .02), PAL.lens2);
-    for (const s of [-1, 1])
-    {
-        // horns out and up, curling in at the tips; ears out to the side, pale inside
-        const a = vec3(s*.11, .13, .04), b = vec3(s*.23, .17, .05), c = vec3(s*.28, .25, .02), d = vec3(s*.26, .31, -.01);
-        tube(a, b, .1, PAL.horn); ball(b, .095, PAL.horn); tube(b, c, .075, PAL.horn); ball(c, .07, PAL.horn);
-        tube(c, d, .05, PAL.horn); ball(d, .04, PAL.horn);
-        const er = vec3(0, s*.3, s*-.35);
-        box(vec3(s*.24, -.01, .05), vec3(.25, .04, .13), PAL.cow, er);
-        box(vec3(s*.245, -.004, .04), vec3(.17, .042, .08), PAL.cowWhite, er);
-    }
+    MC = keep.copy().multiply(H);
+    const shell = (off, size, color)=> drawPart(meshHelmet, buildMatrix(off, undefined, size, scratch), color);
+    shell(vec3(), vec3(.35, .35, .39), PAL.helmet);
+    shell(vec3(0, .025, .01), vec3(.362, .2, .4), PAL.helmet2);
+    box(vec3(0, -.115, -.13), vec3(.22, .11, .14), PAL.helmet);
+    box(vec3(0, -.035, -.165), vec3(.2, .05, .06), PAL.black);
+    box(vec3(0, -.1, -.2), vec3(.11, .045, .02), PAL.black);
+    box(vec3(0, .035, 0), vec3(.37, .04, .365), PAL.black);
+    box(vec3(0, .035, -.168), vec3(.29, .085, .05), PAL.black);
+    box(vec3(0, .03, -.193), vec3(.25, .06, .02), PAL.lens);
+    box(vec3(0, .054, -.195), vec3(.25, .016, .02), PAL.lens2);
+    box(vec3(0, .15, -.13), vec3(.29, .025, .18), PAL.helmet2, vec3(.25, 0, 0));
     MC = keep;
-}
-// the tail out behind, swinging as the bike goes, a white tuft at its end; lift raises it in the air, k sizes it
-function cowTail(base, back, up, lift, k=1)
-{
-    const w = sin(time*6.3)*.11, side = up.cross(back).normalize(), at = (p, b, u, s)=> p.add(back.scale(b*k)).add(up.scale(u*k)).add(side.scale(s*k));
-    const p1 = at(base, .15, -.02 + lift*.04, w*.4), p2 = at(p1, .13, .01 + lift*.08, w), p3 = at(p2, .09, .03 + lift*.05, w*1.3);
-    ftube(base, p1, .075*k, PAL.cow); ftube(p1, p2, .062*k, PAL.cow); ftube(p2, p3, .05*k, PAL.cow);
-    fball(p3.add(back.scale(.035*k)), .12*k, PAL.cowWhite);
 }
 function box(p, size, color, rot) { drawPart(meshBox, buildMatrix(p, rot, size, scratch), color); }
 
@@ -2768,6 +2755,9 @@ function drawBike(M, cF, cR, wheelSpin, crankA, whip=0, barA=0, offF=0, offR=0, 
     tube(bb, headBot, .085, PAL.frame);
     tube(ttRear, headTop.add(vec3(0, -.05, .02)), .06, PAL.frame);
     tube(bb, seatTop, .055, PAL.frame);
+    // the brace from the top tube down to the down tube, and a decal along the top tube
+    tube(headTop.lerp(ttRear, .45), bb.lerp(headBot, .56), .05, PAL.frame);
+    for (const x of [-.033, .033]) tube(ttRear.lerp(headTop, .3).add(vec3(x, -.005, 0)), ttRear.lerp(headTop, .72).add(vec3(x, -.025, 0)), .016, PAL.decal);
     tube(headBot.add(vec3(0, -.05, -.02)), headTop.add(vec3(0, .03, .01)), .075, PAL.frameDark);
     for (const x of [-.055, .055])
     {
@@ -2776,7 +2766,7 @@ function drawBike(M, cF, cR, wheelSpin, crankA, whip=0, barA=0, offF=0, offR=0, 
     }
     // eBike: a battery along the down tube, the motor round the cranks, a display on the bars
     const bA = bb.lerp(headBot, .16), bB = bb.lerp(headBot, .8);
-    tube(bA, bB, .15, PAL.battery);
+    tube(bA, bB, .15, PAL.frame);
     const lit = turboT > 0 ? hsl(.5, 1, .6 + .15*sin(time*40)) : battery >= 1 ? hsl(.5, 1, .55 + .15*sin(time*8)) : hsl(.5, .8, .18 + battery*.3);
     for (const x of [-.072, .072]) tube(bA.lerp(bB, .1).add(vec3(x, .005, 0)), bA.lerp(bB, .1 + .8*max(.06, battery)).add(vec3(x, .005, 0)), .028, lit);
     ball(bb.add(vec3(0, -.01, .03)), .25, PAL.motor);
@@ -2784,10 +2774,23 @@ function drawBike(M, cF, cR, wheelSpin, crankA, whip=0, barA=0, offF=0, offR=0, 
     const shA = sag(vec3(0, .5, -.1)), shB = stayTop.add(vec3(0, -.02, -.04));
     tube(shA, shB, .045, PAL.frameDark);
     tube(shA.lerp(shB, .2), shA.lerp(shB, .75), .085, PAL.spring);
+    // its piggyback reservoir
+    tube(shA.lerp(shB, .55).add(vec3(.055, 0, .02)), shA.lerp(shB, .95).add(vec3(.055, 0, .02)), .04, PAL.gold);
+    // the drivetrain: chain from the ring to the cassette and back under through the mech, a guide over the ring,
+    // and the calliper on the back rotor
+    const ring = bb.add(vec3(.075, 0, 0)), cog = rA.add(vec3(.075, 0, 0)), mech = rA.add(vec3(.08, -.12, .02));
+    tube(ring.add(vec3(0, .105, 0)), cog.add(vec3(0, .05, 0)), .012, PAL.chain);
+    tube(ring.add(vec3(0, -.105, 0)), mech.add(vec3(0, -.02, -.02)), .012, PAL.chain);
+    tube(mech, cog.add(vec3(0, -.04, 0)), .012, PAL.chain);
+    drawPart(meshDisc, buildMatrix(cog, vec3(0, 0, PI/2), vec3(.55, 3, .55), scratch), PAL.chain);
+    box(mech, vec3(.03, .1, .05), PAL.black);
+    box(ring.add(vec3(0, .12, -.03)), vec3(.03, .05, .08), PAL.black);
+    box(rA.add(vec3(.08, .1, -.06)), vec3(.03, .05, .07), PAL.black);
     // seat
     MC = G?.seat ?? MF;
     tube(seatTop, seatTop.add(vec3(0, .07, .03)), .035, PAL.silver);
     box(seatTop.add(vec3(0, .09, .05)), vec3(.13, .05, .27), PAL.black);
+    box(seatTop.add(vec3(0, .116, .05)), vec3(.03, .006, .24), PAL.jersey2);
     // dual crown fork: stanchions slide into the lowers as it compresses
     MC = G?.fork ?? M;
     const forkDir = fA.subtract(vec3(0, .8, -.46)).normalize();
@@ -2799,6 +2802,7 @@ function drawBike(M, cF, cR, wheelSpin, crankA, whip=0, barA=0, offF=0, offR=0, 
     }
     box(headTop.add(vec3(0, .02, 0)), vec3(.23, .045, .07), PAL.black);
     box(headBot.add(vec3(0, -.02, 0)), vec3(.23, .045, .07), PAL.black);
+    box(fA.add(vec3(-.08, .1, .05)), vec3(.03, .05, .07), PAL.black);
     // stem and wide bars
     MC = G?.bars ?? MB;
     const stem = headTop.add(vec3(0, .04, -.05)), bar = stem.add(vec3(0, .04, 0));
@@ -2857,33 +2861,31 @@ function drawRider(M, bikePts, comp, styleName, styleAmt)
         hands = hands.map((h, i)=> h.lerp(vec3(i ? -.3 : .3, 1.3, -.32), s));
     const shoulders = [chest.add(vec3(.2, .03, -.02)), chest.add(vec3(-.2, .03, -.02))];
     const hips = [hip.add(vec3(.11, 0, 0)), hip.add(vec3(-.11, 0, 0))];
-    // the Bluecow: a broad blue body with white patches, a black pack, a tail, and the cow's head
-    ftube(hip, chest, .33, PAL.cow);
-    fball(chest, .38, PAL.cow);
-    for (const x of [-.15, .15]) fball(chest.add(vec3(x, .02, -.04)), .15, PAL.cowWhite);
-    ftube(chest.add(vec3(0, .06, .16)), hip.add(vec3(0, .12, .15)), .27, PAL.pack);
-    box(chest.add(vec3(0, .1, .25)), vec3(.2, .18, .06), PAL.pack);
-    fball(hip, .32, PAL.pants);
-    ftube(chest, head, .15, PAL.cow);
-    cowTail(hip.add(vec3(0, -.02, .14)), vec3(0, 0, 1), vec3(0, 1, 0), grounded || grinding ? 0 : 1);
-    cowHead(buildMatrix(head, vec3(-.28, 0, 0)));
+    // a downhill racer: black jersey with a red chest panel, red shoulders and sleeves and white cuffs, a hydration
+    // pack, grey pants over knee pads, flat shoes, red gloves, and a full-face helmet
+    tube(hip, chest, .31, PAL.jersey);
+    ball(chest, .35, PAL.jersey);
+    drawPart(meshBall, buildMatrix(chest.add(vec3(0, .01, -.11)), undefined, vec3(.27, .2, .14), scratch), PAL.jersey2);
+    tube(chest.add(vec3(0, .03, .14)), chest.lerp(hip, .6).add(vec3(0, .07, .14)), .16, PAL.pack);
+    ball(hip, .31, PAL.pants);
+    tube(chest, head, .11, PAL.black);
+    helmetHead(buildMatrix(head, vec3(-.28, 0, 0)));
     for (let i = 0; i < 2; ++i)
     {
         const side = i ? -1 : 1;
-        // legs, knees out over the pedals: black pants and pads, blue shins with white socks
+        // legs, knees out over the pedals
         const knee = ik(hips[i], feet[i], .47, .47, vec3(side*.25, .2, -1));
-        ftube(hips[i], knee, .17, PAL.pants); fball(knee, .155, PAL.pad);
-        ftube(knee, feet[i], .12, PAL.cow);
-        ftube(knee.lerp(feet[i], .72), knee.lerp(feet[i], .92), .127, PAL.cowWhite);
-        box(feet[i].add(vec3(0, .02, -.03)), vec3(.12, .09, .28), PAL.shoe);
-        // arms, elbows out and back: white on the shoulders and forearms, black gloves
+        tube(hips[i], knee, .17, PAL.pants); ball(knee, .17, PAL.pad);
+        tube(knee, feet[i], .13, PAL.pants);
+        box(feet[i].add(vec3(0, .025, -.03)), vec3(.12, .09, .28), PAL.shoe);
+        box(feet[i].add(vec3(0, -.025, -.03)), vec3(.125, .025, .29), PAL.sole);
+        // arms, elbows out and back
         const elbow = ik(shoulders[i], hands[i], .32, .31, vec3(side, -.2, .6));
-        fball(shoulders[i], .2, PAL.cow);
-        fball(shoulders[i].add(vec3(side*.05, .04, 0)), .13, PAL.cowWhite);
-        ftube(shoulders[i], elbow, .15, PAL.cow); fball(elbow, .13, PAL.cow);
-        ftube(elbow, hands[i], .125, PAL.cow2);
-        ftube(elbow.lerp(hands[i], .35), elbow.lerp(hands[i], .62), .132, PAL.cowWhite);
-        fball(hands[i], .115, PAL.glove);
+        ball(shoulders[i], .16, PAL.jersey2);
+        tube(shoulders[i], elbow, .12, PAL.jersey2); ball(elbow, .11, PAL.jersey);
+        tube(elbow, hands[i], .1, PAL.jersey);
+        tube(elbow.lerp(hands[i], .78), elbow.lerp(hands[i], .9), .106, PAL.white);
+        ball(hands[i], .1, PAL.glove);
     }
 }
 
@@ -2943,7 +2945,7 @@ class RiderView extends EngineObject3D
                 for (let k = 0; k < 5; ++k)
                 {
                     const a = time*3.2 + k*TAU/5;
-                    fball(c.add(vec3(cos(a)*.42, sin(a*2)*.05, sin(a)*.42)), .12, k % 2 ? PAL.lens2 : hsl(.15,1,.75));
+                    ball(c.add(vec3(cos(a)*.42, sin(a*2)*.05, sin(a)*.42)), .12, k % 2 ? PAL.lens2 : hsl(.15,1,.75));
                 }
             }
             return;
@@ -3082,7 +3084,7 @@ function endRun()
 {
     state = 'results'; resultsT = 0;
 }
-const GROANS = ['OUCH...', 'MOO-CH!', "I'M OK!", 'NOT THE HORNS', 'WHO MOVED THE GROUND?', 'MY TAIL...', 'FIVE MORE MINUTES'];
+const GROANS = ['OUCH...', "I'M OK!", 'WHO MOVED THE GROUND?', 'THAT WILL BRUISE', 'MY BIKE!', 'FIVE MORE MINUTES', 'SEEING STARS'];
 let groanAt = 2;
 
 function gameUpdate()
@@ -3102,7 +3104,7 @@ function gameUpdate()
         crashT += dt;
         stepWreck(dt);
         // the rider lies there groaning until a tap brings up the score card
-        if (state == 'crash' && crashT > groanAt) { groanAt += 4.2 + Math.random()*1.5; moo(.72, 1.05, .3); showMessage(GROANS[floor(Math.random()*GROANS.length)], '', hsl(.6,.4,.85)); }
+        if (state == 'crash' && crashT > groanAt) { groanAt += 4.2 + Math.random()*1.5; moo(1.3, .55, .22); showMessage(GROANS[floor(Math.random()*GROANS.length)], '', hsl(.6,.4,.85)); }
         if (state == 'results') resultsT += dt;
     }
     else titleStep(dt);
@@ -4346,8 +4348,8 @@ function camButtons(W, top, bw, bh)
 
 // the score card: a joke for how it ended, a rating, everything that went right and wrong, and then the points
 const CRASH_JOKES = {
-    'LANDED ON YOUR HEAD': 'HORNS FIRST. BOLD.', 'BAD LANDING': 'GRAVITY 1, COW 0', 'HIT A ROCK': 'THE ROCK WON',
-    'HIT THE EDGE': 'THE WALL IS UNDEFEATED', 'FELL INTO THE CHASM': 'MOOOOooooo...', 'MISSED THE RAIL': 'RAIL 1, COW 0',
+    'LANDED ON YOUR HEAD': 'HEAD FIRST. BOLD.', 'BAD LANDING': 'GRAVITY 1, YOU 0', 'HIT A ROCK': 'THE ROCK WON',
+    'HIT THE EDGE': 'THE WALL IS UNDEFEATED', 'FELL INTO THE CHASM': 'AAAAAaaaaa...', 'MISSED THE RAIL': 'RAIL 1, YOU 0',
     'MISSED THE BARS': 'BARS MISSED. GROUND FOUND.', 'TANGLED IN THE WHIP': 'TAILWHIPPED', 'LANDED SIDEWAYS': 'SIDEWAYS IS NOT A DIRECTION',
     'LANDED ON YOUR SIDE': 'TABLE FOR ONE, ON THE FLOOR', 'HANDS OFF THE BARS': 'LOOK MA, NO LANDING', 'FEET OFF THE PEDALS': 'PEDALS ARE FOR FEET'};
 const RATINGS = [[400000, 'LEGEN-DAIRY'], [150000, 'MOO-NSTROUS'], [60000, 'UDDERLY RADICAL'], [20000, 'HEIFER ON A MISSION'], [5000, 'MILD MOO'], [0, 'CALF IN TRAINING']];
@@ -4361,7 +4363,7 @@ function drawResults(W, H)
     txt((crashReason || 'wipeout').toLowerCase(), W/2, cy + 53, 13, 'rgba(255,255,255,.6)', 'center', 700);
     txt('RATING:  ' + rating, W/2, cy + 78, fitSize('RATING:  ' + rating, 15, cw - 30), '#ffd23a', 'center', 900);
     const rows = [
-        ['Distance moo-ved', floor(dist).toLocaleString() + ' m'],
+        ['Distance ridden', floor(dist).toLocaleString() + ' m'],
         ['Hard landings (ouch)', hardLandings],
         ['Jumps cased (so close)', cased],
         ['Sketchy saves', sketchy],

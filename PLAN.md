@@ -380,6 +380,27 @@ Each phase is a separate commit (or a few), tested with the Phase 0 harness befo
     - An early tap is ignored and a later tap restarts, both paused and in real time.
     - Regression: 18 km with tricks and flips, 0 crashes and no page errors.
 
+- **Sprockets, battery cells and their boosts: done.**
+  - **Sprockets:** the yellow orbs are now spinning gold chainrings (`meshSprocket`), each turned to face the camera so its teeth read from every view.
+  - **Sets:** every collectible belongs to a set (`orbSet`, `addOrb`). The HUD shows a pip for each pickup in the set being collected, and "MISSED ONE" if you ride past with any left.
+  - **Pedal power** (a full set of 5 or more sprockets):
+    - **Where the sets are:** rows along the trail, along rails, and in tens along the lines.
+    - **The boost:** 3 s of hard pedalling, with +10 m/s² and +6 m/s top speed. The cranks spin fast and speed lines show.
+    - **Scoring:** tricks ×1.5, plus a SPROCKET SET bonus. Another set while the boost is running just extends it.
+    - **The arcs over jumps** are still sprockets, as a guide to the flight, but not a set: they come with every jump.
+  - **Supercharge** (a full set of 6 blue battery cells):
+    - **Where the cells are:** on the run-in to a **mega booter**, every 450–850 m, whenever the trail isn't split into lines.
+    - **The boost:** 10 s, harder than the turbo (+24 m/s²). It smashes rocks like the turbo.
+    - **Scoring:** tricks ×2, plus a FULL CHARGE bonus. The battery reads SUPER x2.
+    - **The super send:** off the mega booter the rider leaves the lip at 30 m/s and keeps that speed across. The flight lasts about 4 s and covers about 95 m, against 2.5 s and 38 m off a normal booter.
+    - **The mega booter itself:** its landing is laid out for that flight. The sprocket arc over it traces the super flight, and a rider who missed a cell lands higher on the same slope.
+  - **Camera on a super send:** watches the rider rather than the landing far below, leads less and stands back a little.
+  - **Points:** the multiplier is the one at takeoff or now, whichever is higher, so a boost that runs out mid-air still pays. Set bonuses join the combo but don't count as a run's best trick.
+  - **Kept:** the turbo (fill the battery, tap the bolt) works as before; sprockets and cells also charge it.
+  - **Results:** the screen lists sprockets with the sets and supers. The title help has two new lines.
+  - **Rock gardens:** the boosts raise average speed (18.9 → 21.4 m/s on one seed), so rocks now sit 18 m past their crest, up from 14 m, to leave room for a faster flight off it.
+  - **Regression:** 500 km over five modes (plain, tricks and flips, turbo, pro, high with tricks): 0 crashes. The autopilot gets 1–2 supercharges per 3 km.
+
 ## Running the tools
 
     node tools/sim.mjs [--seeds 20] [--km 5] [--flips back|front] [--tricks] [--lanes rand|up|down|main] [--turbo] [--json out.json] [--salt n] [--game other.html]

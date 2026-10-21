@@ -145,7 +145,7 @@ let ORB_V = 13;   // the launch speed air orbs are laid out for, measured from r
 
 let seed = 1, rnd, NA, NB, NC, NV;
 let ys = [], gapF = [], rails = [], rocks = [], orbs = [], signs = [], feats = [], gaps = [], pendingArcs = [];
-let genBase = 0, genGrade = 0, nextSignX = 500, lastLaunch = null, nextBooterX = 200, nextCanyonX = 900;
+let genBase = 0, genGrade = 0, nextSignX = 500, lastLaunch = null, nextBooterX = 200, nextCanyonX = 900, nextMegaX = 380;
 // line blocks: the trail splits into lines across the face of the mountain, reached by berms, each with its own
 // features, and they all come back together. PRO is up on the ridge, HIGH along the hillside behind the trail,
 // LOW down the slope in front; the main trail carries on between them.
@@ -348,15 +348,23 @@ function addKicker(H, Lr, type='kicker')
 // a big kicker onto a long steep landing that falls away under the flight: the most air on the mountain.
 // The landing is laid out for a fast rider rolling off the lip, so anyone from a cruise to flat out comes down on its slope.
 function addBooter(d) { return addJump(2.2 + rnd()*.6 + d*.4, 7 + rnd()*1.5, .55 + rnd()*.12 + d*.08, 'booter', 17); }
-// a kicker with its own landing, steeper than the trail, laid along the flight off it
-function addJump(H, L, G, type='kicker', orbV=ORB_V, knuckle=.5)
+// the mega booter at the end of a set of battery cells: supercharged, the rider leaves its lip at SEND_V, and its
+// landing runs on far enough down the mountain for that flight; a rider who missed a cell lands high on the same slope
+function addMegaBooter(d)
 {
-    const f = addKicker(H, L, type), a = atan(f.lipSlope), v = VMAX + 2;
+    const f = addJump(2.4 + rnd()*.4, 7.5 + rnd(), .55, 'booter', SEND_V, .5, SEND_V + 1, 30);
+    f.mega = true; f.sendV = SEND_V;
+    return f;
+}
+// a kicker with its own landing, steeper than the trail, laid along the flight off it
+function addJump(H, L, G, type='kicker', orbV=ORB_V, knuckle=.5, v=VMAX + 2, spare=12)
+{
+    const f = addKicker(H, L, type), a = atan(f.lipSlope);
     // a knuckle off the lip, a short one or a whole step down, then the landing all the way past that flight
     let x = 0, y = 0, vx = v*cos(a), vy = v*sin(a);
     for (let t = 0; t < 6 && y > -knuckle - G*x; t += 1/60) { x += vx/60; vy -= G_AIR/60; y += vy/60; }
     genBase = f.lipY - knuckle; genGrade = G; f.drop = knuckle;
-    addRun(x + 12, G, 0);
+    addRun(x + spare, G, 0);
     f.x2 = genX(); f.orbV = orbV;
     addRun(16, gradeTarget(clamp01(genX()/6000)), 0);
     return f;
@@ -471,7 +479,8 @@ function addDeck(d)
     const f = {type: 'deck', x0: x0 - 3, x1: r.x1 + .5, x2: genX(), rail: r};
     feats.push(f);
     paces.push({x0: x0 + 3, x1: r.x1 - .5, v: 10 + rnd()*2, f});
-    for (let x = x0 + 4; x < r.x1 - 1; x += 3) orbs.push({x, y: railY(r, x) + 1.1, got: false, air: false});
+    const set = orbSet('sprocket');
+    for (let x = x0 + 4; x < r.x1 - 1; x += 3) addOrb({x, y: railY(r, x) + 1.1, got: false, air: false}, set);
     lastLaunch = {x1: r.x1, lipY: r.y1, lipSlope: r.slope};
     addRun(16, gradeTarget(d), 0);
     return f;
@@ -519,13 +528,13 @@ function addGap(d)
 function addRocks(d)
 {
     // held at one grade, so no crest throws the bike up into them, with room before them for a flight off
-    // the last crest to come down
-    const start = genX(), count = rnd() < .45 + d*.35 ? 2 : 1, len = 30;
+    // the last crest to come down, even on pedal power
+    const start = genX(), count = rnd() < .45 + d*.35 ? 2 : 1, len = 34;
     addRun(len, genGrade);
     for (let k = 0; k < count; ++k)
     {
         // a pair sits close, so one jump clears both
-        const x = start + 14 + k*(3.6 + rnd()*1.4), log = rnd() < .3;
+        const x = start + 18 + k*(3.6 + rnd()*1.4), log = rnd() < .3;
         rocks.push(log ? {type: 'log', x, w: .3, h: .5, y: groundY(x)} :
             {type: 'rock', x, w: .65 + rnd()*.25, h: .7 + rnd()*.35 + d*.15, y: groundY(x), rot: rnd()*TAU});
     }
@@ -547,16 +556,21 @@ function addRail(d)
     r.y1 = railY(r, r.x1);
     rails.push(r);
     feats.push({type: 'rail', x0: x0 - 3, x1: r.x1 + 3, rail: r});
-    for (let x = x0 + 4; x < r.x1 - 1; x += 3) orbs.push({x, y: railY(r, x) + 1.1, got: false, air: false});
+    const set = orbSet('sprocket');
+    for (let x = x0 + 4; x < r.x1 - 1; x += 3) addOrb({x, y: railY(r, x) + 1.1, got: false, air: false}, set);
 }
 
-function orbLine(x0, n, sp)
+// the sprockets and the battery cells come in sets: pick up every one in a set for its boost
+const orbSet = kind=> ({kind, n: 0, got: 0, x1: -1e9, done: false, lost: false});
+function addOrb(o, set) { o.set = set; o.cell = set.kind == 'cell'; ++set.n; set.x1 = max(set.x1, o.x); orbs.push(o); }
+function orbLine(x0, n, sp, kind='sprocket')
 {
+    const set = orbSet(kind);
     for (let k = 0; k < n; ++k)
     {
         const x = x0 + k*sp;
         if (x > genX() - 1 || gapAt(x)) continue;
-        orbs.push({x, y: groundY(x) + 1.1, got: false, air: false});
+        addOrb({x, y: groundY(x) + 1.1, got: false, air: false}, set);
     }
 }
 // orbs along the flight off a lip, laid out once the landing below it exists
@@ -565,12 +579,14 @@ function orbArc(f)
     const a = atan(f.lipSlope), v = f.orbV || ORB_V, b = f.line;
     const ground = x=> b ? brY(b, x) : groundY(x), chasm = x=> b ? brGap(b, x) : gapAt(x);
     let x = f.x1, y = f.lipY + .9, vx = v*cos(a), vy = v*sin(a), t = 0, next = .14;
-    while (t < 3.2 && !(b && x > b.x1 - b.T))
+    // the arc is a guide to the flight, not a set: it comes with every jump
+    const set = orbSet('arc');
+    while (t < (f.mega ? 4.4 : 3.2) && !(b && x > b.x1 - b.T))
     {
         const dt = 1/60;
         t += dt; x += vx*dt; vy -= G_AIR*dt; y += vy*dt;
         if (y < ground(x) + 1.1 && !chasm(x)) break;
-        if (t >= next) { orbs.push(b ? {x, y, z: brZ(b, x), got: false, air: true, b} : {x, y, got: false, air: true}); next += .15; }
+        if (t >= next) { addOrb(b ? {x, y, z: brZ(b, x), got: false, air: true, b} : {x, y, got: false, air: true}, set); next += f.mega ? .2 : .15; }
     }
 }
 
@@ -590,7 +606,7 @@ function placeSigns()
 function launchReach(f)
 {
     if (!f) return -1;
-    const a = atan(f.lipSlope), v = VMAX + 4, gx = genX(), gy = ys[ys.length - 1];
+    const a = atan(f.lipSlope), v = max(VMAX + 4, (f.sendV || 0) + 2), gx = genX(), gy = ys[ys.length - 1];
     let x = f.x1, y = f.lipY, vx = v*cos(a) - sin(a)*POP*.5, vy = v*sin(a) + POP;
     for (let t = 0; t < 6; t += 1/60)
     {
@@ -737,8 +753,14 @@ function buildLine(sp, kind)
         for (const p of plan.paces) { p.line = b; paces.push(p); }
     }
     const busy = x=> brGap(b, x) || plan?.feats.some(f=> x > f.x0 - 3 && x < (f.x2 ?? f.x1) + 2);
+    // in sets of up to ten, a new set after anything that breaks the row
+    let set;
     for (let x = b.x0 + b.T + 2; x < b.x1 - b.T - 2; x += 3)
-        if (!busy(x)) orbs.push({x, y: brY(b, x) + 1.1, z: brZ(b, x), got: false, air: false, b});
+        if (!busy(x))
+        {
+            if (!set || set.n >= 10 || x - set.x1 > 4) set = orbSet('sprocket');
+            addOrb({x, y: brY(b, x) + 1.1, z: brZ(b, x), got: false, air: false, b}, set);
+        }
     return b;
 }
 const brGap = (b, x)=> b.gap[clampV(round((x - b.x0)/DX), 0, b.gap.length - 1)];
@@ -874,12 +896,21 @@ function genSection()
         nextBooterX = max(nextBooterX, genX() + 100);
     }
     else if (x > 250 && rnd() < .18) addBermTurns(d);
-    else if (x > nextBooterX)
+    // a mega booter comes up when it is due, as soon as the trail is not split into lines
+    else if (x > nextBooterX || x > nextMegaX && !openSplit)
     {
         const reach = launchReach(lastLaunch);
         if (reach > genX() - 4) addRun(reach - genX() + 10, genGrade);
-        addRun(14, min(genGrade, .35), 0);
-        pendingArcs.push(lastLaunch = addBooter(d));
+        // now and then the run in is laid with a set of blue battery cells: all of them supercharge the bike for a huge send
+        const mega = x > nextMegaX && !openSplit;
+        if (mega)
+        {
+            addRun(36, min(genGrade, .3), 0);
+            orbLine(genX() - 32, 6, 4.4, 'cell');
+            nextMegaX = genX() + 450 + rnd()*400;
+        }
+        else addRun(14, min(genGrade, .35), 0);
+        pendingArcs.push(lastLaunch = mega ? addMegaBooter(d) : addBooter(d));
         nextBooterX = genX() + 150 + rnd()*190;
     }
     // the bigger set pieces, a little way down the mountain: step-downs, drop stairs, decks and now and then a canyon
@@ -941,7 +972,7 @@ function trackInit(s)
     NA = makeNoise(rnd); NB = makeNoise(rnd); NC = makeNoise(rnd); NV = makeNoise(rnd);
     ys = []; gapF = []; rails = []; rocks = []; orbs = []; signs = []; feats = []; gaps = []; pendingArcs = [];
     splits = []; openSplit = null; lastSplitEnd = 0; nextSplitGap = 0; ride = null; noSign = []; gullies = []; arches = [];
-    nextSignX = 500; lastLaunch = null; nextBooterX = 200; nextDropX = 450; nextCanyonX = 900; paces = []; bends = [];
+    nextSignX = 500; lastLaunch = null; nextBooterX = 200; nextDropX = 450; nextCanyonX = 900; nextMegaX = 380; paces = []; bends = [];
     // the summit: the back of the peak rising from the left, a flat top to stand on, then the drop in
     genBase = -14; genGrade = -.6;
     pushY(genBase);
@@ -1758,6 +1789,26 @@ let offGroundT = 0, jumpBuf = 0;
 let battery = 0, turboT = 0, turboGrace = 0, turbos = 0, laneWant = 0, forkAhead = null, bermStage = 0, lines = 0;
 let proLines = 0, linesRidden = new Set, allLines = false;
 const TURBO_LEN = 6, TURBO_V = 14;
+// a full set of battery cells supercharges the motor: longer and harder than the turbo, and off the mega booter it
+// sends the rider at SEND_V. A full set of sprockets is leg power: a few seconds of hard pedalling
+const SUPER_LEN = 10, SEND_V = 30, LEG_LEN = 3;
+let superOn = false, superFlight = false, legT = 0, supers = 0, legBoosts = 0, sends = 0, cellsGot = 0, airMult = 1, setShown = null, setShownT = 0;
+// tricks score more on a boost
+const boostMult = ()=> turboT > 0 && superOn ? 2 : legT > 0 ? 1.5 : 1;
+function supercharge()
+{
+    turboT = SUPER_LEN; superOn = true; battery = 1; ++supers;
+    sfx('turbo'); sfx('ready');
+    showMessage('SUPERCHARGED!', 'every cell · tricks x2 · hit the booter', hsl(.5,1,.62));
+    camShake = max(camShake, .5);
+}
+function pedalPower()
+{
+    // another set while the legs are still going keeps them going, without saying so again
+    if (legT <= 0) showMessage('PEDAL POWER!', 'a full set of sprockets · tricks x1.5', hsl(.12,1,.6));
+    legT = LEG_LEN; ++legBoosts;
+    sfx('chain');
+}
 const riderZ = ()=> ride ? brZ(ride, px) : 0;
 function charge(pts)
 {
@@ -1769,7 +1820,7 @@ function charge(pts)
 function fireTurbo()
 {
     if (battery < 1 || turboT > 0 || state != 'ride') return;
-    turboT = TURBO_LEN; ++turbos;
+    turboT = TURBO_LEN; superOn = false; ++turbos;
     sfx('turbo');
     showMessage('TURBO!', '', hsl(.5,1,.62));
     camShake = max(camShake, .4);
@@ -1799,7 +1850,7 @@ function placeRider(x)
 {
     px = x; py = baseY = groundY(x); vx = vy = 0; sp = 0;
     grounded = true; grinding = null; ang = atan(groundSlope(x)); angVel = 0; landVis = 0;
-    airT = rot = 0; style = undefined; stylesDone = []; trickQueued = null; trickBuf = 0; boostT = 0;
+    airT = rot = 0; style = undefined; stylesDone = []; trickQueued = null; trickBuf = 0; boostT = 0; legT = 0; superOn = superFlight = false; airMult = 1;
     suspF = suspR = .03; suspFV = suspRV = 0; wheelOffF = wheelOffR = 0; visYWas = py; visVyWas = 0;
     combo = comboPts = comboT = 0; comboNames = []; comboKeys = [];
     ride = null; laneWant = 0; forkAhead = null; turboT = turboGrace = 0; bermStage = 0;
@@ -1814,8 +1865,9 @@ function stepGround(dt)
     // on a ledge before a drop-in the rider skids down to a crawl, and the turbo waits
     const pace = state == 'ride' && paceAt(px);
     if (boostT > 0) a += 7;
-    if (turboT > 0 && !pace) a += 16;
-    sp = clampV(sp + a*dt, state == 'ride' ? vFloor(px) : 0, VMAX + (turboT > 0 ? TURBO_V : boostT > 0 ? 4 : 0));
+    if (legT > 0 && !pace) a += 10;
+    if (turboT > 0 && !pace) a += superOn ? 24 : 16;
+    sp = clampV(sp + a*dt, state == 'ride' ? vFloor(px) : 0, VMAX + (turboT > 0 ? TURBO_V : legT > 0 ? 6 : boostT > 0 ? 4 : 0));
     braking = !!pace && sp > pace.v;
     // the run in to a gap sets the speed that clears it, quickly, so even the last of it up the kicker brings the
     // rider close: a fast one brakes, a slow one pedals up
@@ -1878,6 +1930,17 @@ function takeoff(kind)
     const f = feats.find(f=> onLine(f, px) && px >= f.x0 - .5 && px <= f.x1 + 1.5);
     takeoffKind = kind || (f ? f.type : 'crest');
     takeoffFeat = f; sentIt = false; braking = false;
+    airMult = boostMult();
+    // supercharged off the mega booter: sent at full speed, and held at it all the way across
+    superFlight = false;
+    if (f?.mega && superOn && turboT > 0 && kind != 'rail')
+    {
+        const k = SEND_V*(kind == 'jump' ? 1.05 : 1)/max(1, hypot(vx, vy));
+        vx *= k; vy *= k; superFlight = true; ++sends;
+        showMessage('SUPER SEND!', '', hsl(.5,1,.62));
+        sfx('send');
+        camShake = max(camShake, .5);
+    }
     // rolling off a lip or a crest the bike leaves pointing the way it is going
     if (!kind || kind == 'rail') ang = atan2(vy, vx);
     pressInAir = false;
@@ -1927,7 +1990,8 @@ function stepAir(dt)
     const v = hypot(vx, vy), k = .0018*v*dt;
     vx -= vx*k; vy -= vy*k;
     // the motor only drives the wheels: turbo speed bleeds away in the air, so a flight carries no farther than the trail allows for
-    if (vx > VMAX + 3) vx += (VMAX + 3 - vx)*damp(4, dt);
+    const cap = superFlight ? SEND_V + 2 : VMAX + 3;
+    if (vx > cap) vx += (cap - vx)*damp(4, dt);
     const ox = px, oy = py;
     px += vx*dt; py += vy*dt;
     airT += dt;
@@ -1959,8 +2023,11 @@ function land(gy)
     if (!finishTrick()) return;
     const perfect = abs(err) < .22;
     sp = vx*cos(th) + vy*sin(th);
-    sp = max(vFloor(px), sp*(perfect ? 1 : 1 - abs(err)*.3)*(impact > 22 ? .8 : 1));
-    if (impact > 22) { showMessage('HARD LANDING', '', hsl(.07,.9,.6)); ++hardLandings; }
+    // the end of a super send is stomped, however hard it comes down: the landing is built for it
+    const hard = impact > 22 && !superFlight;
+    sp = max(vFloor(px), sp*(perfect ? 1 : 1 - abs(err)*.3)*(hard ? .8 : 1));
+    if (hard) { showMessage('HARD LANDING', '', hsl(.07,.9,.6)); ++hardLandings; }
+    if (superFlight) { dustBurst(px, py, 160); camShake = max(camShake, .8); }
     py = gy; grounded = true; vyGround = sp*sin(th); trickQueued = null;
     landVis = err; ang = th; angVel = 0;
     suspFV += impact*.5; suspRV += impact*.55;
@@ -1973,6 +2040,7 @@ function land(gy)
         camShake = max(camShake, clamp01((impact - 6)/14)*.6);
     }
     scoreAir(perfect);
+    airMult = 1; superFlight = false;
 }
 
 // a trick still under way when the wheels touch: nearly done it counts, half done it is sketchy, barely begun a crash
@@ -2002,9 +2070,11 @@ function airSwipe(dir)
 }
 
 // ---------- tricks build a combo; it banks when the rider rolls on without another trick for a moment
-function addTrick(name, pts, key)
+function addTrick(name, pts, key, bonus=false)
 {
-    if (pts > bestTrick.pts) bestTrick = {name, pts};
+    pts = round(pts*max(boostMult(), grounded || grinding ? 1 : airMult)/10)*10;
+    // a set's bonus joins the combo but is not a trick of the run
+    if (!bonus && pts > bestTrick.pts) bestTrick = {name, pts};
     ++combo; comboPts += pts; comboT = 2.2;
     charge(pts);
     comboNames.push(name);
@@ -2352,7 +2422,7 @@ function drawRagdoll()
 // BIKE AND RIDER - drawn from parts each frame so the suspension, cranks, legs
 // and arms can move; poses for riding, tucking and the style tricks
 // ============================================================================
-let meshTube, meshBall, meshBox, meshTyre, meshRim, meshSpokes, meshDisc, meshHelmet, meshRing;
+let meshTube, meshBall, meshBox, meshTyre, meshRim, meshSpokes, meshDisc, meshHelmet, meshRing, meshSprocket;
 const PAL = {
     frame: hsl(.99,.8,.48), frameDark: hsl(0,0,.13), gold: hsl(.11,.85,.55), black: hsl(0,0,.09),
     silver: hsl(.6,.05,.72), spring: hsl(.14,.95,.55), tyre: hsl(0,0,.07), jersey: hsl(.53,.75,.45),
@@ -2369,6 +2439,22 @@ function buildRiderMeshes()
     meshRim = buildTorus(.6, .04, 22, 5, true).setColor(PAL.black);
     meshDisc = buildCylinder(.2, .012, 14).setColor(PAL.silver);
     meshRing = buildTorus(.22, .03, 14, 4).setColor(PAL.silver);
+    // a chainring to collect: a toothed gold ring on spokes round a silver hub, facing along z
+    const gold = hsl(.12,.9,.56), sp = new Mesh;
+    sp.combine(buildTorus(.84, .14, 18, 4).setColor(gold));
+    for (let k = 0; k < 14; ++k)
+    {
+        const a = k/14*TAU;
+        sp.combine(buildBox(vec3(.13, .08, .13)).setColor(gold), buildMatrix(vec3(cos(a)*.48, 0, sin(a)*.48), vec3(0, -a, 0)));
+    }
+    for (let k = 0; k < 5; ++k)
+    {
+        const a = k/5*TAU;
+        sp.combine(buildBox(vec3(.3, .05, .07)).setColor(gold), buildMatrix(vec3(cos(a)*.22, 0, sin(a)*.22), vec3(0, -a, 0)));
+    }
+    sp.combine(buildCylinder(.15, .1, 10).setColor(PAL.silver));
+    meshSprocket = new Mesh;
+    meshSprocket.combine(sp, buildMatrix(vec3(), vec3(PI/2, 0, 0)));
     meshSpokes = new Mesh;
     for (let k = 0; k < 8; ++k)
         meshSpokes.combine(buildBox(vec3(.006, .008, .56)), buildMatrix(vec3(), vec3(k*PI/8, 0, 0)), PAL.silver);
@@ -2662,10 +2748,10 @@ function newRun(s)
     placeRider(START_X);
     runTime = dist = score = orbsGot = orbStreak = 0;
     bestCombo = 0; bestComboName = ''; flipsTotal = 0; grindDist = 0; crashReason = ''; trickCounts = {}; tricksTotal = 0; bestTrick = {name: '', pts: 0}; airHist = [0, 0, 0, 0, 0, 0]; hardLandings = 0; combosBanked = 0; multSum = 0;
-    battery = 0; turboT = 0; turbos = 0; lines = 0; proLines = 0; linesRidden = new Set; allLines = false; dayT = DAY_START; dropCam = crashCam = 0; camLift = 0; ragdoll = null; pieces = []; pz = yawV = leanV = bermY = 0; camZ = camB = 0;
+    battery = 0; turboT = 0; turbos = 0; supers = legBoosts = sends = cellsGot = 0; setShown = null; setShownT = 0; lines = 0; proLines = 0; linesRidden = new Set; allLines = false; dayT = DAY_START; dropCam = crashCam = sendCam = 0; camLift = 0; ragdoll = null; pieces = []; pz = yawV = leanV = bermY = 0; camZ = camB = 0;
     messages.length = 0; trickPops.length = 0; swipeFx.length = 0;
     riderView = new RiderView;
-    new OrbView; new OrbGlow; new SkyExtras; new TurboGlow;
+    new SprocketView; new OrbView; new OrbGlow; new SkyExtras; new TurboGlow;
     scarf = new Trail3D(vec3(), .16, .26*RS, undefined, hsl(.0,.85,.5), hsl(.0,.85,.5,0));
     scarf.castShadow = false;
     dust = new ParticleEmitter3D(vec3(), .4, 0, 0, PI*.3, undefined,
@@ -2759,9 +2845,13 @@ function rideStep(dt)
     if (turboT > 0 && !paceAt(px))
     {
         turboT -= dt;
-        battery = max(0, turboT/TURBO_LEN);
-        if (turboT <= 0) { battery = 0; turboGrace = 1.5; showMessage('BATTERY EMPTY', 'tricks and orbs recharge it', hsl(.5,.6,.75)); }
+        battery = max(0, turboT/(superOn ? SUPER_LEN : TURBO_LEN));
+        if (turboT <= 0) { battery = 0; turboGrace = 1.5; superOn = false; showMessage('BATTERY EMPTY', 'tricks and sprockets recharge it', hsl(.5,.6,.75)); }
     }
+    if (legT > 0) legT -= dt;
+    if (setShownT > 0) setShownT -= dt;
+    // a set ridden past with some of it left is lost
+    if (setShown && !setShown.done && !setShown.lost && px > setShown.x1 + 3) { setShown.lost = true; setShownT = 1.2; }
     if (grounded && combo && (comboT -= dt) <= 0) bankCombo();
     if (boostT > 0) boostT -= dt;
     dist = max(dist, px - START_X);
@@ -2843,7 +2933,8 @@ function updateVisuals(dt)
     leanV += (tLean - leanV)*damp(10, dt);
     bermY += (tY - bermY)*damp(16, dt);
     // pedal until the bike runs away, then stand and coast with the cranks level
-    if ((grounded && sp < 16 || state == 'title' && sp > .5) && !grinding)
+    if (legT > 0 && grounded && !grinding && state == 'ride') crank += 18*dt;
+    else if ((grounded && sp < 16 || state == 'title' && sp > .5) && !grinding)
         crank += clampV(sp*.95, 3, 11)*dt;
     else
     {
@@ -2868,7 +2959,7 @@ const CAM_VIEWS = {
 const DROP_VIEW = {yaw: [-.5, -.55], pitch: [.06, .05], lead: [.02, .02], up: [0, 0], dist: [15, 12], follow: .6, fixed: 1};
 // a crash: in close on the tumbling rider, from a little in front and above, to watch the yard sale
 const CRASH_VIEW = {yaw: [.5, .45], pitch: [.24, .22], lead: [0, 0], up: [0, 0], dist: [10, 8.5], follow: .3, fixed: 1};
-let dropCam = 0, dropDist = 15, camLift = 0;
+let dropCam = 0, dropDist = 15, camLift = 0, sendCam = 0;
 const CAM_ORDER = Object.keys(CAM_VIEWS), CAM_ZOOMS = [['NEAR', .78], ['MID', 1], ['FAR', 1.32]];
 // side on and far back in portrait, three quarter at mid zoom in landscape
 let camView = {p: 'SIDE', l: '3/4', zp: 2, zl: 1}, camP;
@@ -2919,18 +3010,20 @@ function gameUpdatePost()
     const Cw = crashCam < .001 ? C : {};
     if (Cw != C) for (const key in C) Cw[key] = mix(C[key], CRASH_VIEW[key][o] ?? CRASH_VIEW[key], crashCam);
     const close = max(dropCam, crashCam);
+    // on a super send it looks at the rider rather than the landing far below, and stands back a little
+    sendCam += ((state == 'ride' && superFlight ? 1 : 0) - sendCam)*damp(2, dt);
     airZoom += ((state == 'ride' && !grounded && !grinding && airT > .5 ? 1 : 0) - airZoom)*damp(1.5, dt);
-    const hs = (portrait ? 12 : 30) + speed*(portrait ? .28 : .36) + airZoom*5;
+    const hs = (portrait ? 12 : 30) + speed*(portrait ? .28 : .36) + airZoom*5 + sendCam*(portrait ? 3 : 8);
     const hf = 2*atan(tan(vfov/2)*aspect), fit = hs/(2*tan(hf/2));
     // a fixed view is set back by its own distance, the others far enough to fit the trail across the screen;
     // eased between the two through a change of view
     const D0 = mix(mix(fit*(Cw.fixed > .99 ? 1 : Cw.dist), (Cw.fixed < .01 ? 1 : Cw.dist) + speed*.3 + airZoom*4, Cw.fixed),
         dropDist + speed*.12, dropCam), D = mix(D0, CRASH_VIEW.dist[o], crashCam), vs = 2*D*tan(vfov/2);
     camD += (D - camD)*damp(2.5, dt);
-    const lead = state == 'title' ? min(Cw.lead, .3) - .18 : Cw.lead, reach = mix(hs, D*1.1, Cw.fixed);
+    const lead = state == 'title' ? min(Cw.lead, .3) - .18 : Cw.lead*(1 - sendCam*.7), reach = mix(hs, D*1.1, Cw.fixed);
     const tx = fx + reach*lead;
     // close in on a drop it looks at the rider, not the ground ahead, and keeps up with the fall
-    const ahead = 1 - close*.85;
+    const ahead = 1 - max(close, sendCam*.8)*.85;
     const ty = fy - vs*Cw.up + ((rideY(fx + hs*.45) - fy)*.32*min(1, .6 + Cw.lead*.4) + (rideY(tx) - fy)*max(0, Cw.lead - .4)*.6)*ahead;
     camX += (tx - camX)*damp(state == 'title' ? 3 : 9, dt);
     camY += (ty - camY)*damp(mix(4.5, 10, close), dt);
@@ -3054,19 +3147,41 @@ class SkyExtras extends EngineObject3D
     }
 }
 
-// ---------- orbs: small glowing balls, a line along the trail or an arc over a jump
+// ---------- sprockets and battery cells: a row along the trail, a set along a rail or a line, an arc over a jump,
+// and now and then a row of blue cells on the run in to a mega booter
+const orbSeen = (o, rz)=> !o.got && o.x > camX - 40 && o.x < camX + 70 && !(abs(rz) > 2 && abs((o.z || 0) - rz) > 4);
+const orbBob = o=> W3(o.x, o.y + sin(time*3 + o.x)*.12, o.z || 0);
+// gold chainrings, spinning, each turned to face the camera so its teeth read from every view
+class SprocketView extends EngineObject3D
+{
+    constructor() { super(vec3()); this.castShadow = false; }
+    render3D()
+    {
+        const m = new Matrix4, rz = riderZ(), eye = render3D.camera.pos;
+        for (const o of orbs)
+        {
+            if (o.cell || !orbSeen(o, rz)) continue;
+            const p = orbBob(o);
+            buildMatrix(p, vec3(0, atan2(eye.x - p.x, eye.z - p.z), -time*3 - o.x), vec3(o.air ? 1.2 : 1.05), m);
+            render3D.drawMesh(meshSprocket, m);
+        }
+    }
+}
+// the cells glow: a bright blue core in a spinning ring
 class OrbView extends EngineObject3D
 {
     constructor() { super(vec3()); this.emissive = 1; this.castShadow = false; }
     render3D()
     {
-        const m = new Matrix4;
-        const rz = riderZ();
+        const m = new Matrix4, rz = riderZ();
         for (const o of orbs)
         {
-            if (o.got || o.x < camX - 40 || o.x > camX + 70 || abs(rz) > 2 && abs((o.z || 0) - rz) > 4) continue;
-            buildMatrix(W3(o.x, o.y + sin(time*3 + o.x)*.12, o.z || 0), vec3(0, time*2 + o.x, 0), vec3(o.air ? .7 : .55), m);
-            render3D.drawMesh(render3D.sphereMesh, m, undefined, o.air ? hsl(.52,1,.65) : hsl(.13,1,.58));
+            if (!o.cell || !orbSeen(o, rz)) continue;
+            const p = orbBob(o), pulse = 1 + .08*sin(time*8 + o.x);
+            buildMatrix(p, vec3(0, time*2 + o.x, 0), vec3(.75*pulse), m);
+            render3D.drawMesh(render3D.sphereMesh, m, undefined, hsl(.52,1,.68));
+            buildMatrix(p, vec3(time*2.4 + o.x, 0, PI/2 + sin(time + o.x)*.6), vec3(1.25), m);
+            render3D.drawMesh(meshRing, m, undefined, hsl(.5,1,.8));
         }
     }
 }
@@ -3078,9 +3193,9 @@ class OrbGlow extends EngineObject3D
         const rz = riderZ();
         for (const o of orbs)
         {
-            if (o.got || o.x < camX - 40 || o.x > camX + 70 || abs(rz) > 2 && abs((o.z || 0) - rz) > 4) continue;
-            render3D.drawSoftDisc(W3(o.x, o.y + sin(time*3 + o.x)*.12, o.z || 0), o.air ? 2.4 : 1.8,
-                o.air ? hsl(.52,1,.6,.5 + night*.3) : hsl(.12,1,.55,.45 + night*.3));
+            if (!orbSeen(o, rz)) continue;
+            render3D.drawSoftDisc(orbBob(o), o.cell ? 3 : o.air ? 1.9 : 1.6,
+                o.cell ? hsl(.52,1,.6,.6 + night*.3) : hsl(.12,1,.55,.16 + night*.3));
         }
     }
 }
@@ -3091,12 +3206,26 @@ function collectOrbs()
     {
         if (o.got || abs(o.x - px) > 2.5 || abs((o.z || 0) - rz) > 2.4) continue;
         if ((o.x - px)**2 + (o.y - cy)**2 > (o.air ? 2.2 : 1.7)**2) continue;
-        o.got = true; ++orbsGot; ++orbStreak;
-        score += o.air ? 50 : 20;
-        charge(o.air ? 140 : 80);
-        sfx('orb', min(orbStreak, 24));
-        new ParticleEmitter3D(W3(o.x, o.y, o.z || 0), .6, .08, 200, PI, undefined,
-            hsl(.13,1,.6), WHITE, hsl(.13,1,.6,0), CLEAR_WHITE, .5, .4, 0, .1, .92, -.002, .1, .4, true);
+        o.got = true; ++orbStreak;
+        o.cell ? ++cellsGot : ++orbsGot;
+        score += o.cell ? 100 : o.air ? 50 : 20;
+        charge(o.cell ? 400 : o.air ? 140 : 80);
+        sfx(o.cell ? 'cell' : 'orb', min(orbStreak, 24));
+        const hue = o.cell ? .52 : .12;
+        new ParticleEmitter3D(W3(o.x, o.y, o.z || 0), .6, .08, o.cell ? 300 : 200, PI, undefined,
+            hsl(hue,1,.62), WHITE, hsl(hue,1,.62,0), CLEAR_WHITE, .5, .4, 0, .1, .92, -.002, .1, .4, true);
+        // the set it belongs to: shown filling up, and when the last one is picked up, its boost
+        const set = o.set;
+        if (!set) continue;
+        ++set.got;
+        if (set.kind == 'arc' || set.n < 5) continue;
+        setShown = set; setShownT = 2;
+        if (set.got == set.n && !set.done)
+        {
+            set.done = true; setShownT = 1.6;
+            if (o.cell) { supercharge(); addTrick('FULL CHARGE', 600, undefined, true); }
+            else { pedalPower(); addTrick('SPROCKET SET', set.n*40, undefined, true); }
+        }
     }
 }
 
@@ -3499,16 +3628,16 @@ function drawHUD()
     ctx.save();
     if (state == 'title') { drawTitle(W, H, top, bottom); ctx.restore(); return; }
 
-    if (state == 'ride' && (boostT > 0 || turboT > 0)) drawSpeedLines(W, H, turboT > 0 ? 1 : clamp01(boostT*1.5));
+    if (state == 'ride' && (boostT > 0 || turboT > 0 || legT > 0)) drawSpeedLines(W, H, turboT > 0 ? 1 : max(clamp01(boostT*1.5), legT > 0 ? .7 : 0));
 
     // distance down the mountain, and the score
     txt(floor(dist).toLocaleString() + ' m', 14, top + 20, 32, '#fff', 'left', 900);
     txt(score.toLocaleString(), 14, top + 50, 18, 'rgba(255,255,255,.9)', 'left', 800);
-    ctx.fillStyle = '#ffd23a';
-    ctx.beginPath(); ctx.arc(20, top + 74, 6, 0, TAU); ctx.fill();
+    drawGear(20, top + 74, 7.5, '#ffc93a');
     txt('' + orbsGot, 32, top + 74, 15, '#ffe9a0', 'left', 800);
 
     drawBattery(14, top + 92);
+    drawBoosts(14, top + 116);
     if (state == 'ride' && battery >= 1 && turboT <= 0) drawTurboButton(W, H, bottom);
     if (state == 'ride' && forkAhead && !ride) drawForkPrompt(W, H);
 
@@ -3615,7 +3744,47 @@ function drawBattery(x, y)
     const f = clamp01(battery);
     if (f > 0) rrect(x + 3, y - h/2 + 3, (w - 6)*f, h - 6, 2, 'rgba(70,235,255,' + pulse + ')');
     drawBolt(x + w/2, y, 7, full ? '#fff' : 'rgba(255,255,255,.85)');
-    if (turboT > 0) txt('TURBO', x + w + 12, y + 1, 13, '#7ff0ff', 'left', 900);
+    if (turboT > 0) txt(superOn ? 'SUPER  x2' : 'TURBO', x + w + 12, y + 1, 13, '#7ff0ff', 'left', 900);
+}
+// a sprocket for the count: a toothed ring
+function drawGear(x, y, r, color)
+{
+    ctx.beginPath();
+    for (let i = 0; i < 24; ++i)
+    {
+        const a = (i + .5)/24*TAU, rad = i % 4 < 2 ? r : r*.74;
+        ctx.lineTo(x + cos(a)*rad, y + sin(a)*rad);
+    }
+    ctx.closePath();
+    ctx.arc(x, y, r*.38, 0, TAU, true);
+    ctx.fillStyle = color; ctx.fill('evenodd');
+}
+// the leg power running down, and the set being picked up: a pip for each, filling as they are got
+function drawBoosts(x, y)
+{
+    if (state != 'ride') return;
+    if (legT > 0)
+    {
+        const f = clamp01(legT/LEG_LEN);
+        rrect(x, y - 7, 58, 14, 4, 'rgba(10,14,24,.45)', 'rgba(255,214,90,.8)');
+        rrect(x + 2, y - 5, 54*f, 10, 2, 'rgba(255,200,60,' + (.75 + .25*sin(time*14)) + ')');
+        drawGear(x + 29, y, 5.5, '#fff');
+        txt('LEGS  x1.5', x + 70, y + 1, 13, '#ffd86a', 'left', 900);
+        y += 20;
+    }
+    const set = setShown;
+    if (!set || setShownT <= 0) return;
+    ctx.globalAlpha = clamp01(setShownT*2.5);
+    const cell = set.kind == 'cell', on = set.lost ? '#ff6a50' : cell ? '#6ff2ff' : '#ffc93a';
+    for (let k = 0; k < set.n; ++k)
+    {
+        const cx = x + 6 + k*13, got = k < set.got;
+        ctx.beginPath(); ctx.arc(cx, y, got ? 5 : 4, 0, TAU);
+        if (got || set.lost) { ctx.fillStyle = got ? on : 'rgba(255,106,80,.35)'; ctx.fill(); }
+        else { ctx.strokeStyle = 'rgba(255,255,255,.7)'; ctx.lineWidth = 1.5; ctx.stroke(); }
+    }
+    if (set.lost) txt('MISSED ONE', x + set.n*13 + 8, y + 1, 12, '#ff8a70', 'left', 900);
+    ctx.globalAlpha = 1;
 }
 function drawBolt(x, y, s, color)
 {
@@ -3692,6 +3861,8 @@ function drawTitle(W, H, top, bottom)
         ['SWIPE IN THE AIR', 'eight tricks · flick while you hold a flip'],
         ['SWIPE UP OR DOWN AT A SPLIT', 'pick the pro, high, main or low line'],
         ['FILL THE BATTERY', 'tap the bolt for eBike turbo'],
+        ['EVERY SPROCKET IN A SET', 'pedal power: a burst of speed, tricks x1.5'],
+        ['EVERY BLUE CELL IN A ROW', 'supercharge: a huge send off the booter, tricks x2'],
         ['LAND SQUARE TO THE SLOPE', 'chain tricks for a combo and a boost'],
         ['TAP AT A DROP-IN LIP', 'send it: a bigger pop off the big drops']];
     // the help in one column on a tall screen, two on a wide one and three on a short wide one, spaced out
@@ -3726,7 +3897,7 @@ function drawResults(W, H)
     txt(crashReason || 'WIPEOUT', W/2, cy + 32, fitSize(crashReason || 'WIPEOUT', 22, cw - 30), '#ff8a6a', 'center', 900);
     txt(floor(dist).toLocaleString() + ' m', W/2, cy + 80, 44, '#fff', 'center', 900);
     txt(score.toLocaleString() + ' points', W/2, cy + 116, 18, '#ffd23a', 'center', 800);
-    const rows = [['Orbs', orbsGot], ['Flips', flipsTotal], ['Tricks', tricksTotal],
+    const rows = [['Sprockets', orbsGot + (legBoosts || supers ? '  (' + [legBoosts && legBoosts + (legBoosts > 1 ? ' sets' : ' set'), supers && supers + ' super'].filter(Boolean).join(', ') + ')' : '')], ['Flips', flipsTotal], ['Tricks', tricksTotal],
         ['Lines', lines + (proLines ? '  (' + proLines + ' pro)' : '')],
         ['Best trick', bestTrick.pts ? bestTrick.name + '  ' + bestTrick.pts.toLocaleString() : '-'], ['Best combo', bestCombo]];
     // rows close up on a short screen so the button never covers them
@@ -3771,13 +3942,16 @@ const SFX = {
     send:      new Sound([.8,0,180,.02,.25,.45,2,1.4,18,,,,,,,,.06,.6,.15]),
     line:      new Sound([.6,0,587,.02,.18,.4,1,1.6,,,880,.08,.12,,,,.06,.7]),
     thud:      new Sound([1,.1,60,.005,.04,.15,4,1.5,-5,,,,,6,,.1,.05,.4]),
-    clank:     new Sound([.5,.05,700,.002,.02,.12,3,1.8,,,,,,,3,,.03,.5,.1])};
+    clank:     new Sound([.5,.05,700,.002,.02,.12,3,1.8,,,,,,,3,,.03,.5,.1]),
+    cell:      new Sound([.5,0,880,.01,.06,.22,2,1.5,6,,440,.04,,,,,,.6]),
+    chain:     new Sound([.7,.1,320,.01,.35,.25,3,1,,,,,.035,1.5,,,,.6])};
 
 function sfx(name, v=0)
 {
     const s = SFX[name];
     if (!s || !soundOn) return;
     if (name == 'orb') s.play(undefined, .7, 1 + v*.035);
+    else if (name == 'cell') s.play(undefined, .8, 1 + v*.05);
     else if (name == 'land') s.play(undefined, .45 + v*.6);
     else if (name == 'whoosh') s.play(undefined, 1, .85 + v*.07);
     else s.play();
@@ -4002,7 +4176,7 @@ window.__mtb = {
         forkAhead: !!forkAhead, laneWant, view: camViewName(), zoom: camZoomName(), splits: splits.map(s=> [s.x0|0, s.x1|0, s.kinds.join('+')]),
         lineDetail: splits.map(s=> Object.values(s.lines).map(b=> b.kind + ':' + (b.what || 'plain')).join(' ')),
         dropCam, braking, sentIt, camLift, baseY, wheelOffF, wheelOffR, drops: feats.filter(f=> f.type == 'dropin').map(f=> [f.x0|0, f.x1|0, f.landX|0, +f.F.toFixed(1)]),
-        trickCounts, tricksTotal, style: style?.name, styleT, airHist, hardLandings, combosBanked, multSum, queued: trickQueued, swipeCount, mainHeld, secondHeld}),
+        trickCounts, tricksTotal, legBoosts, supers, sends, cellsGot, legT, superOn, style: style?.name, styleT, airHist, hardLandings, combosBanked, multSum, queued: trickQueued, swipeCount, mainHeld, secondHeld}),
     start: ()=> startRide(),
     // steps the game by hand, a 60th of a second at a time, with the engine paused
     // (or by frames of another length, a number or a function giving one, as a screen at another rate would)
@@ -4016,7 +4190,7 @@ window.__mtb = {
     ground: x=> rideY(x), state: ()=> ({px, py, vx, vy, airT, grounded, run: state}),
     teleport: x=> { trackEnsure(x + TRACK_AHEAD); placeRider(x); state = 'ride'; sp = 16; },
     setDay: t=> dayT = t,
-    feats: ()=> feats.map(f=> ({type: f.type, x0: f.x0, x1: f.x1, x2: f.x2, carved: f.carved, apexes: f.apexes?.length, line: f.line?.kind})),
+    feats: ()=> feats.map(f=> ({type: f.type, x0: f.x0, x1: f.x1, x2: f.x2, carved: f.carved, apexes: f.apexes?.length, line: f.line?.kind, mega: f.mega})),
     newRun: s=> newRun(s),
     camTune: (view, o)=> Object.assign(CAM_VIEWS[view], o),
     cam: (view, zoom=1)=> { camView.p = camView.l = view; camView.zp = camView.zl = zoom; },

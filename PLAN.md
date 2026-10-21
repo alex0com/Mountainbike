@@ -519,6 +519,121 @@ Each phase is a separate commit (or a few), tested with the Phase 0 harness befo
 
 - **The logo falls over instead of flying away: done.** On PLAY the sign tips over backwards about the back edge of its foot (`stepLogoFall`): slowly at first, faster as it leans, then a thud, dust and a little bounce. It lies face up beside the trail, stopped where its top meets the hillside (`logoRest`). Its posts come out of the ground with it.
 
+## Two players: the plan (not built yet)
+
+A second player joins a run already under way and rides the same mountain alongside the first. Neither can hit the other. Each has their own power-ups and uses them their own way. Every 30 seconds a round is decided, on who went faster and who scored more.
+
+### 1. Why it is cheap to sync
+- The mountain is built from its seed (`trackInit(seed)`). Every feature, line, rock, sprocket, cell and tyre comes from the seeded generator.
+- `Math.random` only touches crash effects, sound, music, camera shake, the autopilot and picking a new seed.
+- So both players share the seed and each builds the same world locally. The network carries only the riders: about 20 small messages a second each way, a few kB/s.
+
+### 2. The server on Linux and Apache
+Apache serves the game file as now. Live play needs a connection that stays open. Two ways to get one:
+
+- **A. Recommended: a small WebSocket relay behind Apache.**
+  - **The relay:** a Node.js process (the `ws` package, about 100 lines), run by systemd on 127.0.0.1:8090.
+  - **What it does:** keeps rooms keyed by a 4-letter code, relays each player's messages to the other, drops rooms that go quiet, and answers pings.
+  - **Apache:** enable `mod_proxy`, `mod_proxy_wstunnel` and `mod_rewrite`, then add `ProxyPass /mp ws://127.0.0.1:8090/` and `ProxyPassReverse /mp ws://127.0.0.1:8090/`.
+  - **TLS:** Apache's HTTPS gives `wss://yoursite/mp` with no extra setup.
+  - **Load:** tiny; one small VPS handles thousands of rooms.
+  - **The relay is not the referee:** the host's game decides the rounds.
+- **B. If only PHP can run (no long-lived process): WebRTC peer-to-peer.**
+  - A PHP script and a small table (or files) pass the connection offer and answer between the two browsers.
+  - After that the games talk directly over a data channel, through public STUN servers.
+  - Some networks (strict NAT, mobile carriers) need a TURN relay, which means running coturn anyway.
+  - More moving parts and more failure cases than A.
+
+### 3. Joining a run under way
+- **Opening a room:** while riding solo, an INVITE button (on the pause and results screens, and on the menu under a new 2 PLAYERS option) opens a room. It shows a code and a link (`...?join=ABCD`), and a QR code on the menu.
+- **What the joiner gets:** the seed, the host's distance, line and time of day.
+  - They build the track up to that point. This is fast, because only the data is built; ground meshes are built only near the camera.
+  - They drop in beside the host, with a 3-2-1 and a DROP IN! of their own.
+- **On the host's side:** the host sees "PLAYER 2 JOINED" and the rounds start.
+  - Either player can leave at any time, and the other carries on solo.
+
+### 4. Riding together
+- **What each game sends, about 20 times a second:**
+  - x, y and line, pitch and flip angle, speed, grounded or not;
+  - the trick under way and its progress, crank and wheel angles, suspension;
+  - turbo, pedal power or brakes on, state (riding or crashed), and running score and distance;
+  - kit and bike, once.
+- **Smoothing:** the other rider is drawn 120 ms behind real time, between the two latest states, and carried on along its speed if a message is late. It snaps if it drifts more than 2 m.
+- **Crashes:** a crash goes as an event carrying the ragdoll's starting state. The other game plays the same wreck itself.
+- **Drawing the other rider:**
+  - The same model in their own kit and bike, half a metre to the side so the two never overlap. On a line they ride their line's own z.
+  - No collisions; the other rider is a ghost.
+  - A name tag over them.
+  - When they are off screen, an arrow at the screen edge with the gap ("RED  +42 m").
+- **Keeping it close:** an optional slipstream. Riding within 25 m behind the other player gives +2 m/s, and the leader gets nothing extra. Faster riders still pull away; it just stops one mistake from ending the race.
+- **Sprockets, cells and tyres:** each player keeps their own, so both see and can collect everything. Stealing goes through a power-up instead (below).
+- **Crashing in a two-player run** does not end it. The rider is down for 2.5 s (the score card waits for the end of the match), then drops back in where they fell, with the combo lost. That is the penalty.
+
+### 5. Different power-ups, used differently
+Two kinds, so the players have different powers and different choices:
+
+- **Each bike's own power**, on a button that fills by riding:
+
+  | Bike | Power |
+  |---|---|
+  | DH Sled | BULLDOZE: 5 s of smashing straight through rocks and logs, with no slowdown on hard landings |
+  | Dirt Jumper | DOUBLE POP: one jump in mid-air |
+  | E-Beast | OVERCHARGE: the next turbo is a supercharge |
+  | All-Rounder | SECOND WIND: refills pedal power and saves the combo through one hard landing |
+
+- **Head-to-head pickups:** "?" crates on the trail, held one at a time and fired with a tap.
+  - **DUST CLOUD:** the other player's view is hazy for 3 s.
+  - **MUD PATCH:** a patch of mud on the other player's trail 40 m ahead of them, which slows them unless they jump it.
+  - **POINT THIEF:** takes 10% of the other player's round points.
+  - **SHIELD:** blocks the next one thrown back.
+- **How attacks arrive:** an attack goes as an event, and the target's game applies it (it lays its own mud), so it is the same on both screens.
+- **Comeback rule:** the loser of each round gets a crate straight away.
+
+### 6. A round every 30 seconds
+- **The host's game keeps the clock,** shown as a ring in the HUD with a countdown over the last 5 s.
+- **At the bell**, each game reports what it did in the 30 s:
+  - metres gained;
+  - trick points banked;
+  - its best single trick;
+  - its crashes.
+- **Stars:** the host awards up to three.
+  - **SPEED:** more distance.
+  - **STYLE:** more trick points.
+  - **CLEAN:** no crash, and the other player crashed.
+- **The result:** the round winner has the most stars, with ties going to the higher trick points. A banner shows it ("ROUND 3 — RED: faster and +12,400 style"), the tally of stars goes up, and the loser's comeback crate drops.
+- **A match** is first to 5 rounds, or 10 rounds; or endless, if wanted.
+- **At the end, a shared score card:** both riders side by side with their rounds, hard landings, cased jumps, top speed and best trick, a winner, and REMATCH with the same seed or a new one.
+
+### 7. What changes in the code
+- **Rider state into an object.**
+  - The rider is drawn from globals now (`px`, `py`, `ang`, `rot`, `style`, `pz`, `yawV`...).
+  - Collect the drawing state into `{x, y, z, ang, rot, trick, crank, wheel, susp, kit, bike, ...}`.
+  - `bikeMatrix`, `RiderView` and `drawRagdoll` then draw from it.
+  - The local rider fills it from the physics, the remote one from the network.
+  - This is the biggest refactor; the physics itself stays as it is.
+- **Per-rider colours:** the kit is applied per draw, by swapping the palette just before drawing each rider.
+- **A `net` module:** connect, room, send at 20 Hz, receive into a buffer, events (join, leave, crash, round, attack), and reconnect.
+- **New screens and HUD:**
+  - the 2 PLAYERS menu with HOST and JOIN, a code entry, and the invite;
+  - the round ring, the off-screen arrow and the name tag;
+  - the power and crate buttons;
+  - the round banner and the match card.
+- **The server:** `server/relay.js`, plus a systemd unit and the Apache lines, in the repo with a short README.
+
+### 8. Order of work
+1. Rider state into an object, a second rider drawn from a recording (no network yet), the arrow and name tag.
+2. The relay and `net`: rooms, codes, join a run under way, the other rider moving smoothly. Tested with two headless browsers on one machine through a local relay, and then over real Wi-Fi and mobile.
+3. Rounds: the clock, the reports, stars, banner, match end and card.
+4. Power-ups: each bike's own, then the crates and attacks, and the comeback rule.
+5. Polish: slipstream, sounds, reconnecting after a dropped connection, a host leaving, and two phones in portrait and landscape.
+
+### 9. Decisions to make
+- **Server:** can a small Node process run on the server (option A), or only PHP (option B)?
+- **Players:** online only, or also two on one device (split screen)?
+- **Match length:** first to 5 rounds, a fixed 10, or endless?
+- **Slipstream:** on, off, or an option?
+- **Collectibles:** each player their own, or one shared set where the first to reach a sprocket takes it from the other?
+
 ## Running the tools
 
     node tools/sim.mjs [--seeds 20] [--km 5] [--flips back|front] [--tricks] [--lanes rand|up|down|main] [--turbo] [--json out.json] [--salt n] [--game other.html] [--bike 0..3]

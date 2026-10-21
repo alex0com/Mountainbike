@@ -143,9 +143,18 @@ let ORB_V = 13;   // the launch speed air orbs are laid out for, measured from r
 let seed = 1, rnd, NA, NB, NC, NV;
 let ys = [], gapF = [], rails = [], rocks = [], orbs = [], signs = [], feats = [], gaps = [], pendingArcs = [];
 let genBase = 0, genGrade = 0, nextSignX = 500, lastLaunch = null, nextBooterX = 200, nextCanyonX = 900;
-// forks: a high line up the hillside behind the trail and a low line down the slope in front, reached by berms
-const B_T = 22, LANE_UP = -10, LANE_DN = 9;
-let splits = [], openSplit = null, lastSplitEnd = 0, ride = null, noSign = [], paces = [], nextDropX = 450;
+// line blocks: the trail splits into lines across the face of the mountain, reached by berms, each with its own
+// features, and they all come back together. PRO is up on the ridge, HIGH along the hillside behind the trail,
+// LOW down the slope in front; the main trail carries on between them.
+const T_MAX = 30;
+const LINES = {
+    pro:  {lane: 2, z: -20, T: 30, dir: 1, name: 'PRO LINE', short: 'PRO', pts: 600, color: 'rgba(255,120,95,.95)', sign: hsl(.02,.85,.55)},
+    high: {lane: 1, z: -10, T: 22, dir: 1, name: 'HIGH LINE', short: 'HIGH', pts: 300, color: 'rgba(255,214,70,.95)', sign: hsl(.14,.95,.55)},
+    low:  {lane: -1, z: 9, T: 22, dir: -1, name: 'LOW LINE', short: 'LOW', pts: 300, color: 'rgba(90,230,215,.95)', sign: hsl(.5,.9,.5)}};
+// the lanes from the top of the hill down, the main trail as 0
+const LANES = [2, 1, 0, -1];
+const offeredLanes = s=> LANES.filter(l=> l == 0 || s.lines[l]);
+let splits = [], openSplit = null, lastSplitEnd = 0, nextSplitGap = 0, ride = null, noSign = [], paces = [], nextDropX = 450;
 // ravines the trail bridges, creeks it splashes through, rock arches over it
 let gullies = [], arches = [];
 
@@ -212,6 +221,9 @@ function brY(b, x)
     return b.ys[i] + (b.ys[i + 1] - b.ys[i])*f;
 }
 const onBranch = x=> !!ride && x > ride.x0 && x < ride.x1;
+// the line under the rider at x: the one being ridden, or the main trail as null
+const lineOf = x=> onBranch(x) ? ride : null;
+const onLine = (f, x)=> (f.line || null) == lineOf(x);
 const rideY = x=> onBranch(x) ? brY(ride, x) : groundY(x);
 function rideSlope(x)
 {
@@ -219,7 +231,7 @@ function rideSlope(x)
     const i = clampV(floor((x - ride.x0)/DX), 0, ride.ys.length - 2);
     return (ride.ys[i + 1] - ride.ys[i])/DX;
 }
-const rideGap = x=> onBranch(x) ? 0 : gapAt(x);
+const rideGap = x=> onBranch(x) ? brGap(ride, x) : gapAt(x);
 // the main trail heavily smoothed, chasms bridged, for a branch to follow at a distance
 function wideY(x)
 {
@@ -463,7 +475,7 @@ function addDeck(d)
 }
 
 // where the trail asks the rider to slow down, and to what speed
-const paceAt = x=> paces.find(p=> x > p.x0 && x < p.x1);
+const paceAt = x=> paces.find(p=> x > p.x0 && x < p.x1 && onLine(p, x));
 const vFloor = x=> { const p = paceAt(x); return p ? p.v*.85 : VMIN; };
 
 // a little lip then a drop onto a steep landing
@@ -547,15 +559,15 @@ function orbLine(x0, n, sp)
 // orbs along the flight off a lip, laid out once the landing below it exists
 function orbArc(f)
 {
-    const a = atan(f.lipSlope);
-    const v = f.orbV || ORB_V;
+    const a = atan(f.lipSlope), v = f.orbV || ORB_V, b = f.line;
+    const ground = x=> b ? brY(b, x) : groundY(x), chasm = x=> b ? brGap(b, x) : gapAt(x);
     let x = f.x1, y = f.lipY + .9, vx = v*cos(a), vy = v*sin(a), t = 0, next = .14;
-    while (t < 3.2)
+    while (t < 3.2 && !(b && x > b.x1 - b.T))
     {
         const dt = 1/60;
         t += dt; x += vx*dt; vy -= G_AIR*dt; y += vy*dt;
-        if (y < groundY(x) + 1.1 && !gapAt(x)) break;
-        if (t >= next) { orbs.push({x, y, got: false, air: true}); next += .15; }
+        if (y < ground(x) + 1.1 && !chasm(x)) break;
+        if (t >= next) { orbs.push(b ? {x, y, z: brZ(b, x), got: false, air: true, b} : {x, y, got: false, air: true}); next += .15; }
     }
 }
 
@@ -564,7 +576,7 @@ function placeSigns()
     while (nextSignX < genX() - 20 && !(openSplit && nextSignX > openSplit.x0 - 40))
     {
         let x = nextSignX;
-        for (let k = 0; k < 60 && (feats.some(f=> x > f.x0 - 4 && x < (f.x2 || f.x1) + 8) || noSign.some(f=> x > f.x0 && x < f.x1)); ++k) x += 4;
+        for (let k = 0; k < 120 && (feats.some(f=> !f.line && x > f.x0 - 4 && x < (f.x2 || f.x1) + 8) || noSign.some(f=> x > f.x0 && x < f.x1)); ++k) x += 4;
         signs.push({x, d: nextSignX, y: groundY(x)});
         nextSignX += 500;
     }
@@ -635,38 +647,45 @@ function addWhoops(d)
 }
 
 // ---------- the generator
-// a fork opens on a plain stretch; the main trail carries on with its own features until the branches come back
+// a block of lines opens on a plain stretch; the main trail carries on with its own features alongside them
 function openFork(d)
 {
     const reach = launchReach(lastLaunch);
     if (reach > genX() - 4) addRun(reach - genX() + 8, genGrade);
     addRun(18, gradeTarget(d), 0);
     const x0 = genX();
-    addRun(B_T + 10, genGrade, 0);
-    openSplit = {x0};
+    addRun(T_MAX + 10, genGrade, 0);
+    // the lines it offers besides the main trail: at least one, and PRO only a little way down the mountain
+    const kinds = [];
+    if (x0 > 500 && rnd() < .55) kinds.push('pro');
+    if (rnd() < .7) kinds.push('high');
+    if (rnd() < .7 || !kinds.length) kinds.push('low');
+    openSplit = {x0, kinds, len: kinds.includes('pro') ? 260 + rnd()*40 : 210 + rnd()*50};
 }
 function closeFork(d)
 {
     const reach = launchReach(lastLaunch);
     if (reach > genX() - 4) addRun(reach - genX() + 8, genGrade);
     const s = openSplit;
-    if (genX() < s.x0 + 86) addRun(s.x0 + 86 - genX(), genGrade);
-    s.x1 = genX() + B_T + 4;
-    addRun(B_T + 18, gradeTarget(d), 0);
-    s.up = buildBranch(s, 1); s.down = buildBranch(s, -1);
+    if (genX() < s.x0 + s.len - T_MAX - 4) addRun(s.x0 + s.len - T_MAX - 4 - genX(), genGrade);
+    s.x1 = genX() + T_MAX + 4;
+    addRun(T_MAX + 18, gradeTarget(d), 0);
+    s.lines = {};
+    for (const k of s.kinds) { const b = buildLine(s, k); s.lines[b.lane] = b; }
     splits.push(s); noSign.push({x0: s.x0 - 26, x1: s.x1 + 8});
-    lastSplitEnd = s.x1; openSplit = null;
+    lastSplitEnd = s.x1; nextSplitGap = 40 + rnd()*60; openSplit = null;
 }
-function buildBranch(sp, dir)
+// a line: the main trail smoothed and swung up the hill or down the slope, with its own features built on top
+function buildLine(sp, kind)
 {
-    const b = {x0: sp.x0, x1: sp.x1, T: B_T, dir, z: dir > 0 ? LANE_UP : LANE_DN, ys: [], sp};
-    const n = ceil((b.x1 - b.x0)/DX) + 2, A = (2.4 + rnd()*1.6)*dir, lane = [];
+    const L = LINES[kind], b = {x0: sp.x0, x1: sp.x1, T: L.T, dir: L.dir, z: L.z, kind, lane: L.lane, ys: [], gap: [], sp, what: ''};
+    const n = ceil((b.x1 - b.x0)/DX) + 2, A = (kind == 'pro' ? 5 + rnd()*2 : 2.4 + rnd()*1.6)*L.dir, lane = [];
     for (let k = 0; k < n; ++k)
     {
         const x = b.x0 + k*DX, u = clamp01((x - b.x0)/(b.x1 - b.x0));
         let y = wideY(x) + A*sin(PI*u)**.6;
         // rollers along the high line
-        if (dir > 0) y += .45*sin((x - b.x0)*TAU/15)*sstep((u - .2)*6)*sstep((.8 - u)*6);
+        if (kind == 'high') y += .45*sin((x - b.x0)*TAU/15)*sstep((u - .15)*6)*sstep((.85 - u)*6);
         lane.push(y);
     }
     // smoothed, then always falling at least a little
@@ -681,41 +700,148 @@ function buildBranch(sp, dir)
         }
     }
     for (let k = 1; k < n; ++k) lane[k] = min(lane[k], lane[k - 1] - .07*DX);
-    // the low line has a kicker on it
-    if (dir < 0)
+    // its features, made smaller until they fit between the turn off and the turn back; a plain line if none do
+    let plan = null;
+    for (let t = 0, sc = 1; t < 6 && !plan; ++t, sc *= .82) plan = lineFeatures(b, lane, kind, sc);
+    for (let k = 0; k < n; ++k)
     {
-        const H = 1.25 + rnd()*.35, len = 6, at = b.x0 + B_T + 10 + rnd()*8;
-        for (let k = 0; k < n; ++k)
-        {
-            const q = (b.x0 + k*DX - (at - len))/len;
-            if (q > 0 && q <= 1) lane[k] += H*q*q;
-        }
-        b.kick = {x0: at - len, x1: at, H};
+        const x = b.x0 + k*DX;
+        b.ys.push(mix(groundY(x), lane[k] + (plan ? plan.off[k] + plan.add[k] : 0), brT(b, x)));
+        b.gap.push(plan ? plan.gap[k] : 0);
     }
-    for (let k = 0; k < n; ++k) { const x = b.x0 + k*DX; b.ys.push(mix(groundY(x), lane[k], brT(b, x))); }
-    // orbs along the line, and an arc off the low line's kicker
-    const add = (x, y, air)=> orbs.push({x, y, z: brZ(b, x), got: false, air, b});
-    if (dir > 0) for (let x = b.x0 + B_T + 2; x < b.x1 - B_T - 2; x += 3) add(x, brY(b, x) + 1.1, false);
+    // the features, pace zones and chasms belong to the line; orbs along it and arcs off its launches
+    if (plan)
+    {
+        b.what = plan.what;
+        for (const f of plan.feats)
+        {
+            f.line = b; f.lipY = brY(b, f.x1); f.lipSlope = (brY(b, f.x1) - brY(b, f.x1 - DX))/DX;
+            if (f.type == 'gap') { f.landY = brY(b, f.x2 + .5); gaps.push(f); }
+            feats.push(f);
+            orbArc(f);
+        }
+        for (const p of plan.paces) { p.line = b; paces.push(p); }
+    }
+    const busy = x=> brGap(b, x) || plan?.feats.some(f=> x > f.x0 - 3 && x < (f.x2 ?? f.x1) + 2);
+    for (let x = b.x0 + b.T + 2; x < b.x1 - b.T - 2; x += 3)
+        if (!busy(x)) orbs.push({x, y: brY(b, x) + 1.1, z: brZ(b, x), got: false, air: false, b});
+    return b;
+}
+const brGap = (b, x)=> b.gap[clampV(round((x - b.x0)/DX), 0, b.gap.length - 1)];
+// a line's own features, laid along it as an offset from its smoothed path that starts and ends at nothing:
+// flatter stretches raise it, drops and steep landings lower it, and a last stretch brings it back, always downhill
+function lineFeatures(b, lane, kind, sc)
+{
+    const n = lane.length, off = new Float32Array(n), add = new Float32Array(n), gap = new Uint8Array(n);
+    const ka = ceil((b.T + 8)/DX), kb = n - 1 - ceil((b.T + 8)/DX), feats = [], paces = [];
+    let k = ka, o = 0, what = '';
+    const X = k=> b.x0 + k*DX, Y = k=> lane[k] + off[k] + add[k], bg = k=> (lane[k - 1] - lane[k])/DX, slopeAt = k=> (Y(k) - Y(k - 1))/DX;
+    // how steeply the smoothed path falls on average here: landings are steeper than it by a set amount
+    const fall = (lane[ka] - lane[kb])/((kb - ka)*DX);
+    // a stretch at a set grade, one that follows the smoothed path, and a kicker (giving its lip) that carries on
+    // at the grade before it, or along the path, so it always rises out of what leads into it
+    const run = (len, grade)=> { for (const e = min(kb, k + round(len/DX)); k < e; ++k) { o += (bg(k) - grade)*DX; off[k] = o; } };
+    const follow = len=> { for (const e = min(kb, k + round(len/DX)); k < e; ++k) off[k] = o; };
+    const kick = (H, len, grade)=>
+    {
+        const s = k, e = min(kb, k + round(len/DX));
+        for (; k < e; ++k) { if (grade !== undefined) o += (bg(k) - grade)*DX; off[k] = o; add[k] = H*((k - s + 1)/(e - s))**2; }
+        return k - 1;
+    };
+    // how far out a flight off a lip comes down on a landing a drop below it, falling at grade G
+    const landing = (slope, v, pop, drop, G)=>
+    {
+        const a = atan(slope);
+        let x = 0, y = 0, vx = v*cos(a), vy = v*sin(a) + pop;
+        for (let t = 0; t < 6 && y > -drop - G*x; t += 1/60) { x += vx/60; vy -= G_AIR/60; y += vy/60; }
+        return x;
+    };
+    // the last stretch brings the offset back to nothing, downhill all the way: a line below its path climbs back
+    // where the path falls fastest, never flatter than level; one above it drops back at a steady rate
+    const recover = ()=>
+    {
+        if (kb - k < 8) return false;
+        const spare = j=> max(0, bg(j) - .02)*DX;
+        if (o < 0)
+        {
+            let room = 0;
+            for (let j = k; j < kb; ++j) room += spare(j);
+            if (room < -o) return false;
+            const f = -o/room;
+            for (; k < kb; ++k) { o += spare(k)*f; off[k] = o; }
+        }
+        else
+        {
+            const rate = o/((kb - k)*DX);
+            for (; k < kb; ++k) { o -= rate*DX; off[k] = o; if (bg(k) + rate > 1.3) return false; }
+        }
+        return true;
+    };
+    if (kind == 'pro')
+    {
+        // a slow traverse along the ridge onto a ledge, then a drop-in off it onto a long steep landing
+        run(6, .22);
+        const l0 = k;
+        run((40 + rnd()*10)*sc, .03);
+        const lip = k - 1, v = 7 + rnd(), F = max(5, o + 1 + rnd()*3*sc), G = clampV(fall + .6, .75, 1);
+        o -= F;
+        const xl = landing(slopeAt(lip), v + 2, POP, F, G);
+        run(xl + 10, G);
+        feats.push({type: 'dropin', x0: X(l0), x1: X(lip), x2: X(k), F, v, landX: X(lip) + xl, orbV: v});
+        paces.push({x0: X(l0) + 4, x1: X(lip) + .5, v});
+        what = 'DROP-IN ' + round(F) + 'm';
+    }
+    else if (kind == 'high')
+    {
+        // rollers, then a steady pace onto a kicker off a step down onto a long landing
+        follow(14);
+        const p0 = k;
+        follow(14);
+        const s0 = k, lip = kick(.9 + rnd()*.4, 4.5), S = (2.5 + rnd()*2)*sc + .5, v = 14 + rnd()*2, G = clampV(fall + .2, .4, .55);
+        o -= S;
+        const xl = landing(slopeAt(lip), v + 2, POP, S, G);
+        run(xl + 8, G);
+        feats.push({type: 'stepdown', x0: X(s0), x1: X(lip), x2: X(k), drop: S, orbV: v});
+        paces.push({x0: X(p0), x1: X(lip) + .2, v});
+        what = 'STEP-DOWN';
+    }
     else
     {
-        for (let x = b.x0 + B_T - 4; x < b.kick.x0 - 1; x += 2.6) add(x, brY(b, x) + 1.1, false);
-        const i = round((b.kick.x1 - b.x0)/DX), a = atan((b.ys[i] - b.ys[i - 1])/DX), v = ORB_V*1.2;
-        let x = b.kick.x1, y = b.ys[i] + .9, vx = v*cos(a), vy = v*sin(a), next = .14;
-        for (let t = 0; t < 2.4; t += 1/60)
+        // a steep fast chute, then the speed set onto a kicker over a chasm
+        run((22 + rnd()*8)*sc, .6);
+        const p0 = k;
+        run(16, .2);
+        const v = 15 + rnd()*2, s0 = k, lip = kick(1.6 + rnd()*.3, 6, .2), drop = 1.5, G = clampV(fall + .25, .45, .6);
+        const a = atan(slopeAt(lip)), vx = v*cos(a), vy = v*sin(a);
+        // as wide as that speed clears rolling off, with room to spare
+        const clears = W=>
         {
-            x += vx/60; vy -= G_AIR/60; y += vy/60;
-            if (y < brY(b, x) + 1.1) break;
-            if (t >= next) { add(x, y, true); next += .15; }
-        }
+            const j = lip + 1 + round((W + 3)/DX);
+            if (j > kb - 30) return false;
+            const t = (W + 3)/vx;
+            return Y(lip) + vy*t - .5*G_AIR*t*t > lane[j] + o - drop - (G - bg(j))*3 + .8;
+        };
+        let W = 20*sc + 4;
+        while (W > 6 && !clears(W)) W -= .5;
+        if (W <= 6) return null;
+        const g0 = k;
+        for (const e = k + round(W/DX); k < e; ++k) { off[k] = o; add[k] = -40; gap[k] = 1; }
+        o -= drop;
+        const xl = landing(slopeAt(lip), v + 1, POP, 1.9 + drop + .3*W, G);
+        run(max(14, xl - W + 10), G);
+        feats.push({type: 'gap', x0: X(s0), x1: X(lip), x2: X(g0 + round(W/DX)) + DX*.5, W, orbV: v});
+        paces.push({x0: X(p0), x1: X(lip) + .2, v, hold: true});
+        what = 'CHUTE + GAP';
     }
-    return b;
+    if (!recover()) return null;
+    return {off, add, gap, feats, paces, what};
 }
 
 function genSection()
 {
     const x = genX(), d = clamp01(x/6000), start = genX();
-    if (openSplit) { if (x > openSplit.x0 + 58) { closeFork(d); return; } }
-    else if (x > 420 && x > lastSplitEnd + 380 && (!lastSplitEnd || rnd() < .4)) { openFork(d); return; }
+    if (openSplit) { if (x > openSplit.x0 + openSplit.len - 70) { closeFork(d); return; } }
+    else if (x > 260 && x > lastSplitEnd + nextSplitGap) { openFork(d); return; }
     addRun(openSplit ? 8 + rnd()*10 : mix(40, 20, d) + rnd()*28, gradeTarget(d), rnd() < .55 ? .12 + rnd()*.22 : 0, 14 + rnd()*16);
     // a rock arch over the run in, where no jump can still be in the air
     if (!openSplit && genX() - start > 24 && rnd() < .2 && launchReach(lastLaunch) < start + 2) arches.push({x: start + 9, s: .95 + rnd()*.25, rot: rnd()});
@@ -723,6 +849,7 @@ function genSection()
     const r = rnd();
     if (x < 120) pendingArcs.push(lastLaunch = addKicker(1.15, 4.5));
     // a drop-in every so often, and a big jump every few hundred metres, each clear of the flight before it
+    // (not in a block of lines: a drop-in's face would come through on every line beside it)
     else if (x > nextDropX && !openSplit)
     {
         const reach = launchReach(lastLaunch);
@@ -732,7 +859,7 @@ function genSection()
         nextBooterX = max(nextBooterX, genX() + 100);
     }
     else if (x > 250 && rnd() < .18) addBermTurns(d);
-    else if (x > nextBooterX && !openSplit)
+    else if (x > nextBooterX)
     {
         const reach = launchReach(lastLaunch);
         if (reach > genX() - 4) addRun(reach - genX() + 10, genGrade);
@@ -798,7 +925,7 @@ function trackInit(s)
     rnd = mulberry(s*7919 + 13);
     NA = makeNoise(rnd); NB = makeNoise(rnd); NC = makeNoise(rnd); NV = makeNoise(rnd);
     ys = []; gapF = []; rails = []; rocks = []; orbs = []; signs = []; feats = []; gaps = []; pendingArcs = [];
-    splits = []; openSplit = null; lastSplitEnd = 0; ride = null; noSign = []; gullies = []; arches = [];
+    splits = []; openSplit = null; lastSplitEnd = 0; nextSplitGap = 0; ride = null; noSign = []; gullies = []; arches = [];
     nextSignX = 500; lastLaunch = null; nextBooterX = 200; nextDropX = 450; nextCanyonX = 900; paces = []; bends = [];
     // the summit: the back of the peak rising from the left, a flat top to stand on, then the drop in
     genBase = -14; genGrade = -.6;
@@ -809,6 +936,8 @@ function trackInit(s)
     addRun(40, .38);
 }
 const trackEnsure = x=> { while (genX() < x) genSection(); };
+// how far ahead of the rider the track is laid out: past the longest block of lines beyond where the ground is built
+const TRACK_AHEAD = 950;
 
 // let go of what is far behind the rider
 function trackPrune(x)
@@ -880,15 +1009,16 @@ function palMix(x, key, out)
 
 // ---------- ground chunks: rows across the trail, front to back
 // in front of the trail the mountain falls away toward the camera; behind it a bank rises and rolls off
-// extra rows where the low line (z 9) and the high line (z -10) run, so a branch can be cut into the ground
+// extra rows where the low line (z 9), the high line (z -10) and the pro line (z -20) run, so a line can be cut into the ground
 const ROWS = [[62, 'drop'], [45, 'drop'], [30, 'drop'], [19, 'drop'], [13.5, 'drop'], [11.6, 'drop'], [10.5, 'drop'], [9.6, 'drop'], [8.6, 'drop'],
     [7.6, 'drop'], [6.6, 'drop'], [5.6, 'front'], [3.8, 'edge'], [2.6, 'trail'],
     [1.3, 'trail'], [0, 'trail'], [-1.3, 'trail'], [-2.6, 'trail'], [-4.2, 'bank'], [-5.8, 'hill'], [-7.3, 'hill'],
-    [-8.5, 'hill'], [-9.4, 'hill'], [-10.3, 'hill'], [-11.3, 'hill'], [-12.6, 'hill'], [-14.6, 'hill'], [-18, 'hill'],
-    [-25, 'hill'], [-36, 'hill'], [-50, 'hill'], [-68, 'hill'], [-92, 'hill']];
+    [-8.5, 'hill'], [-9.4, 'hill'], [-10.3, 'hill'], [-11.3, 'hill'], [-12.6, 'hill'], [-14.6, 'hill'], [-16.4, 'hill'],
+    [-17.8, 'hill'], [-19, 'hill'], [-20, 'hill'], [-21, 'hill'], [-22.2, 'hill'], [-23.6, 'hill'], [-25.5, 'hill'],
+    [-30, 'hill'], [-36, 'hill'], [-50, 'hill'], [-68, 'hill'], [-92, 'hill']];
 const HILL_ROW = ROWS.findIndex(r=> r[1] == 'bank');
 // the branches near a stretch of ground
-const branchesNear = (x0, x1)=> splits.flatMap(s=> s.x1 > x0 && s.x0 < x1 ? [s.up, s.down] : []);
+const branchesNear = (x0, x1)=> splits.flatMap(s=> s.x1 > x0 && s.x0 < x1 ? Object.values(s.lines) : []);
 // how much a point of ground belongs to a branch cut through it: the height there, and how much it is trail
 // Where a branch turns off the trail and back, the outside of the turn is banked up into a berm.
 function carve(bs, x, z, y, out)
@@ -1258,25 +1388,22 @@ function bermAt(b, x)
     const dz = (z2 - z0)/(2*e), k = (z2 - 2*z1 + z0)/(e*e)/(1 + dz*dz)**1.5;
     return {dz, k, h: min(1.7, abs(k)*17), o: k > 0 ? -1 : 1};
 }
-// a signpost before a fork: an arrow up the hill for the high line, one down for the low line
+// a signpost before a block of lines: an arrow and a name for each line it offers, highest up the hill at the top
 function makeForkSign(sp)
 {
-    const x = sp.x0 - 16, y = groundY(x), objs = [], z = -3.6;
-    objs.push(anchor(new EngineObject3D(vec3(), M.post, undefined, hsl(.08,.4,.28)), x, y + 1.1, z));
-    objs.push(anchor(new EngineObject3D(vec3(), M.post, undefined, hsl(.08,.4,.28)), x, y + 2.3, z));
-    const up = new EngineObject3D(vec3(), M.arrow, undefined, hsl(.14,.95,.55));
-    const dn = new EngineObject3D(vec3(), M.arrow, undefined, hsl(.5,.9,.5));
-    up.rotation3D = vec3(0, 0, 0); dn.rotation3D = vec3(0, 0, PI);
-    up.emissive = dn.emissive = .25;
-    objs.push(anchor(up, x, y + 3.9, z + .1), anchor(dn, x, y + 2.3, z + .1));
-    alongTrail(up, x, z); alongTrail(dn, x, z);
-    for (const [t, ty, c] of [['HIGH', 3.9, hsl(.14,.95,.55)], ['LOW', 2.3, hsl(.5,.9,.5)]])
+    const x = sp.x0 - 16, y = groundY(x), objs = [], z = -3.6, wood = hsl(.08,.4,.28), ls = LANES.filter(l=> sp.lines[l]);
+    for (let k = 0; k <= ls.length; ++k) objs.push(anchor(new EngineObject3D(vec3(), M.post, undefined, wood), x, y + 1.1 + k*1.3, z));
+    ls.forEach((l, i)=>
     {
-        const o = new EngineObject3D(vec3(), buildText3D(t, .5, .08), undefined, c);
+        const L = LINES[sp.lines[l].kind], ty = y + 2.4 + (ls.length - 1 - i)*1.45;
+        const arrow = new EngineObject3D(vec3(), M.arrow, undefined, L.sign);
+        arrow.rotation3D = vec3(0, 0, l < 0 ? PI : 0); arrow.scale3D = vec3(.75);
+        arrow.emissive = .25;
+        const o = new EngineObject3D(vec3(), buildText3D(L.short, .45, .08), undefined, L.sign);
         o.emissive = .3;
         sceneMeshes.push(o.mesh);
-        objs.push(alongTrail(anchor(o, x + 2.2, y + ty, z + .1), x, z));
-    }
+        objs.push(alongTrail(anchor(arrow, x, ty, z + .1), x, z), alongTrail(anchor(o, x + 2.2, ty, z + .1), x, z));
+    });
     return objs;
 }
 
@@ -1534,6 +1661,7 @@ let mainHeld = false, mainT = 0, secondHeld = false, secondT = 0, jumpQueued = f
 let offGroundT = 0, jumpBuf = 0;
 // the eBike: tricks and orbs charge the battery, a full battery fires the turbo
 let battery = 0, turboT = 0, turboGrace = 0, turbos = 0, laneWant = 0, forkAhead = null, bermStage = 0, lines = 0;
+let proLines = 0, linesRidden = new Set, allLines = false;
 const TURBO_LEN = 6, TURBO_V = 14;
 const riderZ = ()=> ride ? brZ(ride, px) : 0;
 function charge(pts)
@@ -1594,9 +1722,10 @@ function stepGround(dt)
     if (turboT > 0 && !pace) a += 16;
     sp = clampV(sp + a*dt, state == 'ride' ? vFloor(px) : 0, VMAX + (turboT > 0 ? TURBO_V : boostT > 0 ? 4 : 0));
     braking = !!pace && sp > pace.v;
-    if (braking) sp = max(pace.v, sp - 12*dt);
-    // the run in to a canyon gap sets the speed that clears it: a slow rider pedals up to it
-    else if (pace?.hold && sp < pace.v) sp = min(pace.v, sp + 9*dt);
+    // the run in to a gap sets the speed that clears it, quickly, so even the last of it up the kicker brings the
+    // rider close: a fast one brakes, a slow one pedals up
+    if (braking) sp = max(pace.v, sp - (pace.hold ? 25 : 12)*dt);
+    else if (pace?.hold && sp < pace.v) sp = min(pace.v, sp + 20*dt);
     // the face of a drop or a chasm wall is never ridden: off its edge the bike flies, into it the bike crashes
     if (s < -2.5) { vx = sp; vy = 0; takeoff(); return; }
     if (s > 2.5) { crash('HIT THE EDGE'); return; }
@@ -1653,7 +1782,7 @@ function takeoff(kind)
     grounded = false; grinding = null;
     airT = 0; rot = 0; style = undefined; stylesDone = []; trickQueued = null;
     takeoffX = px; takeoffY = py;
-    const f = onBranch(px) ? null : feats.find(f=> px >= f.x0 - .5 && px <= f.x1 + 1.5);
+    const f = feats.find(f=> onLine(f, px) && px >= f.x0 - .5 && px <= f.x1 + 1.5);
     takeoffKind = kind || (f ? f.type : 'crest');
     takeoffFeat = f; sentIt = false; braking = false;
     // rolling off a lip or a crest the bike leaves pointing the way it is going
@@ -1717,8 +1846,8 @@ function stepAir(dt)
             return;
         }
     // down into a chasm
-    if (!onBranch(px)) for (const g of gaps)
-        if (px > g.x1 && px < g.x2 && py < g.landY - 1.2) { crash('FELL INTO THE CHASM'); return; }
+    for (const g of gaps)
+        if (px > g.x1 && px < g.x2 && py < g.landY - 1.2 && onLine(g, px)) { crash('FELL INTO THE CHASM'); return; }
     const gy = rideY(px);
     if (py <= gy) land(gy);
 }
@@ -1828,7 +1957,7 @@ function scoreAir(perfect)
         countTrick(t.name); ++tricksTotal;
     });
     if (flipName) addTrick(flipName, flipPts);
-    if (takeoffKind == 'gap' && airT > .3) addTrick('CHASM', 300);
+    if (takeoffKind == 'gap' && airT > .3) { addTrick('CHASM', 300); countTrick('CHASM'); }
     if (takeoffKind == 'canyon' && airT > .3 && px > takeoffFeat?.x2) { addTrick('CANYON GAP', 600); countTrick('CANYON GAP'); }
     if (takeoffKind == 'stepdown' && takeoffY - py > 3) { addTrick('STEP-DOWN', 200); countTrick('STEP-DOWN'); }
     if (takeoffFeat?.type == 'deck' && takeoffY - py > 4) { addTrick('DECK DROP ' + round(takeoffY - py) + 'm', round((takeoffY - py)*40/10)*10); countTrick('DECK DROP'); }
@@ -1941,7 +2070,7 @@ function crash(reason)
 {
     if (state != 'ride') return;
     state = 'crash'; crashT = 0; crashReason = reason;
-    window.__lastCrash = {reason, px: +px.toFixed(1), ride: ride ? ride.dir : 0, z: +riderZ().toFixed(1), turbo: +turboT.toFixed(2), tk: takeoffKind, tkx: +takeoffX.toFixed(1), rot: +(rot*57).toFixed(0), ang: +(ang*57).toFixed(0), slope: +(atan(rideSlope(px))*57).toFixed(0), airT: +airT.toFixed(2), sp: +sp.toFixed(1), vx: +vx.toFixed(1), vy: +vy.toFixed(1), style: style?.name, styleT: +styleT.toFixed(2), flightT: window.__flightT, grounded, frame};
+    window.__lastCrash = {reason, px: +px.toFixed(1), ride: ride ? ride.lane : 0, z: +riderZ().toFixed(1), turbo: +turboT.toFixed(2), tk: takeoffKind, tkx: +takeoffX.toFixed(1), rot: +(rot*57).toFixed(0), ang: +(ang*57).toFixed(0), slope: +(atan(rideSlope(px))*57).toFixed(0), airT: +airT.toFixed(2), sp: +sp.toFixed(1), vx: +vx.toFixed(1), vy: +vy.toFixed(1), style: style?.name, styleT: +styleT.toFixed(2), flightT: window.__flightT, grounded, frame};
     combo = comboPts = 0; comboNames = []; comboKeys = []; grinding = null; style = undefined; trickQueued = null;
     const r = ()=> Math.random() - .5;
     rag = {x: px, y: py + .9, vx: vx*.7, vy: max(vy, 0) + 3.5, rot: ang, av: 6 + r()*6, roll: 0, rv: r()*4};
@@ -2268,12 +2397,12 @@ function newRun(s)
     engineObjectsDestroy();
     resetScene();
     trackInit(s);
-    trackEnsure(START_X + 720);
+    trackEnsure(START_X + TRACK_AHEAD);
     state = 'title';
     placeRider(START_X);
     runTime = dist = score = orbsGot = orbStreak = 0;
     bestCombo = 0; bestComboName = ''; flipsTotal = 0; grindDist = 0; crashReason = ''; trickCounts = {}; tricksTotal = 0; airHist = [0, 0, 0, 0, 0, 0]; hardLandings = 0;
-    battery = 0; turboT = 0; turbos = 0; lines = 0; dayT = DAY_START; dropCam = 0; pz = yawV = leanV = bermY = 0; camZ = camB = 0;
+    battery = 0; turboT = 0; turbos = 0; lines = 0; proLines = 0; linesRidden = new Set; allLines = false; dayT = DAY_START; dropCam = 0; pz = yawV = leanV = bermY = 0; camZ = camB = 0;
     messages.length = 0; trickPops.length = 0; swipeFx.length = 0;
     riderView = new RiderView;
     new OrbView; new OrbGlow; new SkyExtras; new TurboGlow;
@@ -2372,7 +2501,7 @@ function gameUpdate()
         py = groundY(px); vx = vy = sp = 0;
     }
     updateVisuals(dt);
-    trackEnsure(px + 680);
+    trackEnsure(px + TRACK_AHEAD);
     if (frame % 60 == 0) trackPrune(px - 260);
     updateEffects(dt);
     audioUpdate(dt);
@@ -2489,7 +2618,7 @@ function gameUpdatePost()
     const fy = state == 'crash' || state == 'results' ? rag.y : grounded || grinding ? baseY : py;
     // a drop-in: from rolling onto the ledge until just after the landing the camera comes in close, low and
     // round in front of the rider, so the drop and the tricks off it fill the screen, then eases back out
-    const di = state == 'ride' || state == 'crash' ? feats.find(f=> (f.type == 'dropin' || f.type == 'canyon') && fx > (f.camX0 ?? f.x0) - 6 && fx < f.landX + 6) : null;
+    const di = state == 'ride' || state == 'crash' ? feats.find(f=> (f.type == 'dropin' || f.type == 'canyon') && fx > (f.camX0 ?? f.x0) - 6 && fx < f.landX + 6 && onLine(f, fx)) : null;
     dropCam += ((di ? 1 : 0) - dropCam)*damp(di ? 1.6 : 1.1, dt);
     // a canyon gap is framed wider, to see across it
     if (di) dropDist = di.camDist ?? DROP_VIEW.dist[o];
@@ -2736,10 +2865,11 @@ function updateFork(pxWas)
     {
         for (const s of splits)
         {
-            if (px > s.x0 - 60 && px < s.x0) forkAhead = s;
+            if (px > s.x0 - 80 && px < s.x0) forkAhead = s;
             if (pxWas < s.x0 && px >= s.x0)
             {
-                if (laneWant) { ride = laneWant > 0 ? s.up : s.down; bermStage = 0; sfx('berm'); }
+                const b = s.lines[laneWant];
+                if (b) { ride = b; bermStage = 0; sfx('berm'); }
                 laneWant = 0;
             }
         }
@@ -2751,8 +2881,12 @@ function updateFork(pxWas)
     if (bermStage == 2 && px > b.x1 - b.T*.25) { bermStage = 3; if (grounded) addTrick('BERM', 120); }
     if (px >= b.x1)
     {
-        addTrick(b.dir > 0 ? 'HIGH LINE' : 'LOW LINE', 300);
-        ++lines;
+        const L = LINES[b.kind];
+        addTrick(L.name, L.pts);
+        ++lines; if (b.kind == 'pro') ++proLines;
+        linesRidden.add(b.kind);
+        // every kind of line in one run
+        if (linesRidden.size == 3 && !allLines) { allLines = true; addTrick('ALL LINES', 1000); }
         ride = null;
     }
 }
@@ -2764,9 +2898,9 @@ function updateFeatures(dt, pxWas)
 {
     const took = groundedWas && !grounded && !grinding;
     groundedWas = grounded || !!grinding;
-    if (onBranch(px)) return;
     for (const f of feats)
     {
+        if (!onLine(f, px)) continue;
         if (!f.warned && FEAT_WORDS[f.type] && px > (f.camX0 ?? f.x0) - 2 - (f.type == 'canyon' ? 0 : 6))
         {
             f.warned = true;
@@ -2900,21 +3034,14 @@ addEventListener('pointermove', e=>
     const st = ptStart.get(e.pointerId);
     if (!st || state != 'ride') return;
     const id = e.pointerId, x = e.clientX, y = e.clientY;
-    // coming up to a fork, up or down picks the line, in the air as well as on the ground
-    const atFork = forkAhead && !ride, dx0 = x - st.x, dy0 = y - st.y;
-    if (atFork && !st.lane && abs(dy0) > 24 && abs(dy0) > abs(dx0)*1.1)
-    {
-        st.lane = true;
-        chooseLine(dy0 < 0 ? 1 : -1, id);
-        swipeFx.push({x0: st.x, y0: st.y, x1: x, y1: y, t: time, line: true});
-        flickHold(id);
-    }
+    // coming up to a block of lines, each flick up or down steps one line, in the air as well as on the ground
+    const atFork = forkAhead && !ride;
     const f = strokeMove(st, x, y, e.timeStamp);
     if (!f) return;
     swipeDone.add(id);
     if (atFork && abs(f.dy) > abs(f.dx)*1.1)
     {
-        // at a fork up and down belong to the line
+        // at a fork up and down belong to the lines
         chooseLine(f.dy < 0 ? 1 : -1, id);
         swipeFx.push({x0: f.x0, y0: f.y0, x1: x, y1: y, t: time, line: true});
     }
@@ -2924,11 +3051,14 @@ addEventListener('pointermove', e=>
     if (swipeP && id === swipeP.id && !(atFork && abs(f.dy) > abs(f.dx)*1.1)) { swipeP = null; mainP = id; pressMain(); }
     flickHold(id);
 });
+// one step up or down the lines the block ahead offers
 function chooseLine(dir, id)
 {
     if (id !== undefined) swipeDone.add(id);
-    if (laneWant != dir) sfx('click');
-    laneWant = dir;
+    if (!forkAhead) return;
+    const ls = offeredLanes(forkAhead), i = max(0, ls.indexOf(laneWant)), want = ls[clampV(i - dir, 0, ls.length - 1)];
+    if (want != laneWant) sfx('click');
+    laneWant = want;
 }
 const pointerUp = e=>
 {
@@ -3195,20 +3325,20 @@ function drawTurboButton(W, H, bottom)
     txt('TURBO', x, y + 22, 11, '#dffaff', 'center', 900);
     buttons.push({x: x - r - 6, y: y - r - 6, w: r*2 + 12, h: r*2 + 12, act: fireTurbo});
 }
-// a fork ahead: swipe up for the high line, down for the low line
+// coming up to a block of lines: a ladder of the lines it offers, top of the hill first, the one picked lit up
 function drawForkPrompt(W, H)
 {
-    const cx = W/2, cy = W > H ? H*.6 : H*.6, a = .8 + .2*sin(time*6);
-    const pill = (label, y, on, col)=>
-    {
-        const w = 150, h = 34;
-        rrect(cx - w/2, y - h/2, w, h, 17, on ? col : 'rgba(12,18,30,.55)', on ? 'rgba(255,255,255,.9)' : 'rgba(255,255,255,.45)');
-        txt(label, cx, y + 1, 15, on ? '#10141c' : '#fff', 'center', 900);
-    };
+    const s = forkAhead, ls = offeredLanes(s), a = .82 + .18*sin(time*6), cx = W/2, h = 32, step = 39;
+    const w = min(W - 30, 280), cy = H*.6 - (ls.length - 1)*step/2;
     ctx.globalAlpha = a;
-    pill('▲  HIGH LINE', cy - 30, laneWant > 0, 'rgba(255,214,70,.95)');
-    pill('▼  LOW LINE', cy + 30, laneWant < 0, 'rgba(90,230,215,.95)');
-    if (!laneWant) txt('SWIPE', cx, cy, 13, 'rgba(255,255,255,.9)', 'center', 900);
+    txt('SWIPE UP OR DOWN', cx, cy - step*.85, 12, 'rgba(255,255,255,.9)', 'center', 900);
+    ls.forEach((l, i)=>
+    {
+        const b = s.lines[l], L = b && LINES[b.kind], on = laneWant == l, y = cy + i*step;
+        const label = (l > 0 ? '▲ ' : l < 0 ? '▼ ' : '') + (L ? L.short + (b.what ? '  ·  ' + b.what : '') + '  +' + L.pts : 'MAIN TRAIL');
+        rrect(cx - w/2, y - h/2, w, h, 16, on ? (L ? L.color : 'rgba(255,255,255,.92)') : 'rgba(12,18,30,.55)', on ? 'rgba(255,255,255,.9)' : 'rgba(255,255,255,.4)');
+        txt(label, cx, y + 1, fitSize(label, 14, w - 24), on ? '#10141c' : '#fff', 'center', 900);
+    });
     ctx.globalAlpha = 1;
 }
 
@@ -3247,7 +3377,7 @@ function drawTitle(W, H, top, bottom)
         ['HOLD IN THE AIR', 'backflip'],
         ['SECOND FINGER', 'hold: front flip  ·  tap: style trick'],
         ['SWIPE IN THE AIR', 'eight tricks · flick while you hold a flip'],
-        ['SWIPE UP OR DOWN AT A FORK', 'berm off onto the high or low line'],
+        ['SWIPE UP OR DOWN AT A SPLIT', 'pick the pro, high, main or low line'],
         ['FILL THE BATTERY', 'tap the bolt for eBike turbo'],
         ['LAND SQUARE TO THE SLOPE', 'chain tricks for a combo and a boost'],
         ['TAP AT A DROP-IN LIP', 'send it: a bigger pop off the big drops']];
@@ -3274,13 +3404,13 @@ function camButtons(W, top, bw, bh)
 
 function drawResults(W, H)
 {
-    const cw = min(W - 28, 360), ch = min(H - 20, 374), cx = (W - cw)/2, cy = H*.5 - ch/2;
+    const cw = min(W - 28, 360), ch = min(H - 20, 398), cx = (W - cw)/2, cy = H*.5 - ch/2;
     ctx.fillStyle = 'rgba(8,14,28,.4)'; ctx.fillRect(0, 0, W, H);
     rrect(cx, cy, cw, ch, 18, 'rgba(12,18,30,.88)', 'rgba(255,210,70,.55)');
     txt(crashReason || 'WIPEOUT', W/2, cy + 32, fitSize(crashReason || 'WIPEOUT', 22, cw - 30), '#ff8a6a', 'center', 900);
     txt(floor(dist).toLocaleString() + ' m', W/2, cy + 80, 44, '#fff', 'center', 900);
     txt(score.toLocaleString() + ' points', W/2, cy + 116, 18, '#ffd23a', 'center', 800);
-    const rows = [['Orbs', orbsGot], ['Flips', flipsTotal], ['Tricks', tricksTotal], ['Lines taken', lines], ['Best combo', bestCombo]];
+    const rows = [['Orbs', orbsGot], ['Flips', flipsTotal], ['Tricks', tricksTotal], ['Lines taken', lines], ['Pro lines', proLines], ['Best combo', bestCombo]];
     let y = cy + 152;
     for (const [a, b] of rows)
     {
@@ -3475,17 +3605,20 @@ function autopilotInput()
     {
         mainHeld = false;
         const lead = sp*.5 + .6;
-        for (const r of rocks) if (!r.jumped && r.x > px && r.x - px < lead && r.x - px > 1.5) { jumpQueued = true; r.jumped = true; }
+        // rocks lie on the main trail only
+        if (!onBranch(px)) for (const r of rocks) if (!r.jumped && r.x > px && r.x - px < lead && r.x - px > 1.5) { jumpQueued = true; r.jumped = true; }
         if (!onBranch(px)) for (const r of rails) if (!r.mount && r.x0 > px && r.x0 - px < sp*.25 + 1) jumpQueued = true;
         // half the time it pops off the lip of a drop-in
-        const di = feats.find(f=> f.type == 'dropin' && px > f.x1 - 2.5 && px < f.x1);
+        const di = feats.find(f=> f.type == 'dropin' && px > f.x1 - 2.5 && px < f.x1 && onLine(f, px));
         if (di && !di.ap) { di.ap = true; if (Math.random() < .5) jumpQueued = true; }
         // picks a line at each fork, and fires the turbo when it can
         if (forkAhead && !ride && !forkAhead.picked)
         {
             forkAhead.picked = true;
-            const p = window.__lanePilot || 'rand';
-            laneWant = p == 'up' ? 1 : p == 'down' ? -1 : p == 'main' ? 0 : [1, -1, 0][Math.random()*3 | 0];
+            const p = window.__lanePilot || 'rand', ls = offeredLanes(forkAhead);
+            // 'none' leaves the choice to whatever else is pressing
+            if (p != 'none') laneWant = p == 'pro' ? (forkAhead.lines[2] ? 2 : ls[0]) : p == 'high' ? (forkAhead.lines[1] ? 1 : 0) : p == 'up' ? ls[0] :
+                p == 'down' ? ls[ls.length - 1] : p == 'main' ? 0 : ls[Math.random()*ls.length | 0];
         }
         if (window.__turboPilot && battery >= 1) fireTurbo();
         return;
@@ -3539,8 +3672,9 @@ function gameRenderPost() { drawHUD(); }
 window.__mtb = {
     info: ()=> ({state, frame, px, py, vx, vy, sp, grounded, grinding: !!grinding, ang, rot, airT, dist, score, orbsGot, flipsTotal,
         combo, comboPts, bestCombo, crashReason, runTime, fps: averageFPS, objects: engineObjects.length, chunks: chunks.size,
-        OX, OY, night, dayT, boostT, grindDist, seed, ride: ride ? ride.dir : 0, riderZ: riderZ(), battery, turboT, turbos, lines,
-        forkAhead: !!forkAhead, laneWant, view: camViewName(), zoom: camZoomName(), splits: splits.map(s=> [s.x0|0, s.x1|0]),
+        OX, OY, night, dayT, boostT, grindDist, seed, ride: ride ? ride.lane : 0, riderZ: riderZ(), battery, turboT, turbos, lines, proLines,
+        forkAhead: !!forkAhead, laneWant, view: camViewName(), zoom: camZoomName(), splits: splits.map(s=> [s.x0|0, s.x1|0, s.kinds.join('+')]),
+        lineDetail: splits.map(s=> Object.values(s.lines).map(b=> b.kind + ':' + (b.what || 'plain')).join(' ')),
         dropCam, braking, sentIt, drops: feats.filter(f=> f.type == 'dropin').map(f=> [f.x0|0, f.x1|0, f.landX|0, +f.F.toFixed(1)]),
         trickCounts, tricksTotal, style: style?.name, styleT, airHist, hardLandings, queued: trickQueued, swipeCount, mainHeld, secondHeld}),
     start: ()=> startRide(),
@@ -3551,7 +3685,7 @@ window.__mtb = {
     press2: ()=> pressSecond(), release2: ()=> releaseSecond(),
     swipe: dir=> airSwipe(dir),
     ground: x=> rideY(x), state: ()=> ({px, py, vx, vy, airT, grounded}),
-    teleport: x=> { trackEnsure(x + 720); placeRider(x); state = 'ride'; sp = 16; },
+    teleport: x=> { trackEnsure(x + TRACK_AHEAD); placeRider(x); state = 'ride'; sp = 16; },
     setDay: t=> dayT = t,
     feats: ()=> feats.map(f=> ({type: f.type, x0: f.x0, x1: f.x1, x2: f.x2, carved: f.carved, apexes: f.apexes?.length, line: f.line?.kind})),
     newRun: s=> newRun(s),

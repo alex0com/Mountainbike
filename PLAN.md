@@ -245,7 +245,48 @@ Each phase is a separate commit (or a few), tested with the Phase 0 harness befo
     - Touch-control tests (forks, flick while holding) still pass.
     - `sim.mjs --salt n` makes the autopilot's random choices repeatable, so a rare crash can be replayed.
 
+- **Phase 3: done.**
+  - Berm turns: three or four turns as one smooth wave (±6.5–10 m over 62–78 m per wave), banked on the outside.
+  - A grounded carve through each turn (or a hop of under 0.3 s) scores BERM with a small speed pump. Carving all of them scores BERM RUN.
+  - About one run of turns per km after 250 m.
+- **Phase 4: done.**
+  - **Line blocks:**
+    - Every 40–100 m of main-trail-only riding, a block of 210–300 m opens.
+    - It offers MAIN plus 1–3 of: **PRO** (z −20, from 500 m), **HIGH** (z −10), **LOW** (z +9).
+    - About 70% of the trail is in a block.
+  - **Line features:** a line is the main trail smoothed, plus an offset that starts and ends at 0. Flatter stretches raise the offset; drops and steep landings lower it. A final stretch brings it back, never uphill, using the downhill each metre has to spare.
+
+    | Line | Features | Points |
+    |---|---|---|
+    | PRO | Slow ridge traverse onto a ledge (pace about 7 m/s), drop-in of 5–20 m, steep landing (grade set from the local fall) | 600 |
+    | HIGH | Rollers, a steady 14–16 m/s, a kicker off a 3–5 m step-down | 300 |
+    | LOW | Steep chute (grade .6), speed set to 15–17 m/s, kicker over a chasm sized to clear rolling | 300 |
+
+    Riding all three kinds in a run scores ALL LINES +1000. If a line's features don't fit, they shrink, down to a plain line. About 96% of lines get theirs.
+  - **Line-aware physics:** features, pace zones and chasms belong to a line and only apply while the rider is on it. That covers takeoff scoring, chasm crashes, the drop-in camera, warnings and the autopilot's lip pops.
+  - **Ground:** seven more rows on the hillside around z −20, so the PRO line is cut into the ridge (about 21% more ground vertices). A worst-case frame (building a chunk) is about 7% slower. Lines' gaps are carved as slots, their drops as faces.
+  - **Choosing:**
+    - Within 80 m of a block, each flick up or down steps one line, skipping lines not offered. It works in the air too. Keyboard Up/Down do the same.
+    - The old drag-from-touch-start lane rule was removed, because together with the flick it stepped twice.
+    - A ladder HUD shows each offered line with what's on it and its points; the chosen one is lit.
+    - The signpost shows an arrow and name per line.
+  - **Results card:** adds "Pro lines".
+  - **Changes from the plan:**
+    - Drop-ins stay off the main trail inside a block, because a drop-in's face came through the smoothed lines beside it. Big kickers and the other set pieces do appear inside blocks.
+    - The track is now laid out 950 m ahead (was 680), so a block's lines exist before its ground is built.
+  - **Bugs found and fixed in testing:**
+    - Line layouts failed where the main trail was flat or had a cliff.
+    - A line's kicker followed a steep path and didn't rise.
+    - The autopilot hopped main-trail rocks while on a line.
+    - The run-in to a gap now sets the speed faster (25 m/s² down, 20 up).
+  - **Testing:**
+    - Each lane forced (pro, high, low, main, random), about 48 km each: 0 crashes. 61 LOW-line chasms cleared.
+    - Full regression (flips + tricks both ways, turbo, all-up, turbo all-down; 500 km): 0 crashes.
+    - Fork test with real pointer events: each result matches the lines on offer.
+
 ## Running the tools
 
     node tools/sim.mjs [--seeds 20] [--km 5] [--flips back|front] [--tricks] [--lanes rand|up|down|main] [--turbo] [--json out.json] [--salt n] [--game other.html]
-    node tools/shot.mjs --seed 3 --at 800 --view SIDE --zoom 1 --day .3 --out shot.png [--size 390x844] [--js "code"]
+    node tools/shot.mjs --seed 3 --at 800 --view SIDE --zoom 1 --day .3 --out shot.png [--size 390x844] [--js "code"] [--game other.html]
+
+`--lanes` takes rand, up, down, main, pro, high or none.

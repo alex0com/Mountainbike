@@ -1,6 +1,6 @@
 // Screenshots of the game at chosen moments, for checking how things look.
 //
-//   node tools/shot.mjs --seed 3 --at 800 --view SIDE --zoom 1 --day .3 --out shot.png [--frames 40] [--js "code"]
+//   node tools/shot.mjs --seed 3 --at 800 --view SIDE --zoom 1 --day .3 --out shot.png [--frames 40] [--js "code"] [--game other.html]
 // --at teleports the rider to that distance down the track and rides on for --frames frames before the shot;
 // --js runs in the page after that, then a few more frames are rendered (for example to start a trick).
 import {createRequire} from 'node:module';
@@ -15,7 +15,8 @@ catch { playwright = require(path.join(execSync('npm root -g').toString().trim()
 
 const args = process.argv.slice(2), opt = (k, d)=> { const i = args.indexOf('--' + k); return i < 0 ? d : args[i + 1]; };
 const here = path.dirname(fileURLToPath(import.meta.url));
-const game = pathToFileURL(path.join(here, '..', 'Downhill MTB 3D.html')).href;
+// --game shoots another copy of the page
+const game = pathToFileURL(opt('game') || path.join(here, '..', 'Downhill MTB 3D.html')).href;
 const [w, h] = (opt('size', '900x600')).split('x').map(Number);
 
 const browser = await playwright.chromium.launch({args: ['--use-gl=swiftshader', '--enable-unsafe-swiftshader', '--mute-audio']});

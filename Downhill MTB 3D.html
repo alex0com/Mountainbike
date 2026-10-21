@@ -156,8 +156,9 @@ let NW, bends = [];
 function weaveZ(x)
 {
     let z = MT.weave*(22*NW(x*.006, 1.7) + 7*NW(x*.018, 4.1))*sstep((x - 70)/150);
-    // a bend swings the trail out and back round, straight again at its end
-    for (const b of bends) if (x > b.x0 && x < b.x1) z += b.A*sin(PI*(x - b.x0)/(b.x1 - b.x0))**2;
+    // a bend swings the trail out and back round, straight again at its end; a run of turns snakes left and right
+    for (const b of bends) if (x > b.x0 && x < b.x1)
+        z += b.lam ? b.A*sin(TAU*(x - b.x0)/b.lam)*sstep((x - b.x0)/(b.lam*.4))*sstep((b.x1 - x)/(b.lam*.4)) : b.A*sin(PI*(x - b.x0)/(b.x1 - b.x0))**2;
     return z;
 }
 const weaveK = zr=> zr >= 0 ? 1/(1 + max(0, zr - 6)/25) : 1/(1 + max(0, -zr - 14)/40);
@@ -366,6 +367,20 @@ function addDropIn(d)
     addRun(24, gradeTarget(d), 0);
     return f;
 }
+// berm turns: the trail snakes left and right across the mountain, each turn banked up on its outside
+function addBermTurns(d)
+{
+    const n = 3 + (rnd() < .5 ? 1 : 0), lam = 62 + rnd()*16, x0 = genX() + 6, A = (rnd() < .5 ? -1 : 1)*(6.5 + rnd()*2 + d*1.5);
+    // n turns, half a wave each, with a little straight run in and out
+    const x1 = x0 + lam*(n + 1)/2;
+    bends.push({x0, x1, A, lam});
+    const f = {type: 'berms', x0, x1, apexes: [], carved: 0};
+    for (let k = 0; k < n; ++k) f.apexes.push(x0 + lam*(k + 1)/2);
+    feats.push(f);
+    addRun(x1 - genX() + 4, gradeTarget(d), 0);
+    return f;
+}
+
 // a step-down: a small kicker off a ledge onto a landing a few metres lower, no chasm between
 const addStepDown = d=> addJump(1 + rnd()*.4, 4.5 + rnd(), .5 + rnd()*.1, 'stepdown', 14, 3 + rnd()*3 + d*2);
 
@@ -716,6 +731,7 @@ function genSection()
         nextDropX = genX() + 550 + rnd()*350;
         nextBooterX = max(nextBooterX, genX() + 100);
     }
+    else if (x > 250 && rnd() < .18) addBermTurns(d);
     else if (x > nextBooterX && !openSplit)
     {
         const reach = launchReach(lastLaunch);
@@ -2654,7 +2670,7 @@ function updateEffects(dt)
     const snowy = surfNow == S_SNOW, bw = biomeW(camX, {});
     let rate = 0;
     // a berm throws up a big spray as the back wheel slides round
-    const inBerm = ride && px > ride.x0 && px < ride.x1 && (px < ride.x0 + ride.T || px > ride.x1 - ride.T);
+    const inBerm = ride && px > ride.x0 && px < ride.x1 && (px < ride.x0 + ride.T || px > ride.x1 - ride.T) || !ride && abs(bankAt(px)) > .15;
     if (riding && grounded)
         rate = (snowy ? 3.2 : 2)*sp + (landVis ? abs(landVis)*120 : 0) + (inBerm ? abs(leanV)*260 : 0) + (turboT > 0 ? 40 : 0) + (braking ? 160 : 0);
     dust.emitRate = min(rate, 320);
@@ -2770,6 +2786,17 @@ function updateFeatures(dt, pxWas)
             if (!f.done && px > f.x1) { f.done = true; if (f.on > .4) addTrick('BRIDGE', 100); }
         }
         if (f.type == 'dropin' && !f.braked && px > f.x0) { f.braked = true; if (sp > f.v + 2) sfx('berm'); }
+        if (f.type == 'berms')
+        {
+            // carved on the ground through each turn, or only just off it over a bump: points and a pump of speed out of it
+            for (const a of f.apexes) if (pxWas < a && px >= a && (grounded || offGroundT < .3))
+            {
+                ++f.carved;
+                addTrick('BERM', 120);
+                boostT = max(boostT, .45);
+            }
+            if (!f.done && px > f.x1) { f.done = true; if (f.carved == f.apexes.length) { addTrick('BERM RUN x' + f.carved, 100*f.carved); countTrick('BERM RUN'); } }
+        }
         if (f.type == 'stairs')
         {
             if (took && px > f.x0 && px < f.x1 + 1) ++f.airs;
@@ -3526,7 +3553,7 @@ window.__mtb = {
     ground: x=> rideY(x), state: ()=> ({px, py, vx, vy, airT, grounded}),
     teleport: x=> { trackEnsure(x + 720); placeRider(x); state = 'ride'; sp = 16; },
     setDay: t=> dayT = t,
-    feats: ()=> feats.map(f=> ({type: f.type, x0: f.x0, x1: f.x1, x2: f.x2})),
+    feats: ()=> feats.map(f=> ({type: f.type, x0: f.x0, x1: f.x1, x2: f.x2, carved: f.carved, apexes: f.apexes?.length, line: f.line?.kind})),
     newRun: s=> newRun(s),
     camTune: (view, o)=> Object.assign(CAM_VIEWS[view], o),
     cam: (view, zoom=1)=> { camView.p = camView.l = view; camView.zp = camView.zl = zoom; },

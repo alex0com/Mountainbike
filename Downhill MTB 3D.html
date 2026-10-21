@@ -1964,13 +1964,13 @@ function charge(pts)
 {
     if (turboT > 0 || state != 'ride') return;
     const was = battery;
-    battery = min(1, battery + min(pts, 2000)/16000);
+    battery = min(1, battery + min(pts, 2000)/16000*bike.charge);
     if (was < 1 && battery >= 1) { showMessage('TURBO READY', 'tap the bolt to boost', hsl(.5,1,.62)); sfx('ready'); }
 }
 function fireTurbo()
 {
     if (battery < 1 || turboT > 0 || state != 'ride') return;
-    turboT = TURBO_LEN; superOn = false; ++turbos;
+    turboT = TURBO_LEN*bike.turbo; superOn = false; ++turbos;
     sfx('turbo');
     showMessage('TURBO!', '', hsl(.5,1,.62));
     camShake = max(camShake, .4);
@@ -2022,7 +2022,7 @@ function stepGround(dt)
     // never slower than a cruise, unless the brakes are on: then nearly to a stop, and a slow bike gets going again
     // over a second or so rather than all at once
     const lo = state != 'ride' ? 0 : brakeOn() ? 3 : min(vFloor(px), max(3, sp) + 9*dt);
-    sp = clampV(sp + a*dt, lo, VMAX + (turboT > 0 ? TURBO_V : legT > 0 ? 6 : boostT > 0 ? 4 : 0));
+    sp = clampV(sp + a*dt, lo, VMAX + bike.speed + (turboT > 0 ? TURBO_V : legT > 0 ? 6 : boostT > 0 ? 4 : 0));
     if (brakeOn()) { sp = max(3, sp - 24*dt); slideT += dt; }
     braking = !!pace && sp > pace.v;
     // the run in to a gap sets the speed that clears it, quickly, so even the last of it up the kicker brings the
@@ -2065,8 +2065,9 @@ function jumpNow()
     if (grinding) endGrind(true);
     if (!grounded && !grinding) sp = max(vFloor(px), vx*cos(th) + vy*sin(th));
     jumpBuf = 0; offGroundT = 1;
-    vx = sp*cos(th) - sin(th)*POP*.5;
-    vy = sp*sin(th) + cos(th)*POP*.5 + POP*.5;
+    const pop = POP*bike.pop;
+    vx = sp*cos(th) - sin(th)*pop*.5;
+    vy = sp*sin(th) + cos(th)*pop*.5 + pop*.5;
     py += .05;
     suspFV -= 1.3; suspRV -= 1.3;
     takeoff('jump');
@@ -2109,7 +2110,7 @@ function airControl(dt)
 {
     // a press in the air waits a moment before it flips, in case it is a swipe
     const back = mainHeld && mainT > (pressInAir ? .09 : .14), front = secondHeld && secondT > .12;
-    const target = front ? -6.9 : back ? 6.6 : 0;
+    const target = (front ? -6.9 : back ? 6.6 : 0)*bike.flip;
     if (target) angVel += (target - angVel)*damp(10, dt);
     else
     {
@@ -2148,7 +2149,7 @@ function stepAir(dt)
     const v = hypot(vx, vy), k = .0018*v*dt;
     vx -= vx*k; vy -= vy*k;
     // the motor only drives the wheels: turbo speed bleeds away in the air, so a flight carries no farther than the trail allows for
-    const cap = superFlight ? SEND_V + 2 : VMAX + 3;
+    const cap = superFlight ? SEND_V + 2 : VMAX + 3 + bike.speed;
     if (vx > cap) vx += (cap - vx)*damp(4, dt);
     const ox = px, oy = py;
     px += vx*dt; py += vy*dt;
@@ -2177,7 +2178,7 @@ function land(gy)
     // the far wall of a gap or the face of a step: arriving from the side, well below the surface
     if (abs(s) > 2.5 || gy - py > .5) { crash('HIT THE EDGE'); return; }
     const err = wrapPI(ang - th), nX = -sin(th), nY = cos(th), impact = -(vx*nX + vy*nY);
-    if (abs(err) > .8) { crash(abs(err) > 2 ? 'LANDED ON YOUR HEAD' : 'BAD LANDING'); return; }
+    if (abs(err) > min(1, .8*bike.land)) { crash(abs(err) > 2 ? 'LANDED ON YOUR HEAD' : 'BAD LANDING'); return; }
     if (!finishTrick()) return;
     const perfect = abs(err) < .22;
     maxAir = max(maxAir, airT);
@@ -2187,7 +2188,7 @@ function land(gy)
     if (f?.x2 && (f.type == 'kicker' || f.type == 'booter' || f.type == 'stepdown') && airT > .25 && px - f.x1 < 4) { ++cased; showMessage('CASED IT!', '', hsl(.07,.9,.6)); }
     sp = vx*cos(th) + vy*sin(th);
     // the end of a super send is stomped, however hard it comes down: the landing is built for it
-    const hard = impact > 22 && !superFlight;
+    const hard = impact > 22*bike.land && !superFlight;
     sp = max(vFloor(px), sp*(perfect ? 1 : 1 - abs(err)*.3)*(hard ? .8 : 1));
     if (hard) { showMessage('HARD LANDING', '', hsl(.07,.9,.6)); ++hardLandings; }
     if (superFlight) { dustBurst(px, py, 160); camShake = max(camShake, .8); }
@@ -2331,11 +2332,11 @@ function stepGrind(dt)
     {
         // a deck rolls like the ground, and brakes down to a roll before its end
         const pace = paceAt(px);
-        sp = clampV(sp + (-G_RIDE*sn - DRAG*sp*sp - CRR*G_RIDE + (turboT > 0 && !pace ? 12 : 0))*dt, vFloor(px), VMAX + (turboT > 0 ? TURBO_V : 0));
+        sp = clampV(sp + (-G_RIDE*sn - DRAG*sp*sp - CRR*G_RIDE + (turboT > 0 && !pace ? 12 : 0))*dt, vFloor(px), VMAX + bike.speed + (turboT > 0 ? TURBO_V : 0));
         braking = !!pace && sp > pace.v;
         if (braking) sp = max(pace.v, sp - 12*dt);
     }
-    else sp = clampV(sp + (-G_RIDE*sn - DRAG*sp*sp - .25 + (turboT > 0 ? 12 : 0))*dt, VMIN*.85, VMAX + (turboT > 0 ? TURBO_V : 0));
+    else sp = clampV(sp + (-G_RIDE*sn - DRAG*sp*sp - .25 + (turboT > 0 ? 12 : 0))*dt, VMIN*.85, VMAX + bike.speed + (turboT > 0 ? TURBO_V : 0));
     px += sp*c*dt; py = railY(r, px);
     surfNow = S_WOOD;
     if (px >= r.x1)
@@ -2629,6 +2630,49 @@ const PAL = {
     helmet: hsl(0,0,.95), helmet2: hsl(.995,.82,.5), lens: hsl(.06,1,.55), lens2: hsl(.13,1,.6),
     battery: hsl(.6,.08,.16), motor: hsl(.6,.05,.22)};
 
+// the kits to ride in, each a set of the colours above over the plain black and red one, which is the last
+const PAL_BASE = {...PAL};
+const KITS = [
+    ['ELECTRIC CITRUS', {jersey: hsl(.15,1,.55), jersey2: hsl(.52,1,.5), white: hsl(0,0,.1), pants: hsl(0,0,.14), pad: hsl(.52,1,.45), glove: hsl(.52,1,.5),
+        helmet: hsl(.15,1,.55), helmet2: hsl(.52,1,.45), pack: hsl(0,0,.12), frame: hsl(0,0,.12), decal: hsl(.15,1,.55), spring: hsl(.15,1,.55)}],
+    ['RETRO POP', {jersey: hsl(.92,.9,.6), jersey2: hsl(.48,.85,.5), white: hsl(.15,1,.6), pants: hsl(.75,.55,.38), pad: hsl(.48,.85,.45), glove: hsl(.48,.85,.5),
+        helmet: hsl(0,0,.96), helmet2: hsl(.92,.9,.6), pack: hsl(.75,.5,.3), frame: hsl(.48,.85,.45), decal: hsl(.92,.9,.65), spring: hsl(.92,.9,.6)}],
+    ['CLOWN PAJAMAS', {jersey: hsl(.25,1,.5), jersey2: hsl(.86,1,.55), white: hsl(.08,1,.55), pants: hsl(.72,.7,.45), pad: hsl(.08,1,.55), glove: hsl(.08,1,.55),
+        helmet: hsl(.14,1,.55), helmet2: hsl(.86,1,.55), pack: hsl(.52,1,.45), frame: hsl(.86,1,.5), decal: hsl(.25,1,.55), spring: hsl(.14,1,.55)}],
+    ['FIRE', {jersey: hsl(.07,1,.55), jersey2: hsl(0,.85,.5), white: hsl(0,0,.96), pants: hsl(.62,.5,.25), pad: hsl(.07,1,.5), glove: hsl(0,.85,.5),
+        helmet: hsl(.07,1,.55), helmet2: hsl(0,0,.96), pack: hsl(.62,.4,.2), frame: hsl(0,0,.95), decal: hsl(.07,1,.55), spring: hsl(.07,1,.55)}],
+    ['ICE LIME', {jersey: hsl(0,0,.96), jersey2: hsl(.24,1,.5), white: hsl(.55,.8,.6), pants: hsl(.58,.15,.75), pad: hsl(.24,1,.45), glove: hsl(.24,1,.5),
+        helmet: hsl(0,0,.12), helmet2: hsl(.24,1,.5), pack: hsl(.55,.3,.35), frame: hsl(.24,1,.45), decal: hsl(0,0,.1), spring: hsl(.24,1,.5)}],
+    ['STEALTH', {}]];
+// the bikes, each riding its own way: top speed (m/s over the usual), pop off the ground, how fast it flips, how
+// forgiving its landings are, and how long its turbo lasts and how fast it charges; and how it is built
+const BIKES = [
+    {name: 'ALL-ROUNDER', about: 'the race bike: a bit of everything', speed: 0, pop: 1, flip: 1, land: 1, turbo: 1, charge: 1,
+        crowns: 2, shock: 'coil', brace: true, tube: 1, batt: .15, motor: .25},
+    {name: 'DH SLED', about: 'long and heavy: fastest, forgiving landings, slow to flip', speed: 1.2, pop: .9, flip: .85, land: 1.25, turbo: 1, charge: 1,
+        crowns: 2, shock: 'coil', brace: true, tube: 1.25, batt: .16, motor: .27, skid: true},
+    {name: 'DIRT JUMPER', about: 'a hardtail: big pop and quick flips, harsh landings, slower', speed: -1.5, pop: 1.15, flip: 1.22, land: .8, turbo: .8, charge: 1.1,
+        crowns: 1, shock: null, brace: false, tube: .75, batt: .1, motor: .2, seatDrop: .12},
+    {name: 'E-BEAST', about: 'a huge battery: charges fast, long turbos, heavy in the air', speed: .5, pop: .95, flip: .9, land: 1.1, turbo: 1.6, charge: 1.5,
+        crowns: 1, shock: 'air', brace: false, tube: 1.1, batt: .21, motor: .33}];
+let kitI = 0, bikeI = 0, bike = BIKES[0];
+function setKit(i)
+{
+    kitI = (i + KITS.length) % KITS.length;
+    Object.assign(PAL, PAL_BASE, KITS[kitI][1]);
+    try { localStorage.setItem('bcr.kit', kitI); } catch(e) {}
+}
+function setBike(i)
+{
+    bikeI = (i + BIKES.length) % BIKES.length; bike = BIKES[bikeI];
+    try { localStorage.setItem('bcr.bike', bikeI); } catch(e) {}
+}
+{
+    let k = 0, b = 0;
+    try { k = +(localStorage.getItem('bcr.kit') ?? 0) || 0; b = +(localStorage.getItem('bcr.bike') ?? 0) || 0; } catch(e) {}
+    setKit(k); setBike(b);
+}
+
 function buildRiderMeshes()
 {
     meshTube = buildCylinder(1, 1, 8, true);
@@ -2736,7 +2780,7 @@ function drawBike(M, cF, cR, wheelSpin, crankA, whip=0, barA=0, offF=0, offR=0, 
     // frame points drop with the suspension, the axles stay on the ground
     const sag = (p)=> vec3(p.x, p.y - mix(cR, cF, clamp01((.62 - p.z)/1.26)), p.z);
     const bb = sag(vec3(0, .34, .05)), headTop = sag(vec3(0, 1.0, -.41)), headBot = sag(vec3(0, .8, -.46));
-    const seatTop = sag(vec3(0, .93, .17)), stayTop = sag(vec3(0, .8, .13)), ttRear = sag(vec3(0, .86, .14));
+    const seatTop = sag(vec3(0, .93 - (bike.seatDrop || 0), .17)), stayTop = sag(vec3(0, .8, .13)), ttRear = sag(vec3(0, .86, .14));
     // the axles ride up and down over the bumps, the fork and the swingarm with them
     const rA = AXLE_R.add(vec3(0, offR/RS, 0)), fA = AXLE_F.add(vec3(0, offF/RS, 0));
     // wheels
@@ -2751,12 +2795,14 @@ function drawBike(M, cF, cR, wheelSpin, crankA, whip=0, barA=0, offF=0, offR=0, 
         ball(axle, .09, PAL.silver);
     }
     MC = G?.frame ?? MF;
-    // main frame, chunky downhill tubes
-    tube(bb, headBot, .085, PAL.frame);
-    tube(ttRear, headTop.add(vec3(0, -.05, .02)), .06, PAL.frame);
-    tube(bb, seatTop, .055, PAL.frame);
+    // main frame, chunky downhill tubes (thinner on a dirt jumper, fatter on the sled)
+    const tk = bike.tube;
+    tube(bb, headBot, .085*tk, PAL.frame);
+    tube(ttRear, headTop.add(vec3(0, -.05, .02)), .06*tk, PAL.frame);
+    tube(bb, seatTop, .055*tk, PAL.frame);
     // the brace from the top tube down to the down tube, and a decal along the top tube
-    tube(headTop.lerp(ttRear, .45), bb.lerp(headBot, .56), .05, PAL.frame);
+    if (bike.brace) tube(headTop.lerp(ttRear, .45), bb.lerp(headBot, .56), .05*tk, PAL.frame);
+    if (bike.skid) box(bb.add(vec3(0, -.13, -.06)), vec3(.1, .03, .22), PAL.black);
     for (const x of [-.033, .033]) tube(ttRear.lerp(headTop, .3).add(vec3(x, -.005, 0)), ttRear.lerp(headTop, .72).add(vec3(x, -.025, 0)), .016, PAL.decal);
     tube(headBot.add(vec3(0, -.05, -.02)), headTop.add(vec3(0, .03, .01)), .075, PAL.frameDark);
     for (const x of [-.055, .055])
@@ -2766,16 +2812,23 @@ function drawBike(M, cF, cR, wheelSpin, crankA, whip=0, barA=0, offF=0, offR=0, 
     }
     // eBike: a battery along the down tube, the motor round the cranks, a display on the bars
     const bA = bb.lerp(headBot, .16), bB = bb.lerp(headBot, .8);
-    tube(bA, bB, .15, PAL.frame);
+    tube(bA, bB, bike.batt, PAL.frame);
     const lit = turboT > 0 ? hsl(.5, 1, .6 + .15*sin(time*40)) : battery >= 1 ? hsl(.5, 1, .55 + .15*sin(time*8)) : hsl(.5, .8, .18 + battery*.3);
-    for (const x of [-.072, .072]) tube(bA.lerp(bB, .1).add(vec3(x, .005, 0)), bA.lerp(bB, .1 + .8*max(.06, battery)).add(vec3(x, .005, 0)), .028, lit);
-    ball(bb.add(vec3(0, -.01, .03)), .25, PAL.motor);
-    // rear shock with its coil
+    for (const x of [-1, 1]) tube(bA.lerp(bB, .1).add(vec3(x*(bike.batt/2 - .003), .005, 0)), bA.lerp(bB, .1 + .8*max(.06, battery)).add(vec3(x*(bike.batt/2 - .003), .005, 0)), .028, lit);
+    ball(bb.add(vec3(0, -.01, .03)), bike.motor, PAL.motor);
+    // rear shock: a coil with its piggyback reservoir, or an air can; none on a hardtail
     const shA = sag(vec3(0, .5, -.1)), shB = stayTop.add(vec3(0, -.02, -.04));
-    tube(shA, shB, .045, PAL.frameDark);
-    tube(shA.lerp(shB, .2), shA.lerp(shB, .75), .085, PAL.spring);
-    // its piggyback reservoir
-    tube(shA.lerp(shB, .55).add(vec3(.055, 0, .02)), shA.lerp(shB, .95).add(vec3(.055, 0, .02)), .04, PAL.gold);
+    if (bike.shock) tube(shA, shB, .045, PAL.frameDark);
+    if (bike.shock == 'coil')
+    {
+        tube(shA.lerp(shB, .2), shA.lerp(shB, .75), .085, PAL.spring);
+        tube(shA.lerp(shB, .55).add(vec3(.055, 0, .02)), shA.lerp(shB, .95).add(vec3(.055, 0, .02)), .04, PAL.gold);
+    }
+    else if (bike.shock == 'air')
+    {
+        tube(shA.lerp(shB, .3), shA.lerp(shB, .85), .075, PAL.black);
+        tube(shA.lerp(shB, .32), shA.lerp(shB, .4), .08, PAL.spring);
+    }
     // the drivetrain: chain from the ring to the cassette and back under through the mech, a guide over the ring,
     // and the calliper on the back rotor
     const ring = bb.add(vec3(.075, 0, 0)), cog = rA.add(vec3(.075, 0, 0)), mech = rA.add(vec3(.08, -.12, .02));
@@ -2791,16 +2844,16 @@ function drawBike(M, cF, cR, wheelSpin, crankA, whip=0, barA=0, offF=0, offR=0, 
     tube(seatTop, seatTop.add(vec3(0, .07, .03)), .035, PAL.silver);
     box(seatTop.add(vec3(0, .09, .05)), vec3(.13, .05, .27), PAL.black);
     box(seatTop.add(vec3(0, .116, .05)), vec3(.03, .006, .24), PAL.jersey2);
-    // dual crown fork: stanchions slide into the lowers as it compresses
+    // the fork: a dual crown up past the head tube, or a single crown under it; the stanchions slide into the lowers
     MC = G?.fork ?? M;
     const forkDir = fA.subtract(vec3(0, .8, -.46)).normalize();
     for (const x of [-.075, .075])
     {
-        const top = headTop.add(vec3(x, .02, 0)), stanEnd = headBot.add(forkDir.scale(.34)).add(vec3(x, 0, 0));
+        const top = (bike.crowns == 2 ? headTop.add(vec3(0, .02, 0)) : headBot.add(vec3(0, -.02, 0))).add(vec3(x, 0, 0)), stanEnd = headBot.add(forkDir.scale(.34)).add(vec3(x, 0, 0));
         tube(top, stanEnd, .042, PAL.gold);
         tube(fA.add(vec3(x, 0, 0)), fA.add(vec3(x, 0, 0)).subtract(forkDir.scale(.4)), .06, PAL.black);
     }
-    box(headTop.add(vec3(0, .02, 0)), vec3(.23, .045, .07), PAL.black);
+    if (bike.crowns == 2) box(headTop.add(vec3(0, .02, 0)), vec3(.23, .045, .07), PAL.black);
     box(headBot.add(vec3(0, -.02, 0)), vec3(.23, .045, .07), PAL.black);
     box(fA.add(vec3(-.08, .1, .05)), vec3(.03, .05, .07), PAL.black);
     // stem and wide bars
@@ -3028,6 +3081,7 @@ function titleStep(dt)
 {
     titleT += dt;
     logoWobV += (-55*logoWob - 3.2*logoWobV)*dt; logoWob += logoWobV*dt;
+    if (menu == 'garage') { if (titleWreck || px != START_X) resetTitleRider(); titleT = 0; py = groundY(px); return; }
     if (titleWreck) { crashT += dt; stepWreck(dt); return; }
     vy = 0;
     if (titleT < .8) { py = groundY(px); vx = sp = 0; return; }
@@ -3141,7 +3195,7 @@ function rideStep(dt)
     if (turboT > 0 && !paceAt(px))
     {
         turboT -= dt;
-        battery = max(0, turboT/(superOn ? SUPER_LEN : TURBO_LEN));
+        battery = max(0, turboT/(superOn ? SUPER_LEN : TURBO_LEN*bike.turbo));
         if (turboT <= 0) { battery = 0; turboGrace = 1.5; superOn = false; showMessage('BATTERY EMPTY', 'tricks and sprockets recharge it', hsl(.5,.6,.75)); }
     }
     if (legT > 0) legT -= dt;
@@ -3376,9 +3430,16 @@ function gameUpdatePost()
     let eye = vec3(cx - OX + j(), cy - OY + j(), cz), look = vec3(camX - OX, camY - OY, zW);
     // on the menu the camera stands square on to the logo, and swings round onto the rider as the ride starts
     titleCamW = state == 'title' ? min(1, titleCamW + dt*1.4) : max(0, titleCamW - dt/1.3);
+    garageW += ((state == 'title' && menu == 'garage' ? 1 : 0) - garageW)*damp(3, dt);
     if (titleCamW > 0)
     {
-        const [te, tl] = titlePose(W, H, vfov), w = titleCamW*titleCamW*(3 - 2*titleCamW);
+        let [te, tl] = titlePose(W, H, vfov);
+        if (garageW > .001)
+        {
+            const [ge, gl] = garagePose(W, H, vfov), g = garageW*garageW*(3 - 2*garageW);
+            te = te.lerp(ge, g); tl = tl.lerp(gl, g);
+        }
+        const w = titleCamW*titleCamW*(3 - 2*titleCamW);
         eye = eye.lerp(te.add(vec3(j(), j(), 0)), w); look = look.lerp(tl, w);
     }
     // a test can hold the camera where it wants it, for close-ups
@@ -3402,6 +3463,16 @@ function titlePose(W, H, vf)
     const b = logoBase(), c = vec3(b.x - OX, b.y - OY + LOGO_LIFT + logoH()/2, b.z);
     const look = c.add(vec3(0, -(H/2 - (band[0] + band[1])/2*H)*wpp, 0));
     const a = LOGO_YAW + .4 + sin(time*.21)*.06, el = .1;
+    return [look.add(vec3(sin(a)*cos(el), sin(el), cos(a)*cos(el)).scale(d)), look];
+}
+// the garage's view: round the front of the rider standing at the start, turning slowly, framed above the panel
+let garageW = 0;
+function garagePose(W, H, vf)
+{
+    const t = tan(vf/2), band = W > H ? [.04, .5] : [.08, .5], c = bikeMatrix().transformPoint(vec3(0, .95, 0));
+    const d = max(2.9*H/(2*t*(band[1] - band[0])*H), 3.4*H/(2*t*W*.85)), wpp = 2*d*t/H;
+    const look = c.add(vec3(0, -(H/2 - (band[0] + band[1])/2*H)*wpp, 0));
+    const a = .4 + sin(time*.35)*.3, el = .14;
     return [look.add(vec3(sin(a)*cos(el), sin(el), cos(a)*cos(el)).scale(d)), look];
 }
 // the part of the screen, top to bottom as fractions of its height, the logo is framed into
@@ -4250,33 +4321,38 @@ function drawTitle(W, H, top, bottom)
     ctx.fillStyle = g; ctx.fillRect(0, H*.55, W, H*.45);
     const two = W > H, band = titleBand(W, H);
     // until the logo is in, its name in letters
-    if (!logo)
+    if (!logo && menu != 'garage')
     {
         const t1 = fitSize('BLUECOW RAGER', 56, W - 40);
         txt('BLUECOW', W/2, (band[0] + band[1])/2*H - t1*.5, t1*1.2, '#2f5fff', 'center', 900);
         txt('RAGER', W/2, (band[0] + band[1])/2*H + t1*.7, t1, '#fff', 'center', 900);
     }
-    if (menu == 'help') drawHelp(W, H, top, bottom);
+    if (menu == 'garage') drawGarage(W, H, top, bottom);
+    else if (menu == 'help') drawHelp(W, H, top, bottom);
     else if (menu == 'about') drawAbout(W, H, top, bottom);
     else
     {
         // play, help and about: a column under the logo on a tall screen, a row along the bottom on a wide one
-        const bw = two ? min(200, (W - 80)/3) : min(W - 56, 330), bh = two ? 50 : 58;
+        const bw = two ? min(180, (W - 90)/4) : min(W - 56, 330), bh = two ? 50 : 58;
         let y;
         if (two)
         {
+            // garage, help, PLAY, about
             y = bottom - bh - 16;
-            button(W/2 - bw/2, y, bw, bh, 'PLAY', startRide, true, 22);
-            button(W/2 - bw*1.5 - 14, y, bw, bh, 'HELP', ()=> menu = 'help', false, 18);
-            button(W/2 + bw/2 + 14, y, bw, bh, 'ABOUT', ()=> menu = 'about', false, 18);
+            const x0 = W/2 - (bw*4 + 42)/2;
+            button(x0, y, bw, bh, 'GARAGE', ()=> menu = 'garage', false, 17);
+            button(x0 + bw + 14, y, bw, bh, 'HELP', ()=> menu = 'help', false, 17);
+            button(x0 + (bw + 14)*2, y, bw, bh, 'PLAY', startRide, true, 22);
+            button(x0 + (bw + 14)*3, y, bw, bh, 'ABOUT', ()=> menu = 'about', false, 17);
         }
         else
         {
             y = max(band[1]*H + 70, bottom - bh*2 - 40);
             button(W/2 - bw/2, y, bw, bh, 'PLAY', startRide, true, 24);
-            const hw = (bw - 12)/2;
-            button(W/2 - bw/2, y + bh + 12, hw, bh - 6, 'HELP', ()=> menu = 'help', false, 18);
-            button(W/2 + 6, y + bh + 12, hw, bh - 6, 'ABOUT', ()=> menu = 'about', false, 18);
+            const tw = (bw - 20)/3;
+            button(W/2 - bw/2, y + bh + 12, tw, bh - 6, 'GARAGE', ()=> menu = 'garage', false, 15);
+            button(W/2 - bw/2 + tw + 10, y + bh + 12, tw, bh - 6, 'HELP', ()=> menu = 'help', false, 15);
+            button(W/2 - bw/2 + (tw + 10)*2, y + bh + 12, tw, bh - 6, 'ABOUT', ()=> menu = 'about', false, 15);
         }
         if (best.dist)
         {
@@ -4286,6 +4362,48 @@ function drawTitle(W, H, top, bottom)
     }
     button(W - 12 - 58, top, 58, 38, soundOn ? 'SND' : 'MUTE', toggleSound, !soundOn);
     camButtons(W, top, 58, 38);
+}
+// the garage: the bike, with how it rides, and the kit, each picked with arrows either side, the rider shown above
+const BIKE_STATS = [['SPEED', b=> (b.speed + 2)/4], ['POP', b=> (b.pop - .8)/.45], ['FLIPS', b=> (b.flip - .75)/.55],
+    ['LANDINGS', b=> (b.land - .7)/.65], ['TURBO', b=> (b.turbo*b.charge - .6)/2]];
+function drawGarage(W, H, top, bottom)
+{
+    const two = W > H, pw = min(W - 20, two ? 760 : 440), ph = two ? min(250, bottom - H*.5) : min(bottom - H*.5 + 10, 400);
+    const px = (W - pw)/2, py = bottom - ph;
+    rrect(px, py, pw, ph, 18, 'rgba(12,18,30,.88)', 'rgba(255,210,70,.55)');
+    const picker = (x, y, w, label, name, prev, next)=>
+    {
+        txt(label, x + w/2, y, 12, '#ffd23a', 'center', 900);
+        button(x, y + 10, 40, 38, '<', prev, false, 18);
+        button(x + w - 40, y + 10, 40, 38, '>', next, false, 18);
+        txt(name, x + w/2, y + 30, fitSize(name, 19, w - 100), '#fff', 'center', 900);
+    };
+    const colW = two ? (pw - 48)/2 : pw - 32, bx = px + 16, kx = two ? px + 32 + colW : px + 16;
+    // the bike, what it is, and bars for how it rides
+    let y = py + 20;
+    picker(bx, y, colW, 'BIKE', bike.name, ()=> setBike(bikeI - 1), ()=> setBike(bikeI + 1));
+    txt(bike.about, bx + colW/2, y + 64, fitSize(bike.about, 12.5, colW - 10, 600), 'rgba(255,255,255,.8)', 'center', 600);
+    const sh = two ? 17 : 18;
+    BIKE_STATS.forEach(([n, f], i)=>
+    {
+        const sy = y + 84 + i*sh, v = clamp01(f(bike));
+        txt(n, bx + 8, sy, 11.5, 'rgba(255,255,255,.75)', 'left', 800);
+        rrect(bx + 82, sy - 4, colW - 92, 8, 4, 'rgba(255,255,255,.12)');
+        rrect(bx + 82, sy - 4, max(8, (colW - 92)*v), 8, 4, '#ffd23a');
+    });
+    // the kit, and a swatch of its colours
+    const ky = two ? py + 20 : y + 84 + BIKE_STATS.length*sh + 10, kit = KITS[kitI];
+    picker(kx, ky, colW, 'KIT', kit[0], ()=> setKit(kitI - 1), ()=> setKit(kitI + 1));
+    ['jersey', 'jersey2', 'pants', 'helmet', 'frame'].forEach((k, i)=>
+    {
+        const c = PAL[k];
+        ctx.beginPath(); ctx.arc(kx + colW/2 + (i - 2)*28, ky + 68, 10, 0, TAU);
+        ctx.fillStyle = c.toString(); ctx.fill(); ctx.lineWidth = 2; ctx.strokeStyle = 'rgba(255,255,255,.5)'; ctx.stroke();
+    });
+    // back, or straight out on it
+    const by = py + ph - 52, bw2 = two ? 150 : (pw - 44)/2, bxs = two ? kx + colW/2 - bw2 - 6 : px + 16;
+    button(bxs, by, bw2, 40, 'BACK', ()=> menu = 'main', false, 16);
+    button(bxs + bw2 + 12, by, bw2, 40, 'PLAY', startRide, true, 18);
 }
 // a panel over the scene, with a back button at its foot; gives the panel's box and the room inside it
 function menuPanel(W, H, top, bottom, title, maxW, wantH)
@@ -4698,7 +4816,7 @@ window.__mtb = {
         forkAhead: !!forkAhead, laneWant, view: camViewName(), zoom: camZoomName(), splits: splits.map(s=> [s.x0|0, s.x1|0, s.kinds.join('+')]),
         lineDetail: splits.map(s=> Object.values(s.lines).map(b=> b.kind + ':' + (b.what || 'plain')).join(' ')),
         dropCam, braking, sentIt, camLift, baseY, wheelOffF, wheelOffR, drops: feats.filter(f=> f.type == 'dropin').map(f=> [f.x0|0, f.x1|0, f.landX|0, +f.F.toFixed(1)]),
-        trickCounts, tricksTotal, legBoosts, supers, sends, cellsGot, legT, superOn, tyres, tyresGot, brakeFuel, slides, cased, sketchy, perfects, maxAir, topSpeed, style: style?.name, styleT, airHist, hardLandings, combosBanked, multSum, queued: trickQueued, swipeCount, mainHeld, secondHeld}),
+        bike: bike.name, kit: KITS[kitI][0], menu, trickCounts, tricksTotal, legBoosts, supers, sends, cellsGot, legT, superOn, tyres, tyresGot, brakeFuel, slides, cased, sketchy, perfects, maxAir, topSpeed, style: style?.name, styleT, airHist, hardLandings, combosBanked, multSum, queued: trickQueued, swipeCount, mainHeld, secondHeld}),
     start: ()=> startRide(),
     // steps the game by hand, a 60th of a second at a time, with the engine paused
     // (or by frames of another length, a number or a function giving one, as a screen at another rate would)
@@ -4712,6 +4830,7 @@ window.__mtb = {
     moo: ()=> moo(),
     // try out a colour scheme: the rider's and bike's colours by name
     palette: o=> Object.assign(PAL, o),
+    kit: i=> setKit(i), bike: i=> setBike(i), garage: ()=> menu = 'garage',
     brake: on=> { brakeHeld = on; }, tyresTo: n=> { brakeFuel = n >= 3 ? BRAKE_LEN : 0; },
     endRun: ()=> endRun(),
     // the middle of rider and bike as drawn, for close-ups

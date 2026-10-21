@@ -2,7 +2,7 @@
 // what happened. The engine is paused and the game stepped by hand, so a run is the same every time.
 //
 //   node tools/sim.mjs [--seeds 20] [--km 5] [--flips back|front] [--tricks] [--lanes rand|up|down|main] [--turbo]
-//                      [--from 1] [--json out.json] [--game other.html] [--salt n]
+//                      [--from 1] [--json out.json] [--game other.html] [--salt n] [--bike 0..3]
 import {createRequire} from 'node:module';
 import {execSync} from 'node:child_process';
 import {pathToFileURL, fileURLToPath} from 'node:url';
@@ -19,7 +19,7 @@ const has = k=> args.includes('--' + k);
 const SEEDS = +opt('seeds', 20), KM = +opt('km', 5), FROM = +opt('from', 1);
 const FLIPS = opt('flips', false), TRICKS = has('tricks'), LANES = opt('lanes', 'rand'), TURBO = has('turbo');
 // the autopilot's own choices (which trick, when to pop) come from this, so a ride can be repeated exactly
-const SALT = +opt('salt', 0);
+const SALT = +opt('salt', 0), BIKE = +opt('bike', 0);
 const here = path.dirname(fileURLToPath(import.meta.url));
 // --game rides another copy of the page, for comparing against an older version
 const game = pathToFileURL(opt('game', false) || path.join(here, '..', 'Downhill MTB 3D.html')).href;
@@ -36,7 +36,7 @@ for (let seed = FROM; seed < FROM + SEEDS; ++seed)
     await page.goto(game + '?seed=' + seed);
     await page.waitForFunction(()=> window.__mtb && window.__mtb.info().state == 'title');
     const t0 = Date.now();
-    const r = await page.evaluate(async ({KM, FLIPS, TRICKS, LANES, TURBO, SALT, seed})=>
+    const r = await page.evaluate(async ({KM, FLIPS, TRICKS, LANES, TURBO, SALT, BIKE, seed})=>
     {
         const m = window.__mtb, max = Math.max;
         if (SALT)
@@ -45,6 +45,7 @@ for (let seed = FROM; seed < FROM + SEEDS; ++seed)
             Math.random = ()=> { a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0)/4294967296; };
         }
         setPaused(true);
+        m.bike(BIKE);
         m.autopilot(true, FLIPS);
         window.__trickPilot = TRICKS;
         m.lanes(LANES, TURBO);
@@ -76,7 +77,7 @@ for (let seed = FROM; seed < FROM + SEEDS; ++seed)
         const end = m.info();
         bank(end);
         return {ridden, rideTime: end.runTime, crashes, stats};
-    }, {KM, FLIPS, TRICKS, LANES, TURBO, SALT, seed});
+    }, {KM, FLIPS, TRICKS, LANES, TURBO, SALT, BIKE, seed});
     r.seed = seed; r.wall = (Date.now() - t0)/1000;
     all.push(r);
     const reasons = r.crashes.map(c=> c.reason + (c.afterTeleport ? '*' : '')).join(', ');

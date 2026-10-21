@@ -492,9 +492,34 @@ Each phase is a separate commit (or a few), tested with the Phase 0 harness befo
     - **Wheels:** grey spokes, and yellow lettering marks on the knobbly tyres' sidewalls.
   - **Words:** the crash groans and score-card jokes no longer talk about horns or cows ("HEAD FIRST. BOLD.", "GRAVITY 1, YOU 0", "THAT WILL BRUISE").
 
+- **Kits and bikes, picked in a garage: done.**
+  - **Kits** (`KITS`, applied over `PAL_BASE` by `setKit`): Electric Citrus (the default), Retro Pop, Clown Pajamas, Fire, Ice Lime, and Stealth (the old black and red). Each sets the jersey, sleeves, cuffs, pants, pads, gloves, helmet and pack, and the bike's frame, decal and coil.
+  - **Bikes** (`BIKES`, `setBike`), each riding differently through `bike.*`:
+
+    | Bike | Speed | Pop | Flips | Landings | Turbo × charge | Build |
+    |---|---|---|---|---|---|---|
+    | All-Rounder | 0 | 1 | 1 | 1 | 1 × 1 | dual crown, coil, brace |
+    | DH Sled | +1.2 | .9 | .85 | 1.25 | 1 × 1 | fat tubes, skid plate |
+    | Dirt Jumper | −1.5 | 1.15 | 1.22 | .8 | .8 × 1.1 | hardtail, single crown, thin tubes, low seat |
+    | E-Beast | +.5 | .95 | .9 | 1.1 | 1.6 × 1.5 | big battery and motor, air shock, single crown |
+
+  - **What the numbers change:**
+    - **Speed:** added to the top speed, on the ground, on grinds and in the air.
+    - **Pop:** scales the jump pop.
+    - **Flips:** scales the flip rate.
+    - **Landings:** scales the landing angle allowed (up to 1 rad) and the hard-landing impact.
+    - **Turbo:** scales its length; **charge** scales how fast the battery fills.
+  - **The garage:**
+    - **On the menu:** a GARAGE button opens a panel with the bike (name, what it is, bars for speed, pop, flips, landings and turbo) and the kit (name and swatches), each with arrows either side.
+    - **The rider:** the camera swings round onto the rider standing at the start, and the show waits.
+    - **Saving:** choices are stored (`bcr.kit`, `bcr.bike`).
+  - **Tests:**
+    - `tools/sim.mjs --bike n`. 24 km each with tricks and flips: All-Rounder 0 crashes; DH Sled 1 (a flip it was too slow for); Dirt Jumper 0, with 0.74 hard landings per km against 0.20; E-Beast 0.
+    - The choices survive a reload, and the ride starts on the chosen bike.
+
 ## Running the tools
 
-    node tools/sim.mjs [--seeds 20] [--km 5] [--flips back|front] [--tricks] [--lanes rand|up|down|main] [--turbo] [--json out.json] [--salt n] [--game other.html]
+    node tools/sim.mjs [--seeds 20] [--km 5] [--flips back|front] [--tricks] [--lanes rand|up|down|main] [--turbo] [--json out.json] [--salt n] [--game other.html] [--bike 0..3]
     node tools/shot.mjs --seed 3 --at 800 --view SIDE --zoom 1 --day .3 --out shot.png [--size 390x844] [--js "code"] [--game other.html]
 
 `--lanes` takes rand, up, down, main, pro, high or none.

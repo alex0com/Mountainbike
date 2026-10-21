@@ -348,6 +348,27 @@ Each phase is a separate commit (or a few), tested with the Phase 0 harness befo
   - **Visuals:** side-by-side shots at the title, SIDE, CHASE, 3/4 and HIGH show the same quality. Pixel differences come from the camera following the smoothed body (a pixel's shift), not from shading.
   - **Regression:** 500 km over five modes and lanes: 0 crashes. Fork and flick tests pass.
 
+- **Crash ragdoll and quick restart: done.**
+  - **Ragdoll:**
+    - On a crash the rider becomes a ragdoll of 15 joints, starting from their riding pose: a braced torso and head, with loose arms and legs.
+    - It is thrown on at the bike's speed, tumbling head over heels.
+    - The hands and feet windmill for the first 3.5 s. They are steered round circles about the chest rather than pushed, so the body isn't flung about.
+    - Simple position-based physics: 3 substeps, the bones pulled back to length, and bounce and friction on the real ground mesh.
+  - **The bike falls apart:**
+    - The bike bursts into 7 pieces: both wheels, frame, fork, bars, seat and crank. Each piece tumbles and bounces on its own.
+    - The wheels roll on downhill on their rims, then tip over.
+    - Hard hits make a thud or a clank, at most one every 0.09 s.
+    - The pieces end up scattered within about 20 m of the rider.
+  - **Camera:** it eases into a close crash view (8.5–10 m), a little in front of and above the rider, and follows them down. It blends over the drop-in view, so a wipeout on a big drop is framed close too.
+  - **Restart:**
+    - **Crash screen:** shows "YARD SALE!" with the reason. After 0.35 s, "TAP TO RIDE AGAIN" pulses and any tap or key rides a new run straight away. The run's bests are saved first.
+    - **Results screen:** a tap anywhere restarts immediately. The 0.8 s wait is gone.
+    - The tumble now lasts 2.4 s before the results appear.
+  - **Checks:**
+    - Forced crashes over 5 seeds in 3/4, SIDE, CHASE and portrait views.
+    - An early tap is ignored and a later tap restarts, both paused and in real time.
+    - Regression: 18 km with tricks and flips, 0 crashes and no page errors.
+
 ## Running the tools
 
     node tools/sim.mjs [--seeds 20] [--km 5] [--flips back|front] [--tricks] [--lanes rand|up|down|main] [--turbo] [--json out.json] [--salt n] [--game other.html]

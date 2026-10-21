@@ -1748,7 +1748,7 @@ let ang = 0, angVel = 0, baseY = 0, landVis = 0, surfNow = S_SNOW;
 let airT = 0, rot = 0, takeoffKind = '', takeoffX = 0, takeoffY = 0, pressInAir = false;
 let style, styleT = 0, styleIndex = 0, stylesDone = [];
 let suspF = .03, suspFV = 0, suspR = .03, suspRV = 0, compress = 0, compressKick = 0, crank = PI/2, wheelSpin = 0;
-let vyGround = 0, boostT = 0, crashT = 0, rag, bikeRag, crashReason = '', braking = false, takeoffFeat = null, sentIt = false;
+let vyGround = 0, boostT = 0, crashT = 0, rag, crashReason = '', braking = false, takeoffFeat = null, sentIt = false;
 let runTime = 0, dist = 0, score = 0, orbsGot = 0, orbStreak = 0;
 let combo = 0, comboPts = 0, comboT = 0, comboNames = [], bestCombo = 0, bestComboName = '', flipsTotal = 0;
 let grindStart = 0, grindDist = 0;
@@ -2166,25 +2166,164 @@ function crash(reason)
     state = 'crash'; crashT = 0; crashReason = reason;
     window.__lastCrash = {reason, px: +px.toFixed(1), ride: ride ? ride.lane : 0, z: +riderZ().toFixed(1), turbo: +turboT.toFixed(2), tk: takeoffKind, tkx: +takeoffX.toFixed(1), rot: +(rot*57).toFixed(0), ang: +(ang*57).toFixed(0), slope: +(atan(rideSlope(px))*57).toFixed(0), airT: +airT.toFixed(2), sp: +sp.toFixed(1), vx: +vx.toFixed(1), vy: +vy.toFixed(1), style: style?.name, styleT: +styleT.toFixed(2), flightT: window.__flightT, grounded, frame};
     combo = comboPts = 0; comboNames = []; comboKeys = []; grinding = null; style = undefined; trickQueued = null;
-    const r = ()=> Math.random() - .5;
-    rag = {x: px, y: py + .9, vx: vx*.7, vy: max(vy, 0) + 3.5, rot: ang, av: 6 + r()*6, roll: 0, rv: r()*4};
-    bikeRag = {x: px, y: py + .4, vx: vx*.55, vy: max(vy, 0) + 2, rot: ang, av: -4 + r()*6, roll: 0, rv: r()*5};
+    startWreck();
     sfx('crash');
     camShake = 1;
     dustBurst(px, py, 90);
+    showMessage('YARD SALE!', reason.toLowerCase(), hsl(.02,.9,.62));
 }
-function stepRag(b, dt)
+
+// ---------- the wreck: the rider goes limp and tumbles as a ragdoll, arms and legs flailing on the way down, and the
+// bike flies apart into its pieces beside them, the wheels rolling off down the mountain
+// the rider's joints in the bike's own space, before scaling, and how round each is
+const RAG_POSE = [
+    ['head', 0, 1.78, -.21, .17], ['chest', 0, 1.49, -.1, .14], ['hip', 0, 1.16, .3, .14],
+    ['shL', .2, 1.52, -.12, .08], ['shR', -.2, 1.52, -.12, .08], ['elL', .45, 1.28, -.25, .06], ['hdL', .37, 1.08, -.46, .06],
+    ['elR', -.45, 1.28, -.25, .06], ['hdR', -.37, 1.08, -.46, .06], ['hpL', .11, 1.16, .3, .09], ['hpR', -.11, 1.16, .3, .09],
+    ['knL', .25, .8, -.2, .07], ['ftL', .17, .38, .05, .07], ['knR', -.25, .8, -.2, .07], ['ftR', -.17, .38, .05, .07]];
+const RAG_I = Object.fromEntries(RAG_POSE.map((p, i)=> [p[0], i]));
+// the torso and head braced into one piece; the arms and legs hang off it loose
+const RAG_BONES = [['head', 'chest'], ['chest', 'hip'], ['head', 'hip'], ['shL', 'shR'], ['shL', 'chest'], ['shR', 'chest'],
+    ['shL', 'hip'], ['shR', 'hip'], ['hpL', 'hpR'], ['hpL', 'hip'], ['hpR', 'hip'], ['hpL', 'chest'], ['hpR', 'chest'],
+    ['shL', 'hpL'], ['shR', 'hpR'], ['head', 'shL'], ['head', 'shR'],
+    ['shL', 'elL'], ['elL', 'hdL'], ['shR', 'elR'], ['elR', 'hdR'], ['hpL', 'knL'], ['knL', 'ftL'], ['hpR', 'knR'], ['knR', 'ftR']]
+    .map(([a, b])=> [RAG_I[a], RAG_I[b]]);
+const LIMB_ENDS = ['hdL', 'hdR', 'ftL', 'ftR'].map(n=> RAG_I[n]);
+// the bike's pieces: what of it each is, its middle in the bike's space, and how big it is
+const PIECES = [['rw', 0, .37, .62, .37, true], ['fw', 0, .37, -.64, .37, true], ['frame', 0, .6, .05, .35],
+    ['fork', 0, .62, -.55, .25], ['bars', 0, 1.08, -.46, .3], ['seat', 0, 1.02, .2, .12], ['crank', 0, .34, .05, .17]];
+let ragdoll = null, pieces = [], wreckSfxT = 0, crashCam = 0, wheelSpinAtCrash = 0;
+function startWreck()
 {
-    b.vy -= G_AIR*dt;
-    b.x += b.vx*dt; b.y += b.vy*dt;
-    b.rot += b.av*dt; b.roll += b.rv*dt;
-    const g = rideY(b.x) + .3;
-    if (b.y < g && !rideGap(b.x))
+    const M = bikeMatrix(), rnd = ()=> Math.random() - .5, spin = -(6 + Math.random()*6);
+    const pts = RAG_POSE.map(([n, x, y, z, rad])=> { const p = M.transformPoint(vec3(x, y, z)); return {x: p.x + OX, y: p.y + OY, z: p.z, r: rad*RS}; });
+    const hip = pts[RAG_I.hip], ux = vx*.65, uy = max(vy, 0)*.5 + 3.5;
+    // thrown on at the bike's speed, tumbling head over heels, every limb a little its own way
+    for (const p of pts)
     {
-        b.y = g;
-        if (b.vy < 0) b.vy *= -.35;
-        const f = 1 - damp(2.2, dt);
-        b.vx *= f; b.av *= f; b.rv *= f;
+        p.vx = ux - spin*(p.y - hip.y) + rnd()*3; p.vy = uy + spin*(p.x - hip.x) + rnd()*3; p.vz = rnd()*2;
+        p.phase = Math.random()*TAU;
+    }
+    const len = RAG_BONES.map(([a, b])=> hypot(pts[a].x - pts[b].x, pts[a].y - pts[b].y, pts[a].z - pts[b].z));
+    ragdoll = {pts, len};
+    // the bike bursts apart from its middle
+    const mid = M.transformPoint(vec3(0, .6, 0));
+    pieces = PIECES.map(([key, x, y, z, rad, wheel])=>
+    {
+        const c = vec3(x, y, z), w = M.transformPoint(c), R = M.copy(), out = w.subtract(mid);
+        R.m[12] = R.m[13] = R.m[14] = 0;
+        return {key, c, x: w.x + OX, y: w.y + OY, z: w.z, r: rad*RS, wheel, R, tipAt: 1.5 + Math.random()*2,
+            vx: vx*(wheel ? .6 : .5) + out.x*3 + rnd()*3, vy: max(vy, 0)*.4 + 2 + out.y*3 + Math.random()*2.5, vz: out.z*4 + rnd()*5,
+            w: wheel ? vec3(rnd()*2, rnd()*2, -vx/(rad*RS)*.6) : vec3(rnd()*14, rnd()*14, rnd()*14)};
+    });
+    wheelSpinAtCrash = wheelSpin;
+    rag = {x: hip.x, y: hip.y, z: hip.z};
+}
+// a thud or a clank as something hits the ground hard, not too many at once
+function wreckSound(name, hit)
+{
+    if (hit < 5 || time < wreckSfxT) return;
+    wreckSfxT = time + .09;
+    sfx(name);
+}
+function stepWreck(dt)
+{
+    const n = 3, h = dt/n, P = ragdoll.pts;
+    for (let s = 0; s < n; ++s)
+    {
+        // the ragdoll: moved, then its bones pulled back to length, then kept out of the ground
+        const flail = crashT < 3.5, t = time + s*h;
+        // arms and legs windmilling while it flies, for comic effect: each end swung round in its own circle
+        // about the chest, steered towards that rather than pushed, so the body as a whole is not flung about
+        if (flail)
+        {
+            const C = P[RAG_I.chest], k = 1 - damp(10, h);
+            for (const i of LIMB_ENDS)
+            {
+                const p = P[i], a = t*(i < RAG_I.ftL ? 14 : 10) + p.phase, w = i < RAG_I.ftL ? 6 : 4.5;
+                p.vx += (C.vx - sin(a)*w - p.vx)*k; p.vy += (C.vy + cos(a)*w - p.vy)*k;
+            }
+        }
+        for (const p of P)
+        {
+            p.ox = p.x; p.oy = p.y; p.oz = p.z;
+            p.vy -= G_AIR*h;
+            p.x += p.vx*h; p.y += p.vy*h; p.z += p.vz*h;
+        }
+        for (let it = 0; it < 5; ++it)
+            RAG_BONES.forEach(([a, b], j)=>
+            {
+                const A = P[a], B = P[b], dx = B.x - A.x, dy = B.y - A.y, dz = B.z - A.z, d = hypot(dx, dy, dz) || 1e-6, f = (d - ragdoll.len[j])/d*.5;
+                A.x += dx*f; A.y += dy*f; A.z += dz*f; B.x -= dx*f; B.y -= dy*f; B.z -= dz*f;
+            });
+        for (const p of P)
+        {
+            const g = terrainAt(p.x, p.z) + p.r, hit = p.y < g;
+            if (hit) p.y = g;
+            p.vx = (p.x - p.ox)/h; p.vy = (p.y - p.oy)/h; p.vz = (p.z - p.oz)/h;
+            if (hit)
+            {
+                if (p.vy < 0) { wreckSound('thud', -p.vy); p.vy *= -.3; }
+                const f = 1 - damp(18, h);
+                p.vx *= f; p.vz *= f;
+            }
+        }
+        // the pieces of the bike: tumbling, bouncing, and the wheels rolling on down the slope
+        for (const p of pieces)
+        {
+            p.vy -= G_AIR*h;
+            p.x += p.vx*h; p.y += p.vy*h; p.z += p.vz*h;
+            if (p.wheel && crashT > p.tipAt) p.w.x += 2.5*h*(p.key == 'rw' ? 1 : -1);
+            p.R = Matrix4.rotation(vec3(p.w.x*h, p.w.y*h, p.w.z*h)).multiply(p.R);
+            const g = terrainAt(p.x, p.z) + p.r;
+            if (p.y < g)
+            {
+                p.y = g;
+                if (p.vy < 0) { wreckSound(p.wheel ? 'thud' : 'clank', -p.vy); p.vy *= -.35; }
+                if (p.wheel && crashT < p.tipAt + .6)
+                {
+                    // a wheel on its rim rolls on down the mountain, slowing only a little
+                    const slope = terrainAt(p.x + .5, p.z) - terrainAt(p.x - .5, p.z);
+                    p.vx -= G_AIR*sin(atan(slope))*.7*h;
+                    p.vx *= 1 - damp(.25, h); p.vz *= 1 - damp(2, h);
+                    p.w = vec3(p.w.x*(1 - damp(4, h)), p.w.y*(1 - damp(4, h)), -p.vx/p.r);
+                }
+                else
+                {
+                    const f = 1 - damp(4, h);
+                    p.vx *= f; p.vz *= f; p.w = p.w.scale(1 - damp(3, h));
+                }
+            }
+        }
+    }
+    const hip = P[RAG_I.hip];
+    rag.x = hip.x; rag.y = hip.y; rag.z = hip.z;
+}
+// a piece of the bike where it is now, turning about its own middle
+const pieceMatrix = p=> Matrix4.translation(vec3(p.x - OX, p.y - OY, p.z)).multiply(p.R).multiply(Matrix4.translation(p.c.scale(-1)));
+function drawRagdoll()
+{
+    MC = new Matrix4;
+    const P = ragdoll.pts.map(p=> vec3(p.x - OX, p.y - OY, p.z)), q = n=> P[RAG_I[n]], k = RS;
+    // which way the rider faces: up the back and across the shoulders
+    const up = q('head').subtract(q('hip')).normalize(), fwd = up.cross(q('shL').subtract(q('shR'))).normalize();
+    tube(q('hip'), q('chest'), .3*k, PAL.jersey);
+    ball(q('chest'), .33*k, PAL.jersey);
+    tube(q('chest').add(fwd.scale(-.14*k)), q('hip').add(fwd.scale(-.14*k)), .22*k, PAL.pack);
+    ball(q('hip'), .3*k, PAL.pants);
+    tube(q('chest'), q('head'), .1*k, PAL.glove);
+    // the helmet, its stripe, the chin bar and the goggles, facing the way the body does
+    ball(q('head'), .36*k, PAL.helmet);
+    ball(q('head').add(up.scale(.07*k)).add(fwd.scale(-.03*k)), .3*k, PAL.helmet2);
+    ball(q('head').add(fwd.scale(.13*k)).add(up.scale(-.09*k)), .17*k, PAL.helmet);
+    ball(q('head').add(fwd.scale(.16*k)).add(up.scale(.02*k)), .13*k, PAL.goggle);
+    for (const s of ['L', 'R'])
+    {
+        const sh = q('sh' + s), el = q('el' + s), hd = q('hd' + s), hp = q('hp' + s), kn = q('kn' + s), ft = q('ft' + s);
+        tube(sh, el, .11*k, PAL.jersey2); ball(el, .1*k, PAL.jersey2);
+        tube(el, hd, .09*k, PAL.jersey); ball(hd, .095*k, PAL.glove);
+        tube(hp, kn, .16*k, PAL.pants); ball(kn, .14*k, PAL.pants);
+        tube(kn, ft, .12*k, PAL.pants); ball(ft, .14*k, PAL.shoe);
     }
 }
 
@@ -2250,7 +2389,8 @@ function ik(a, c, l1, l2, hint)
 const RW = .37, AXLE_R = vec3(0, RW, .62), AXLE_F = vec3(0, RW, -.64), STEERER = vec3(0, .9, -.44);
 // turned about the steerer: the frame in a tailwhip, the bars in a barspin
 const aboutSteerer = (M, a)=> a ? M.copy().multiply(buildMatrix(STEERER, vec3(0, a, 0))).multiply(Matrix4.translation(STEERER.scale(-1))) : M;
-function drawBike(M, cF, cR, wheelSpin, crankA, whip=0, barA=0, offF=0, offR=0)
+// (G, when the bike is in pieces, gives each piece its own transform: wheels, frame, seat, fork, bars, cranks)
+function drawBike(M, cF, cR, wheelSpin, crankA, whip=0, barA=0, offF=0, offR=0, G)
 {
     // the frame and back wheel, the fork and front wheel, and the bars each have their own transform
     const MF = aboutSteerer(M, whip), MB = aboutSteerer(M, barA);
@@ -2264,7 +2404,7 @@ function drawBike(M, cF, cR, wheelSpin, crankA, whip=0, barA=0, offF=0, offR=0)
     // wheels
     for (const [axle, disc] of [[rA, .07], [fA, -.07]])
     {
-        MC = axle == fA ? M : MF;
+        MC = axle == fA ? G?.fw ?? M : G?.rw ?? MF;
         const rot = vec3(wheelSpin, 0, PI/2);
         drawPart(meshTyre, buildMatrix(axle, rot, undefined, scratch));
         drawPart(meshRim, buildMatrix(axle, rot, undefined, scratch));
@@ -2272,7 +2412,7 @@ function drawBike(M, cF, cR, wheelSpin, crankA, whip=0, barA=0, offF=0, offR=0)
         drawPart(meshDisc, buildMatrix(vec3(disc, axle.y, axle.z), vec3(wheelSpin, 0, PI/2), undefined, scratch));
         ball(axle, .09, PAL.silver);
     }
-    MC = MF;
+    MC = G?.frame ?? MF;
     // main frame, chunky downhill tubes
     tube(bb, headBot, .085, PAL.frame);
     tube(ttRear, headTop.add(vec3(0, -.05, .02)), .06, PAL.frame);
@@ -2294,10 +2434,11 @@ function drawBike(M, cF, cR, wheelSpin, crankA, whip=0, barA=0, offF=0, offR=0)
     tube(shA, shB, .045, PAL.frameDark);
     tube(shA.lerp(shB, .2), shA.lerp(shB, .75), .085, PAL.spring);
     // seat
+    MC = G?.seat ?? MF;
     tube(seatTop, seatTop.add(vec3(0, .07, .03)), .035, PAL.silver);
     box(seatTop.add(vec3(0, .09, .05)), vec3(.13, .05, .27), PAL.black);
     // dual crown fork: stanchions slide into the lowers as it compresses
-    MC = M;
+    MC = G?.fork ?? M;
     const forkDir = fA.subtract(vec3(0, .8, -.46)).normalize();
     for (const x of [-.075, .075])
     {
@@ -2308,14 +2449,14 @@ function drawBike(M, cF, cR, wheelSpin, crankA, whip=0, barA=0, offF=0, offR=0)
     box(headTop.add(vec3(0, .02, 0)), vec3(.23, .045, .07), PAL.black);
     box(headBot.add(vec3(0, -.02, 0)), vec3(.23, .045, .07), PAL.black);
     // stem and wide bars
-    MC = MB;
+    MC = G?.bars ?? MB;
     const stem = headTop.add(vec3(0, .04, -.05)), bar = stem.add(vec3(0, .04, 0));
     tube(headTop, stem, .045, PAL.black);
     box(stem.add(vec3(0, .07, .02)), vec3(.09, .05, .07), lit);
     tube(bar.add(vec3(-.4, .03, 0)), bar.add(vec3(.4, .03, 0)), .032, PAL.black);
     for (const x of [-.36, .36]) tube(bar.add(vec3(x - .04, .03, 0)), bar.add(vec3(x + .04, .03, 0)), .045, PAL.glove);
     // cranks, chainring and pedals
-    MC = MF;
+    MC = G?.crank ?? MF;
     drawPart(meshRing, buildMatrix(bb.add(vec3(.07, 0, 0)), vec3(crankA, 0, PI/2), undefined, scratch));
     const pedals = [];
     for (const [x, a] of [[.17, crankA], [-.17, crankA + PI]])
@@ -2398,7 +2539,6 @@ function drawRider(M, bikePts, comp, styleName, styleAmt)
 
 // side on: the bike faces +x, pitch turns it in the screen's plane, roll tumbles it in a crash
 let airBlend = 0, scarf, pz = 0, yawV = 0, leanV = 0, bermY = 0;
-const ragZ = x=> ride ? brZ(ride, x) : 0;
 function sideMatrix(x, y, a, roll, piv, z=0, yaw=0, lean=0)
 {
     // placed on the bent world and turned along the trail's weave
@@ -2440,9 +2580,10 @@ class RiderView extends EngineObject3D
     {
         if (state == 'crash' || state == 'results')
         {
-            const bm = sideMatrix(bikeRag.x, bikeRag.y - .4*RS, bikeRag.rot, bikeRag.roll, .4*RS, ragZ(bikeRag.x));
-            const pts = drawBike(bm, .05, .05, wheelSpin, crank);
-            drawRider(sideMatrix(rag.x, rag.y - .9*RS, rag.rot, rag.roll, .9*RS, ragZ(rag.x)), pts, 1, '', 0);
+            const G = {};
+            for (const p of pieces) G[p.key] = pieceMatrix(p);
+            drawBike(G.frame, .05, .05, wheelSpinAtCrash, crank, 0, 0, 0, 0, G);
+            drawRagdoll();
             return;
         }
         const M = bikeMatrix(), t = trickAnim();
@@ -2456,7 +2597,10 @@ class RiderView extends EngineObject3D
 function neckPos()
 {
     if (state == 'crash' || state == 'results')
-        return sideMatrix(rag.x, rag.y - .9*RS, rag.rot, rag.roll, .9*RS, ragZ(rag.x)).transformPoint(vec3(0, 1.62, .02));
+    {
+        const P = ragdoll.pts, c = P[RAG_I.chest], h = P[RAG_I.head];
+        return vec3(mix(c.x, h.x, .45) - OX, mix(c.y, h.y, .45) - OY, mix(c.z, h.z, .45));
+    }
     return bikeMatrix().transformPoint(vec3(0, 1.64, .02));
 }
 
@@ -2497,7 +2641,7 @@ function newRun(s)
     placeRider(START_X);
     runTime = dist = score = orbsGot = orbStreak = 0;
     bestCombo = 0; bestComboName = ''; flipsTotal = 0; grindDist = 0; crashReason = ''; trickCounts = {}; tricksTotal = 0; bestTrick = {name: '', pts: 0}; airHist = [0, 0, 0, 0, 0, 0]; hardLandings = 0; combosBanked = 0; multSum = 0;
-    battery = 0; turboT = 0; turbos = 0; lines = 0; proLines = 0; linesRidden = new Set; allLines = false; dayT = DAY_START; dropCam = 0; camLift = 0; pz = yawV = leanV = bermY = 0; camZ = camB = 0;
+    battery = 0; turboT = 0; turbos = 0; lines = 0; proLines = 0; linesRidden = new Set; allLines = false; dayT = DAY_START; dropCam = crashCam = 0; camLift = 0; ragdoll = null; pieces = []; pz = yawV = leanV = bermY = 0; camZ = camB = 0;
     messages.length = 0; trickPops.length = 0; swipeFx.length = 0;
     riderView = new RiderView;
     new OrbView; new OrbGlow; new SkyExtras; new TurboGlow;
@@ -2558,8 +2702,8 @@ function gameUpdate()
     else if (state == 'crash' || state == 'results')
     {
         crashT += dt;
-        stepRag(rag, dt); stepRag(bikeRag, dt);
-        if (state == 'crash' && crashT > 1.6) endRun();
+        stepWreck(dt);
+        if (state == 'crash' && crashT > 2.4) endRun();
         if (state == 'results') resultsT += dt;
     }
     else // title: standing still on the summit
@@ -2701,6 +2845,8 @@ const CAM_VIEWS = {
     'HIGH':  {yaw: [1.25, .8], pitch: [.9, .82], lead: [.16, .16], up: [0, 0], dist: [32, 34], fixed: 1, follow: .8}};
 // the drop-in view, [portrait, landscape]: in front of the rider and to the side, low, close
 const DROP_VIEW = {yaw: [-.5, -.55], pitch: [.06, .05], lead: [.02, .02], up: [0, 0], dist: [15, 12], follow: .6, fixed: 1};
+// a crash: in close on the tumbling rider, from a little in front and above, to watch the yard sale
+const CRASH_VIEW = {yaw: [.5, .45], pitch: [.24, .22], lead: [0, 0], up: [0, 0], dist: [10, 8.5], follow: .3, fixed: 1};
 let dropCam = 0, dropDist = 15, camLift = 0;
 const CAM_ORDER = Object.keys(CAM_VIEWS), CAM_ZOOMS = [['NEAR', .78], ['MID', 1], ['FAR', 1.32]];
 // side on and far back in portrait, three quarter at mid zoom in landscape
@@ -2747,30 +2893,35 @@ function gameUpdatePost()
     if (di) dropDist = di.camDist ?? DROP_VIEW.dist[o];
     const C = dropCam < .001 ? camP : {};
     if (C != camP) for (const key in camP) C[key] = mix(camP[key], DROP_VIEW[key][o] ?? DROP_VIEW[key], dropCam);
+    const wrecked = state == 'crash' || state == 'results';
+    crashCam += ((wrecked ? 1 : 0) - crashCam)*damp(wrecked ? 2.2 : 4, dt);
+    const Cw = crashCam < .001 ? C : {};
+    if (Cw != C) for (const key in C) Cw[key] = mix(C[key], CRASH_VIEW[key][o] ?? CRASH_VIEW[key], crashCam);
+    const close = max(dropCam, crashCam);
     airZoom += ((state == 'ride' && !grounded && !grinding && airT > .5 ? 1 : 0) - airZoom)*damp(1.5, dt);
     const hs = (portrait ? 12 : 30) + speed*(portrait ? .28 : .36) + airZoom*5;
     const hf = 2*atan(tan(vfov/2)*aspect), fit = hs/(2*tan(hf/2));
     // a fixed view is set back by its own distance, the others far enough to fit the trail across the screen;
     // eased between the two through a change of view
-    const D = mix(mix(fit*(C.fixed > .99 ? 1 : C.dist), (C.fixed < .01 ? 1 : C.dist) + speed*.3 + airZoom*4, C.fixed),
-        dropDist + speed*.12, dropCam), vs = 2*D*tan(vfov/2);
+    const D0 = mix(mix(fit*(Cw.fixed > .99 ? 1 : Cw.dist), (Cw.fixed < .01 ? 1 : Cw.dist) + speed*.3 + airZoom*4, Cw.fixed),
+        dropDist + speed*.12, dropCam), D = mix(D0, CRASH_VIEW.dist[o], crashCam), vs = 2*D*tan(vfov/2);
     camD += (D - camD)*damp(2.5, dt);
-    const lead = state == 'title' ? min(C.lead, .3) - .18 : C.lead, reach = mix(hs, D*1.1, C.fixed);
+    const lead = state == 'title' ? min(Cw.lead, .3) - .18 : Cw.lead, reach = mix(hs, D*1.1, Cw.fixed);
     const tx = fx + reach*lead;
     // close in on a drop it looks at the rider, not the ground ahead, and keeps up with the fall
-    const ahead = 1 - dropCam*.85;
-    const ty = fy - vs*C.up + ((rideY(fx + hs*.45) - fy)*.32*min(1, .6 + C.lead*.4) + (rideY(tx) - fy)*max(0, C.lead - .4)*.6)*ahead;
+    const ahead = 1 - close*.85;
+    const ty = fy - vs*Cw.up + ((rideY(fx + hs*.45) - fy)*.32*min(1, .6 + Cw.lead*.4) + (rideY(tx) - fy)*max(0, Cw.lead - .4)*.6)*ahead;
     camX += (tx - camX)*damp(state == 'title' ? 3 : 9, dt);
-    camY += (ty - camY)*damp(mix(4.5, 10, dropCam), dt);
+    camY += (ty - camY)*damp(mix(4.5, 10, close), dt);
     // keep the numbers small: move the world's origin along with the rider
     if (abs(px - OX) > 400 || abs(py - OY) > 200) rebase(px, py);
     camShake = max(0, camShake - dt*2.5);
     const k = camShake*.35, j = ()=> (Math.random() - .5)*k;
     // the camera moves in and out with the rider's line, so a branch stays in frame at the same size
-    const behind = clamp01((C.yaw - .7)/.5);
+    const behind = clamp01((Cw.yaw - .7)/.5);
     // the views from behind aim along the line itself: where it will be at the point they look at
     const lineZ = x=> ride && x > ride.x0 && x < ride.x1 ? brZ(ride, x) : 0;
-    const zAim = state == 'ride' ? mix(pz, lineZ(camX), behind) : state == 'title' ? 0 : ragZ(rag.x);
+    const zAim = state == 'ride' ? mix(pz, lineZ(camX), behind) : state == 'title' ? 0 : rag.z - weaveZ(rag.x);
     camZ += (zAim*mix(.9, 1, behind) - camZ)*damp(mix(3.5, 9, behind), dt);
     // a three quarter view: off to the side of the trail, back up it and above, looking down the mountain,
     // swinging round as the trail weaves so the rider stays side on
@@ -2778,7 +2929,7 @@ function gameUpdatePost()
     // the way the rider's line runs: the weave, and a branch's own turn off and back
     const lineD = wzD(fx, camZ) + (ride && fx > ride.x0 && fx < ride.x1 ? brZ(ride, fx + .5) - brZ(ride, fx - .5) : 0);
     camB += (atan(lineD) - camB)*damp(mix(1.2, 3, behind), dt);
-    const al = C.yaw + camB*C.follow, el = C.pitch;
+    const al = Cw.yaw + camB*Cw.follow, el = Cw.pitch;
     const cx = camX - sin(al)*cos(el)*camD, cz = zW + cos(al)*cos(el)*camD;
     // never down in the ground, neither the line behind the rider nor the hillside the camera is over
     let cy = max(camY + sin(el)*camD, rideY(cx) + 2.6, terrainAt(cx, cz) + 2);
@@ -2787,14 +2938,14 @@ function gameUpdatePost()
     if (state != 'title')
     {
         // looking at the wheels, so the whole of bike and rider is in view, not just a head over a crest
-        const need = sightLift(fx, fy + .35*RS, wz(fx, state == 'ride' ? pz : ragZ(fx)), cx, cy, cz);
+        const need = sightLift(fx, fy + .35*RS, state == 'ride' ? wz(fx, pz) : rag.z, cx, cy, cz);
         camLift += (need - camLift)*damp(need > camLift ? 6 : 1.2, dt);
         cy += max(0, camLift);
     }
     cam.pos = vec3(cx - OX + j(), cy - OY + j(), cz);
     cam.lookAt(vec3(camX - OX, camY - OY, zW));
     render3D.shadowCenter = vec3(fx - OX + 6, fy - OY, wz(fx, camZ - 3));
-    updateChunks(camX, false, C.lead > .6 ? 140 : 0);
+    updateChunks(camX, false, Cw.lead > .6 ? 140 : 0);
     updateRings(cam.pos, camY, camX);
     updateSky(dt);
     adaptQuality(dt);
@@ -3121,8 +3272,9 @@ function readInput(dt)
 function tapScreen()
 {
     if (state == 'title') { startRide(); return true; }
-    if (state == 'results') { if (resultsT > .8) startRide(); return true; }
-    return state == 'crash';
+    // a tap once the tumble is under way rides again straight away, the run's bests saved first
+    if (state == 'crash') { if (crashT > .35) { endRun(); startRide(); } return true; }
+    if (state == 'results') { startRide(); return true; }
 }
 addEventListener('pointerdown', e=>
 {
@@ -3398,6 +3550,8 @@ function drawHUD()
         else if (everFlipped && hintT < 60 && !grounded && !grinding && airT > .2) hint = 'SECOND FINGER: HOLD TO FRONT FLIP';
         if (hint) txt(hint, W/2, bottom - 40, fitSize(hint, 20, W - 30), 'rgba(255,255,255,' + (.75 + .25*sin(time*6)) + ')', 'center', 900);
     }
+    if (state == 'crash' && crashT > .35)
+        txt('TAP TO RIDE AGAIN', W/2, bottom - (W > H ? 30 : 44), 24, 'rgba(255,255,255,' + clamp01((crashT - .35)*4)*(.65 + .35*sin(time*5)) + ')', 'center', 900);
     if (state == 'results' && resultsT > .4) drawResults(W, H);
     ctx.restore();
 }
@@ -3567,7 +3721,7 @@ function drawResults(W, H)
     txt(isBest ? 'NEW BEST!' : 'BEST  ' + best.dist.toLocaleString() + ' m  ·  ' + best.score.toLocaleString(),
         W/2, y + 10, 14, isBest ? '#ffd23a' : 'rgba(255,255,255,.75)', 'center', 800);
     const bw = cw - 48;
-    button(cx + 24, cy + ch - 58, bw, 42, 'RIDE AGAIN', ()=> { if (resultsT > .8) startRide(); }, true, 16);
+    button(cx + 24, cy + ch - 58, bw, 42, 'RIDE AGAIN', ()=> startRide(), true, 16);
 }
 
 // ============================================================================
@@ -3594,7 +3748,9 @@ const SFX = {
     ready:     new Sound([.5,0,523,.02,.12,.3,1,1.4,,,1047,.08,.1,,,,,.6]),
     turbo:     new Sound([.9,0,110,.05,.5,.6,2,1.2,22,,,,,,,,.1,.6,.1]),
     send:      new Sound([.8,0,180,.02,.25,.45,2,1.4,18,,,,,,,,.06,.6,.15]),
-    line:      new Sound([.6,0,587,.02,.18,.4,1,1.6,,,880,.08,.12,,,,.06,.7])};
+    line:      new Sound([.6,0,587,.02,.18,.4,1,1.6,,,880,.08,.12,,,,.06,.7]),
+    thud:      new Sound([1,.1,60,.005,.04,.15,4,1.5,-5,,,,,6,,.1,.05,.4]),
+    clank:     new Sound([.5,.05,700,.002,.02,.12,3,1.8,,,,,,,3,,.03,.5,.1])};
 
 function sfx(name, v=0)
 {
@@ -3835,6 +3991,7 @@ window.__mtb = {
     press2: ()=> pressSecond(), release2: ()=> releaseSecond(),
     swipe: dir=> airSwipe(dir),
     wipe: reason=> crash(reason || 'HIT A ROCK'),
+    wreck: ()=> ({rag: {...rag}, crashT, crashCam, pts: ragdoll?.pts.map(p=> ({x: p.x, y: p.y, z: p.z, g: terrainAt(p.x, p.z)})), pieces: pieces.map(p=> ({key: p.key, x: p.x, y: p.y, z: p.z, g: terrainAt(p.x, p.z)}))}),
     ground: x=> rideY(x), state: ()=> ({px, py, vx, vy, airT, grounded, run: state}),
     teleport: x=> { trackEnsure(x + TRACK_AHEAD); placeRider(x); state = 'ride'; sp = 16; },
     setDay: t=> dayT = t,

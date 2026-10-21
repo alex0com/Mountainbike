@@ -410,6 +410,33 @@ Each phase is a separate commit (or a few), tested with the Phase 0 harness befo
   - **Result:** LOW lines over 6 seeds and the main trail over 3 seeds, in all four views, landscape and portrait, are clean. A few 3–4 frame wheel clips remain, plus the summit start in portrait SIDE.
   - **Regression:** 40 km with tricks: 0 crashes.
 
+- **Bluecow Rager: name, 3D logo menu, moo: done.**
+  - **Name:** the game is now Bluecow Rager, in the page title and the header comment. The file keeps its name so existing links still work.
+  - **Logo:**
+    - **Source:** `art/bluecow-rager-logo.png`, the original.
+    - **Embedded copy:** the white background flood-filled out from the edges (so the white lettering stays), cropped and stored as an 84 KB WebP in its own script tag (`BLUECOW_LOGO`).
+  - **The 3D logo** (`buildLogo`), made at load from the picture:
+    - **Front:** a 160-wide relief grid. The black plaque stays flat; anything bright or coloured stands 0.3 m proud, blurred so the edges slope, with normals from the height. The texture's own alpha cuts the outline smoothly, because the renderer discards alpha under 0.5 on opaque meshes.
+    - **Back:** a dark back face with the same cut-out.
+    - **Sides:** 0.45 m walls traced round the outline by marching squares.
+    - **Stand:** 8 m wide on two posts, 20 m down from the start and turned toward the camera.
+  - **Menu camera:** stands a little to one side and above, fits the logo into the top of the screen above the buttons, and drifts slowly. On PLAY it blends into the ride camera over 1.3 s while the logo is flung up and away.
+  - **The show:** after 0.8 s the rider pedals off the summit and smacks into the logo. A synthesised moo, a bonk and a crash play; the logo rocks on its posts, and the rider goes down in a ragdoll yard sale, kept off the logo face and on the trail in front of it.
+    - **Replay:** a tap on the scene runs it again.
+    - **About the moo:** a browser only allows sound after a first touch, so on a fresh load the first smack may be silent; the next tap's replay moos.
+  - **The moo** (`moo`): a sawtooth plus a sub-octave square through a low-pass "mouth" that opens from mmm to ooo and closes again, with a throat peak at 620 Hz. The pitch rises 95 → 146 Hz, holds with a 5 Hz wobble, and slides down to 72 Hz over 1.7 s.
+  - **Menu:**
+    - **PLAY / HELP / ABOUT:** a column on a tall screen, a row on a wide one, with the best run above.
+    - **HELP:** the touch controls plus the keyboard keys.
+    - **ABOUT:** the game, the contact alex@alex0.com, and an EMAIL button that opens a mail to it.
+    - **Keys:** Space or Enter plays; Escape goes back.
+  - **Results screen:** gains a MENU button.
+  - **New test hooks:** `__mtb.buttons()` (the buttons on screen) and `__mtb.moo()`.
+  - **Checks:**
+    - Menu, help, about, PLAY and MENU checked in landscape and portrait.
+    - `moo()` runs with sound allowed and no page errors.
+    - Regression: 40 km with tricks: 0 crashes.
+
 ## Running the tools
 
     node tools/sim.mjs [--seeds 20] [--km 5] [--flips back|front] [--tricks] [--lanes rand|up|down|main] [--turbo] [--json out.json] [--salt n] [--game other.html]

@@ -73,6 +73,8 @@ const clamp01 = v=> v < 0 ? 0 : v > 1 ? 1 : v;
 const clampV = (v, a, b)=> v < a ? a : v > b ? b : v;
 const mix = (a, b, t)=> a + (b - a)*t;
 const sstep = t=> (t = clamp01(t), t*t*(3 - 2*t));
+// eases in and out of its turn as well, so a curve along it starts and ends with no jolt
+const sstep5 = t=> (t = clamp01(t), t*t*t*(t*(t*6 - 15) + 10));
 const wrapPI = a=> a - TAU*floor((a + PI)/TAU);
 const damp = (rate, dt)=> 1 - exp(-rate*dt);
 
@@ -153,11 +155,11 @@ let genBase = 0, genGrade = 0, nextSignX = 500, lastLaunch = null, nextBooterX =
 // line blocks: the trail splits into lines across the face of the mountain, reached by berms, each with its own
 // features, and they all come back together. PRO is up on the ridge, HIGH along the hillside behind the trail,
 // LOW down the slope in front; the main trail carries on between them.
-const T_MAX = 30;
+const T_MAX = 56;
 const LINES = {
-    pro:  {lane: 2, z: -20, T: 30, dir: 1, name: 'PRO LINE', short: 'PRO', pts: 600, color: 'rgba(255,120,95,.95)', sign: hsl(.02,.85,.55)},
-    high: {lane: 1, z: -10, T: 22, dir: 1, name: 'HIGH LINE', short: 'HIGH', pts: 300, color: 'rgba(255,214,70,.95)', sign: hsl(.14,.95,.55)},
-    low:  {lane: -1, z: 9, T: 22, dir: -1, name: 'LOW LINE', short: 'LOW', pts: 300, color: 'rgba(90,230,215,.95)', sign: hsl(.5,.9,.5)}};
+    pro:  {lane: 2, z: -18, T: 56, dir: 1, name: 'PRO LINE', short: 'PRO', pts: 600, color: 'rgba(255,120,95,.95)', sign: hsl(.02,.85,.55)},
+    high: {lane: 1, z: -10, T: 44, dir: 1, name: 'HIGH LINE', short: 'HIGH', pts: 300, color: 'rgba(255,214,70,.95)', sign: hsl(.14,.95,.55)},
+    low:  {lane: -1, z: 9, T: 44, dir: -1, name: 'LOW LINE', short: 'LOW', pts: 300, color: 'rgba(90,230,215,.95)', sign: hsl(.5,.9,.5)}};
 // the lanes from the top of the hill down, the main trail as 0
 const LANES = [2, 1, 0, -1];
 const offeredLanes = s=> LANES.filter(l=> l == 0 || s.lines[l]);
@@ -168,15 +170,9 @@ let gullies = [], arches = [];
 // ---------- the weave: the trail swings across the face of the mountain, so the world is bent around it.
 // The game runs along x; z is across the trail. Drawing moves everything sideways by the weave, fully near
 // the trail and less and less out over the hillside and the valley, so the ground never folds over itself.
-let NW, bends = [];
-function weaveZ(x)
-{
-    let z = MT.weave*(22*NW(x*.006, 1.7) + 7*NW(x*.018, 4.1))*sstep((x - 70)/150);
-    // a bend swings the trail out and back round, straight again at its end; a run of turns snakes left and right
-    for (const b of bends) if (x > b.x0 && x < b.x1)
-        z += b.lam ? b.A*sin(TAU*(x - b.x0)/b.lam)*sstep((x - b.x0)/(b.lam*.4))*sstep((b.x1 - x)/(b.lam*.4)) : b.A*sin(PI*(x - b.x0)/(b.x1 - b.x0))**2;
-    return z;
-}
+// Long, lazy swings only: nothing turns tighter than a radius of about 70 m, so the ride flows.
+let NW;
+const weaveZ = x=> MT.weave*(22*NW(x*.006, 1.7) + 2.5*NW(x*.014, 4.1))*sstep((x - 70)/150);
 const weaveK = zr=> zr >= 0 ? 1/(1 + max(0, zr - 6)/25) : 1/(1 + max(0, -zr - 14)/40);
 const wz = (x, zr=0)=> zr + weaveZ(x)*weaveK(zr);
 // how fast the line goes across as it goes along, and how fast that turns
@@ -184,7 +180,8 @@ const wzD = (x, zr=0)=> (weaveZ(x + .5) - weaveZ(x - .5))*weaveK(zr);
 const wzK = x=> weaveZ(x + 1) - 2*weaveZ(x) + weaveZ(x - 1);
 
 const genX = ()=> (ys.length - 1)*DX;
-const bumpAt = x=> .05*NV(x*.37, 3.1) + .025*NV(x*1.3, 7.7);
+// the trail's surface: long low swells and a little texture, nothing a bike rolling at speed would hop off
+const bumpAt = x=> .06*NV(x*.15, 3.1) + .01*NV(x*.45, 7.7);
 const trendY = x=> -GRADE_AVG*x;
 const pushY = (y, gap=0)=> { ys.push(y); gapF.push(gap); };
 
@@ -219,7 +216,7 @@ const railY = (r, x)=> r.y0 + (x - r.x0)*r.slope;
 function brT(b, x)
 {
     if (x <= b.x0 || x >= b.x1) return 0;
-    return x < b.x0 + b.T ? sstep((x - b.x0)/b.T) : x > b.x1 - b.T ? sstep((b.x1 - x)/b.T) : 1;
+    return x < b.x0 + b.T ? sstep5((x - b.x0)/b.T) : x > b.x1 - b.T ? sstep5((b.x1 - x)/b.T) : 1;
 }
 const brZ = (b, x)=> b.z*brT(b, x);
 function brY(b, x)
@@ -323,13 +320,16 @@ const BW = {};
 const surfaceAt = x=> biomeW(x, BW).snow > .5 ? S_SNOW : S_DIRT;
 
 // ---------- building blocks
+// a stretch of trail easing from the grade before it to a new one, over a distance that grows with the change so a
+// steepening never turns into a crest the bike would fly off, with rollers no sharper than a fast bike rolls over
 function addRun(len, gradeTo, rollA=0, rollL=20)
 {
-    const n = max(1, round(len/DX)), g0 = genGrade, ph = rnd()*TAU;
+    const n = max(1, round(len/DX)), g0 = genGrade, ph = rnd()*TAU, nt = min(n, max(n*.4, 32*abs(gradeTo - g0)/DX));
+    rollA = min(rollA, .04*(rollL/TAU)**2);
     for (let k = 1; k <= n; ++k)
     {
         const u = k/n, x = genX() + DX;
-        genGrade = mix(g0, gradeTo, sstep(min(1, u*2.5)));
+        genGrade = mix(g0, gradeTo, sstep(k/nt));
         genBase -= genGrade*DX;
         const roll = rollA*sin(ph + x*TAU/rollL)*sstep(u*5)*sstep((1 - u)*5);
         pushY(genBase + roll + bumpAt(x));
@@ -384,7 +384,7 @@ function addJump(H, L, G, type='kicker', orbV=ORB_V, knuckle=.5, v=VMAX + 2, spa
     return f;
 }
 
-// a drop-in, Rampage style: the trail swings round a bend onto a flat ledge where the rider checks their speed,
+// a drop-in, Rampage style: the trail runs out onto a flat ledge where the rider checks their speed,
 // then rolls off a sheer face, or pops off it with a tap at the lip, onto a long steep landing far below
 function addDropIn(d)
 {
@@ -400,24 +400,9 @@ function addDropIn(d)
     const f = {type: 'dropin', x0, x1: lipX, x2: genX(), lipY, lipSlope: -.05, F, v, landX: lipX + x, orbV: v};
     feats.push(f);
     paces.push({x0: x0 + 2, x1: lipX + .5, v, f});
-    bends.push({x0: x0 - 40, x1: lipX - 3, A: (rnd() < .5 ? -1 : 1)*(7 + rnd()*4)});
     addRun(24, gradeTarget(d), 0);
     return f;
 }
-// berm turns: the trail snakes left and right across the mountain, each turn banked up on its outside
-function addBermTurns(d)
-{
-    const n = 3 + (rnd() < .5 ? 1 : 0), lam = 62 + rnd()*16, x0 = genX() + 6, A = (rnd() < .5 ? -1 : 1)*(6.5 + rnd()*2 + d*1.5);
-    // n turns, half a wave each, with a little straight run in and out
-    const x1 = x0 + lam*(n + 1)/2;
-    bends.push({x0, x1, A, lam});
-    const f = {type: 'berms', x0, x1, apexes: [], carved: 0};
-    for (let k = 0; k < n; ++k) f.apexes.push(x0 + lam*(k + 1)/2);
-    feats.push(f);
-    addRun(x1 - genX() + 4, gradeTarget(d), 0);
-    return f;
-}
-
 // a step-down: a small kicker off a ledge onto a landing a few metres lower, no chasm between
 const addStepDown = d=> addJump(1 + rnd()*.4, 4.5 + rnd(), .5 + rnd()*.1, 'stepdown', 14, 3 + rnd()*3 + d*2);
 
@@ -664,7 +649,7 @@ function addCreek(d)
 function addWhoops(d)
 {
     const n = 4 + (rnd()*3 | 0), L = 8.5 + rnd()*1.5, A = .45 + rnd()*.2 + d*.12, g = gradeTarget(d);
-    addRun(6, g, 0);
+    addRun(14, g, 0);
     const steps = round(n*L/DX), s0 = genX();
     for (let k = 1; k <= steps; ++k)
     {
@@ -693,7 +678,7 @@ function openFork(d)
     if (x0 > 500 && rnd() < .4 + clamp01(x0/6000)*.35) kinds.push('pro');
     if (rnd() < .7) kinds.push('high');
     if (rnd() < .7 || !kinds.length) kinds.push('low');
-    openSplit = {x0, kinds, len: kinds.includes('pro') ? 260 + rnd()*40 : 210 + rnd()*50};
+    openSplit = {x0, kinds, len: kinds.includes('pro') ? 300 + rnd()*40 : 250 + rnd()*50};
 }
 function closeFork(d)
 {
@@ -790,7 +775,12 @@ function lineFeatures(b, lane, kind, sc)
     const fall = (lane[ka] - lane[kb])/((kb - ka)*DX);
     // a stretch at a set grade, one that follows the smoothed path, and a kicker (giving its lip) that carries on
     // at the grade before it, or along the path, so it always rises out of what leads into it
-    const run = (len, grade)=> { for (const e = min(kb, k + round(len/DX)); k < e; ++k) { o += (bg(k) - grade)*DX; off[k] = o; } };
+    // (eased from the grade the line is on, except straight after a drop)
+    const run = (len, grade, ease=true)=>
+    {
+        const g0 = (Y(k - 2) - Y(k - 1))/DX, s = k, n = round(len/DX), nt = ease ? min(n, max(n*.4, 32*abs(grade - g0)/DX)) : 0;
+        for (const e = min(kb, k + n); k < e; ++k) { o += (bg(k) - (nt ? mix(g0, grade, sstep((k - s + 1)/nt)) : grade))*DX; off[k] = o; }
+    };
     const follow = len=> { for (const e = min(kb, k + round(len/DX)); k < e; ++k) off[k] = o; };
     const kick = (H, len, grade)=>
     {
@@ -811,6 +801,7 @@ function lineFeatures(b, lane, kind, sc)
     const recover = ()=>
     {
         if (kb - k < 8) return false;
+        const k2 = k;
         const spare = j=> max(0, bg(j) - .02)*DX;
         if (o < 0)
         {
@@ -825,6 +816,14 @@ function lineFeatures(b, lane, kind, sc)
             const rate = o/((kb - k)*DX);
             for (; k < kb; ++k) { o -= rate*DX; off[k] = o; if (bg(k) + rate > 1.3) return false; }
         }
+        // the corner where the landing gives way to the way back, rounded off over a few metres each side
+        const c = off.slice(), w = 12;
+        for (let j = max(ka, k2 - w); j < min(kb - w, k2 + 3*w); ++j)
+        {
+            let s = 0, t = 0;
+            for (let i = -w; i <= w; ++i) { const q = w + 1 - abs(i); s += c[j + i]*q; t += q; }
+            off[j] = s/t;
+        }
         return true;
     };
     if (kind == 'pro')
@@ -836,7 +835,7 @@ function lineFeatures(b, lane, kind, sc)
         const lip = k - 1, v = 7 + rnd(), F = max(5, o + 1 + rnd()*3*sc), G = clampV(fall + .6, .75, 1);
         o -= F;
         const xl = landing(slopeAt(lip), v + 2, POP, F, G);
-        run(xl + 10, G);
+        run(xl + 10, G, false);
         feats.push({type: 'dropin', x0: X(l0), x1: X(lip), x2: X(k), F, v, landX: X(lip) + xl, orbV: v});
         paces.push({x0: X(l0) + 4, x1: X(lip) + .5, v});
         what = 'DROP-IN ' + round(F) + 'm';
@@ -848,10 +847,10 @@ function lineFeatures(b, lane, kind, sc)
         run(30, max(.04, fall - .18));
         const p0 = k;
         run(14, max(.04, fall - .15));
-        const s0 = k, lip = kick(.9 + rnd()*.4, 4.5), S = (2.5 + rnd()*2)*sc + .5, v = 14 + rnd()*2, G = clampV(fall + .2, .4, .55);
+        const s0 = k, lip = kick(.9 + rnd()*.4, 4.5, max(.04, fall - .15)), S = (2.5 + rnd()*2)*sc + .5, v = 14 + rnd()*2, G = clampV(fall + .2, .4, .55);
         o -= S;
         const xl = landing(slopeAt(lip), v + 2, POP, S, G);
-        run(xl + 8, G);
+        run(xl + 8, G, false);
         feats.push({type: 'stepdown', x0: X(s0), x1: X(lip), x2: X(k), drop: S, orbV: v});
         paces.push({x0: X(p0), x1: X(lip) + .2, v});
         what = 'STEP-DOWN';
@@ -879,7 +878,7 @@ function lineFeatures(b, lane, kind, sc)
         for (const e = k + round(W/DX); k < e; ++k) { off[k] = o; add[k] = -40; gap[k] = 1; }
         o -= drop;
         const xl = landing(slopeAt(lip), v + 1, POP, 1.9 + drop + .3*W, G);
-        run(max(14, xl - W + 10), G);
+        run(max(14, xl - W + 10), G, false);
         feats.push({type: 'gap', x0: X(s0), x1: X(lip), x2: X(g0 + round(W/DX)) + DX*.5, W, orbV: v});
         paces.push({x0: X(p0), x1: X(lip) + .2, v, hold: true});
         what = 'CHUTE + GAP';
@@ -916,7 +915,6 @@ function genSection()
         nextDropX = genX() + 550 + rnd()*350;
         nextBooterX = max(nextBooterX, genX() + 100);
     }
-    else if (x > 250 && rnd() < .18) addBermTurns(d);
     // a mega booter comes up when it is due, as soon as the trail is not split into lines
     else if (x > nextBooterX || x > nextMegaX && !openSplit)
     {
@@ -993,7 +991,7 @@ function trackInit(s)
     NA = makeNoise(rnd); NB = makeNoise(rnd); NC = makeNoise(rnd); NV = makeNoise(rnd);
     ys = []; gapF = []; rails = []; rocks = []; orbs = []; signs = []; feats = []; gaps = []; pendingArcs = [];
     splits = []; openSplit = null; lastSplitEnd = 0; nextSplitGap = 0; ride = null; noSign = []; gullies = []; arches = [];
-    nextSignX = 500; lastLaunch = null; nextBooterX = 200; nextDropX = 450; nextCanyonX = 900; nextMegaX = 380; nextTyreX = 140; paces = []; bends = [];
+    nextSignX = 500; lastLaunch = null; nextBooterX = 200; nextDropX = 450; nextCanyonX = 900; nextMegaX = 380; nextTyreX = 140; paces = [];
     // the summit: the back of the peak rising from the left, a flat top to stand on, then the drop in
     genBase = -14; genGrade = -.6;
     pushY(genBase);
@@ -1015,7 +1013,7 @@ function trackPrune(x)
     orbs = orbs.filter(o=> o.x > x);
     splits = splits.filter(s=> s.x1 > x - 60); noSign = noSign.filter(f=> f.x1 > x);
     gullies = gullies.filter(g=> g.x1 > x - 80); arches = arches.filter(a=> a.x > x - 80);
-    paces = paces.filter(p=> p.x1 > x); bends = bends.filter(b=> b.x1 > x - 300);
+    paces = paces.filter(p=> p.x1 > x);
 }
 
 // ============================================================================
@@ -1535,7 +1533,7 @@ function bermAt(b, x)
     // the turn's direction and how hard it bends: the path's slope across, and its curvature
     const e = .4, z0 = brZ(b, x - e), z1 = brZ(b, x), z2 = brZ(b, x + e);
     const dz = (z2 - z0)/(2*e), k = (z2 - 2*z1 + z0)/(e*e)/(1 + dz*dz)**1.5;
-    return {dz, k, h: min(1.7, abs(k)*17), o: k > 0 ? -1 : 1};
+    return {dz, k, h: min(1.7, abs(k)*42), o: k > 0 ? -1 : 1};
 }
 // a signpost before a block of lines: an arrow and a name for each line it offers, highest up the hill at the top
 function makeForkSign(sp)
@@ -2038,7 +2036,7 @@ function placeRider(x)
     airT = rot = 0; style = undefined; stylesDone = []; trickQueued = null; trickBuf = 0; boostT = 0; legT = 0; superOn = superFlight = false; airMult = 1;
     suspF = suspR = .03; suspFV = suspRV = 0; wheelOffF = wheelOffR = 0; visYWas = py; visVyWas = 0;
     combo = comboPts = comboT = 0; comboNames = []; comboKeys = [];
-    ride = null; laneWant = 0; forkAhead = null; turboT = turboGrace = 0; bermStage = 0;
+    ride = null; laneWant = 0; forkAhead = null; turboT = turboGrace = 0; bermStage = 0; fly = null; sideOff = 0;
 }
 
 // ---------- on the ground: gravity down the slope, drag, rolling resistance, never slower than a cruise
@@ -2059,10 +2057,14 @@ function stepGround(dt)
     sp = clampV(sp + a*dt, lo, VMAX + bike.speed + (mp.draft ? 2 : 0) + (turboT > 0 ? TURBO_V : legT > 0 ? 6 : boostT > 0 ? 4 : 0));
     if (brakeOn()) { sp = max(3, sp - 24*dt); slideT += dt; }
     braking = !!pace && sp > pace.v;
-    // the run in to a gap sets the speed that clears it, quickly, so even the last of it up the kicker brings the
-    // rider close: a fast one brakes, a slow one pedals up
-    if (braking) sp = max(pace.v, sp - (pace.hold ? 25 : 12)*dt);
-    else if (pace?.hold && sp < pace.v) sp = min(pace.v, sp + 20*dt);
+    // a pace sets its speed evenly over the way in, so the rider has it a few metres before the end however fast
+    // they came: a fast one brakes down to it, and on the run in to a gap a slow one pedals up to it
+    if (pace)
+    {
+        const left = max(1, pace.x1 - px - (pace.hold ? 9 : 5)), dv = (sp*sp - pace.v*pace.v)/(2*left);
+        if (braking) sp = max(pace.v, sp - clampV(dv + max(0, a), 3, 25)*dt);
+        else if (pace.hold && sp < pace.v) sp = min(pace.v, sp + clampV(-dv, 3, 20)*dt);
+    }
     // the rider's own brakes skid the same way, dust and all
     braking ||= brakeOn();
     // the face of a drop or a chasm wall is never ridden: off its edge the bike flies, into it the bike crashes
@@ -2075,9 +2077,10 @@ function stepGround(dt)
         takeoff();
         return;
     }
-    // the ground drops away faster than the bike can follow: off a lip, a drop or a big crest
+    // the ground drops away faster than the bike can follow: off a lip, a drop or a big crest. Over a little crest,
+    // where it would only be off for a moment and barely above the ground, it rolls on over it
     const vyNow = sp*sn, yStick = py + vyNow*dt - .5*G_AIR*2.2*dt*dt;
-    if (gy < yStick - .002)
+    if (gy < yStick - .002 && wouldFly(sp*c, vyNow))
     {
         px = nx; py = py + vyNow*dt - .5*G_AIR*dt*dt;
         vx = sp*c; vy = vyNow - G_AIR*dt;
@@ -2090,6 +2093,21 @@ function stepGround(dt)
     // ride onto a rail that starts at the ground
     if (!onBranch(px)) for (const r of rails)
         if (r.mount && ox < r.x0 && px >= r.x0 && abs(railY(r, px) - py) < .7) { startGrind(r); return; }
+}
+
+// whether leaving the ground here would be a flight worth the name: long enough, or high enough over the ground
+function wouldFly(wx, wy)
+{
+    let x = px, y = py, h = 0;
+    for (let t = 0; t < .5; t += 1/120)
+    {
+        x += wx/120; wy -= G_AIR/120; y += wy/120;
+        if (rideGap(x)) return true;
+        const g = rideY(x);
+        if (y <= g) return t > .2;
+        if ((h = max(h, y - g)) > .1) return true;
+    }
+    return true;
 }
 
 function jumpNow()
@@ -3087,7 +3105,7 @@ function newRun(s)
     runTime = dist = score = orbsGot = orbStreak = 0;
     bestCombo = 0; bestComboName = ''; flipsTotal = 0; grindDist = 0; crashReason = ''; trickCounts = {}; tricksTotal = 0; bestTrick = {name: '', pts: 0}; airHist = [0, 0, 0, 0, 0, 0]; hardLandings = 0; combosBanked = 0; multSum = 0; cased = sketchy = perfects = maxAir = topSpeed = smashes = slides = tyresGot = 0;
     titleT = 0; titleWreck = false; menu = 'main'; logoWob = logoWobV = logoFall = logoFallV = 0; logoDown = false;
-    battery = 0; turboT = 0; turbos = 0; supers = legBoosts = sends = cellsGot = 0; tyres = brakeFuel = slideT = 0; brakeHeld = false; setShown = null; setShownT = 0; lines = 0; proLines = 0; linesRidden = new Set; allLines = false; dayT = DAY_START; dropCam = crashCam = sendCam = 0; camLift = 0; ragdoll = null; pieces = []; pz = yawV = leanV = bermY = 0; camZ = camB = 0;
+    battery = 0; turboT = 0; turbos = 0; supers = legBoosts = sends = cellsGot = 0; tyres = brakeFuel = slideT = 0; brakeHeld = false; setShown = null; setShownT = 0; lines = 0; proLines = 0; linesRidden = new Set; allLines = false; dayT = DAY_START; dropCam = crashCam = sendCam = dropR = crashR = sendR = airR = 0; camLift = 0; camReset(); ragdoll = null; pieces = []; pz = yawV = leanV = bermY = sideOff = 0; fly = null; camZ = camB = 0;
     messages.length = 0; trickPops.length = 0; swipeFx.length = 0;
     riderView = new RiderView;
     new SprocketView; new OrbView; new OrbGlow; new LogoView; new RemoteView; new SkyExtras; new TurboGlow;
@@ -3107,7 +3125,7 @@ function newRun(s)
     flare = new LensFlare3D(1, 6, .7);
     flare.occlusion = false;
     OX = START_X; OY = groundY(START_X);
-    camX = START_X + 8; camY = groundY(START_X); camD = 30;
+    camX = START_X + 8; camY = groundY(START_X); camD = 30; camReset();
     updateChunks(camX, true);
 }
 
@@ -3263,6 +3281,23 @@ function rideYs(x)
     return y + clampV(s - y, -.06, .06);
 }
 let wheelOffF = 0, wheelOffR = 0, visYWas = 0, visVyWas = 0;
+// the way across the rider's line lies: how far across the trail it is at x, and how fast that changes along it
+const pathZr = x=> ride && x > ride.x0 && x < ride.x1 ? brZ(ride, x) : 0;
+const pathD = x=> wzD(x, pathZr(x)) + (pathZr(x + .5) - pathZr(x - .5));
+// where a flight will come down, past any chasm
+function flightEndX()
+{
+    let x = px, y = py, wy = vy;
+    for (let t = 0; t < 5; t += 1/60)
+    {
+        x += vx/60; wy -= G_AIR/60; y += wy/60;
+        if (y <= rideY(x) && !rideGap(x)) break;
+    }
+    return x;
+}
+// a flight across the trail, and how far the rider is off the line, in a berm or coming down from one
+let fly = null, sideOff = 0;
+const lastW = {x: 0, z: 0, d: 0}, BS = {yaw: {v: 0, t: null, tv: 0}, lean: {v: 0, t: null, tv: 0}};
 function updateVisuals(dt)
 {
     let offF = 0, offR = 0;
@@ -3302,28 +3337,43 @@ function updateVisuals(dt)
     suspRV += (240*(sus - suspR) - 17*suspRV)*dt; suspR = clampV(suspR + suspRV*dt, -.02, .19);
     landVis *= 1 - damp(10, dt);
     // on a branch: across to its line, turned along it, leaned into the berms and riding up their walls
-    let tYaw = 0, tLean = 0, tY = 0;
-    pz = 0;
-    const bx = state == 'ride' || state == 'title' ? px : rag.x;
+    let tYaw = 0, tLean = 0, tY = 0, tOff = 0;
+    const bx = state == 'ride' || state == 'title' ? px : rag.x, zr = pathZr(bx), flying = state == 'ride' && !grounded && !grinding;
     if (ride && bx > ride.x0 && bx < ride.x1)
     {
         const m = bermAt(ride, bx), len = hypot(1, m.dz);
-        pz = brZ(ride, bx);
-        tYaw = -atan(m.dz)*1.3;
-        tLean = clampV(atan(sp*sp*m.k/9.81)*.8, -.75, .75);
+        tYaw = -atan(m.dz);
         if (grounded)
         {
+            tLean = clampV(atan(sp*sp*m.k/9.81)*.8, -.75, .75);
             const up = 1.1*m.h/1.6;
-            pz += m.o*up/len; tY = bermLift(up, m.h);
+            tOff = m.o*up/len; tY = bermLift(up, m.h);
             tYaw -= tLean*.4;
         }
     }
+    // in the air the bike carries straight on rather than following the trail round: from where it left the ground,
+    // heading the way it was going, along a smooth curve onto the trail where it will come down, the way it runs there
+    if (flying)
+    {
+        if (!fly) fly = {...lastW};
+        const xl = max(px + 1, flightEndX()), h = max(1, xl - fly.x), u = clamp01((px - fly.x)/h), u2 = u*u, u3 = u2*u;
+        const z0 = fly.z, m0 = fly.d*h, z1 = wz(xl, pathZr(xl)), m1 = pathD(xl)*h;
+        fly.z = (2*u3 - 3*u2 + 1)*z0 + (u3 - 2*u2 + u)*m0 + (3*u2 - 2*u3)*z1 + (u3 - u2)*m1;
+        fly.d = ((6*u2 - 6*u)*z0 + (3*u2 - 4*u + 1)*m0 + (6*u - 6*u2)*z1 + (3*u2 - 2*u)*m1)/h;
+        fly.x = px;
+        sideOff = fly.z - wz(px, zr);
+        tYaw = atan(wzD(px, zr + sideOff)) - atan(fly.d);
+    }
+    else { fly = null; sideOff += (tOff - sideOff)*damp(8, dt); }
+    pz = zr + sideOff;
+    if (!flying) { lastW.x = bx; lastW.z = wz(bx, pz); lastW.d = pathD(bx); }
     // and leaned into the weave's turns
-    if (state == 'ride') tLean += clampV(atan(sp*sp*wzK(bx)*weaveK(pz)/9.81)*.8, -.55, .55)*(grounded ? 1 : .4);
+    if (state == 'ride' && grounded) tLean += clampV(atan(sp*sp*wzK(bx)*weaveK(pz)/9.81)*.8, -.55, .55);
     // locked up, the back wheel steps out
     if (brakeOn()) tYaw += .34*clamp01(sp/8);
-    yawV += (tYaw - yawV)*damp(12, dt);
-    leanV += (tLean - leanV)*damp(10, dt);
+    // on springs, so the bike swings into a lean or a turn and out of it again without a jolt
+    yawV = spring(yawV, tYaw, BS.yaw, 11, dt);
+    leanV = spring(leanV, tLean, BS.lean, 9, dt);
     bermY += (tY - bermY)*damp(16, dt);
     // pedal until the bike runs away, then stand and coast with the cranks level
     if (legT > 0 && grounded && !grinding && state == 'ride') crank += 18*dt;
@@ -3375,11 +3425,33 @@ function camNextZoom()
 const camViewName = ()=> camView[camPortrait() ? 'p' : 'l'];
 const camZoomName = ()=> CAM_ZOOMS[camView[camPortrait() ? 'zp' : 'zl']][0];
 const W3 = (x, y, zr=0)=> vec3(x - OX, y - OY, wz(x, zr));
+// the camera moves on springs, critically damped: it never overshoots, and when what it follows jumps or turns it
+// eases into the change rather than jerking. With lead it also takes on the speed of what it follows, so it keeps
+// right up with something moving steadily rather than trailing behind it
+const camSpring = ()=> ({v: 0, t: null, tv: 0});
+const CS = {x: camSpring(), y: camSpring(), ahead: camSpring(), speed: camSpring(), lift: camSpring(), floor: camSpring()};
+function spring(x, target, s, w, dt, lead=0)
+{
+    if (s.t === null || !(abs(target - x) < 80) || !(dt > 0)) { s.t = target; s.v = s.tv = 0; return target; }
+    // the target's speed, changing no faster than a hard brake, so a jump in the target is not taken for speed
+    s.tv += clampV((target - s.t)/dt - s.tv, -120*dt, 120*dt);
+    s.t = target;
+    s.v += (w*w*(target - x) + 2*w*(s.tv*lead - s.v))*dt;
+    return x + s.v*dt;
+}
+const camReset = ()=> { for (const k in CS) CS[k].t = null; };
+// eases a camera move in and out: a ramp up or down over its time, smoothed at both ends
+const ramp = (r, on, up, down, dt)=> clamp01(r + (on ? dt/up : -dt/down));
+let dropR = 0, crashR = 0, sendR = 0, airR = 0, camAhead = 0, camSpeed = 8, camFloor = -1e9;
+const camWas = {x: 0, z: 0};
+// the ground ahead the camera frames, averaged over some metres so a lip or a drop coming up slides into the view
+const camGroundAv = x=> { let s = 0; for (let k = -4; k <= 4; ++k) s += camGround(x + k*1.5); return s/9; };
 function gameUpdatePost()
 {
     const dt = timeDelta;
     const W = mainCanvasSize.x, H = mainCanvasSize.y, aspect = W/max(1, H), portrait = aspect < 1;
-    const cam = render3D.camera, speed = state == 'ride' ? hypot(vx, vy) : 8;
+    camSpeed = spring(camSpeed, state == 'ride' ? hypot(vx, vy) : 8, CS.speed, 1.6, dt);
+    const cam = render3D.camera, speed = camSpeed;
     const vfov = portrait ? 1.0 : .78;
     cam.fov = vfov;
     // the chosen view's numbers, eased toward so a change of view glides
@@ -3393,19 +3465,19 @@ function gameUpdatePost()
     // a drop-in: from rolling onto the ledge until just after the landing the camera comes in close, low and
     // round in front of the rider, so the drop and the tricks off it fill the screen, then eases back out
     const di = state == 'ride' || state == 'crash' ? feats.find(f=> (f.type == 'dropin' || f.type == 'canyon') && fx > (f.camX0 ?? f.x0) - 6 && fx < f.landX + 6 && onLine(f, fx)) : null;
-    dropCam += ((di ? 1 : 0) - dropCam)*damp(di ? 1.6 : 1.1, dt);
+    dropR = ramp(dropR, di, 1.8, 2.2, dt); dropCam = sstep(dropR);
     // a canyon gap is framed wider, to see across it
     if (di) dropDist = di.camDist ?? DROP_VIEW.dist[o];
     const C = dropCam < .001 ? camP : {};
     if (C != camP) for (const key in camP) C[key] = mix(camP[key], DROP_VIEW[key][o] ?? DROP_VIEW[key], dropCam);
     const wrecked = state == 'crash' || state == 'results';
-    crashCam += ((wrecked ? 1 : 0) - crashCam)*damp(wrecked ? 2.2 : 4, dt);
+    crashR = ramp(crashR, wrecked, 1, .7, dt); crashCam = sstep(crashR);
     const Cw = crashCam < .001 ? C : {};
     if (Cw != C) for (const key in C) Cw[key] = mix(C[key], CRASH_VIEW[key][o] ?? CRASH_VIEW[key], crashCam);
     const close = max(dropCam, crashCam);
     // on a super send it looks at the rider rather than the landing far below, and stands back a little
-    sendCam += ((state == 'ride' && superFlight ? 1 : 0) - sendCam)*damp(2, dt);
-    airZoom += ((state == 'ride' && !grounded && !grinding && airT > .5 ? 1 : 0) - airZoom)*damp(1.5, dt);
+    sendR = ramp(sendR, state == 'ride' && superFlight, 1.2, 1.2, dt); sendCam = sstep(sendR);
+    airR = ramp(airR, state == 'ride' && !grounded && !grinding && airT > .4, 1.4, 1.6, dt); airZoom = sstep(airR);
     const hs = (portrait ? 12 : 30) + speed*(portrait ? .28 : .36) + airZoom*5 + sendCam*(portrait ? 3 : 8);
     const hf = 2*atan(tan(vfov/2)*aspect), fit = hs/(2*tan(hf/2));
     // a fixed view is set back by its own distance, the others far enough to fit the trail across the screen;
@@ -3421,22 +3493,26 @@ function gameUpdatePost()
     const al0 = Cw.yaw + camB*Cw.follow, th = tan(hf/2), ca = cos(al0), sa = sin(al0), ce = cos(Cw.pitch);
     const rz0 = state == 'ride' ? wz(fx, pz) : state == 'title' ? wz(fx, 0) : rag.z;
     let ahead0 = reach*lead;
-    for (let i = 0; i < 8; ++i)
+    for (let i = 0; i < 6; ++i)
     {
-        const dz = rz0 - wz(fx + ahead0, camZ), depth = max(2, D - (ahead0*sa + dz*ca)*ce);
-        if (abs(-ahead0*ca + dz*sa)/(depth*th) <= .6) break;
-        ahead0 *= .8;
+        const dz = rz0 - wz(fx + ahead0, camZ), depth = max(2, D - (ahead0*sa + dz*ca)*ce), r = abs(-ahead0*ca + dz*sa)/(depth*th);
+        if (r <= .6) break;
+        ahead0 *= max(.5, .6/r);
     }
-    const tx = fx + ahead0;
+    camAhead = spring(camAhead, ahead0, CS.ahead, 2.2, dt);
+    const tx = fx + camAhead;
     // close in on a drop it looks at the rider, not the ground ahead, and keeps up with the fall
     const ahead = 1 - max(close, sendCam*.8)*.85;
-    const ty = fy - vs*Cw.up + ((camGround(fx + hs*.45) - fy)*.32*min(1, .6 + Cw.lead*.4) + (camGround(tx) - fy)*max(0, Cw.lead - .4)*.6)*ahead;
-    camX += (tx - camX)*damp(state == 'title' ? 3 : 9, dt);
-    camY += (ty - camY)*damp(mix(4.5, 10, close), dt);
+    const ty = fy - vs*Cw.up + ((camGroundAv(fx + hs*.45) - fy)*.32*min(1, .6 + Cw.lead*.4) + (camGroundAv(tx) - fy)*max(0, Cw.lead - .4)*.6)*ahead;
+    // along the trail it keeps right up with the rider; up and down it follows a little behind, the more so the
+    // farther out it is, so a landing or a crest is a soft swing rather than a jolt
+    camX = spring(camX, tx, CS.x, state == 'title' ? 4 : 7, dt, 1);
+    camY = spring(camY, ty, CS.y, mix(4.5, 8, close), dt, .55);
     // keep the numbers small: move the world's origin along with the rider
     if (abs(px - OX) > 400 || abs(py - OY) > 200) rebase(px, py);
     camShake = max(0, camShake - dt*2.5);
-    const k = camShake*.35, j = ()=> (Math.random() - .5)*k;
+    // a shake is a quick wobble that dies away, smooth from one frame to the next rather than a random jitter
+    const k = camShake*camShake*.15, j = ph=> k*(sin(time*31 + ph) + .6*sin(time*19.3 + ph*2.3));
     // the camera moves in and out with the rider's line, so a branch stays in frame at the same size
     const behind = clamp01((Cw.yaw - .7)/.5);
     // the views from behind aim along the line itself: where it will be at the point they look at
@@ -3451,8 +3527,20 @@ function gameUpdatePost()
     camB += (atan(lineD) - camB)*damp(mix(1.2, 3, behind), dt);
     const al = Cw.yaw + camB*Cw.follow, el = Cw.pitch;
     const cx = camX - sin(al)*cos(el)*camD, cz = zW + cos(al)*cos(el)*camD;
-    // never down in the ground, neither the line behind the rider nor the hillside the camera is over
-    let cy = max(camY + sin(el)*camD, camGround(cx) + 2.6, terrainAt(cx, cz) + 2);
+    // never down in the ground, neither the line behind the rider nor the hillside the camera is over: a floor that
+    // rises quickly and settles slowly, and that the camera rides up onto smoothly rather than bumping into
+    // (looking ahead along the way the camera is going, so it is already rising as a ridge comes under it)
+    const cvx = clampV((cx - camWas.x)/max(dt, 1e-3), -40, 40), cvz = clampV((cz - camWas.z)/max(dt, 1e-3), -40, 40);
+    camWas.x = cx; camWas.z = cz;
+    let floorNow = -1e9;
+    for (let k = 0; k < 5; ++k)
+    {
+        const t = k*.2, qx = cx + cvx*t, qz = cz + cvz*t;
+        floorNow = max(floorNow, camGround(qx) + 2.6, terrainAt(qx, qz) + 2.2);
+    }
+    camFloor = spring(camFloor, floorNow, CS.floor, floorNow > camFloor ? 6 : 2, dt);
+    const cy0 = camY + sin(el)*camD, fd = cy0 - camFloor;
+    let cy = max(camFloor + (fd + sqrt(fd*fd + 1))/2, camGround(cx) + 1.2, terrainAt(cx, cz) + 1);
     // and the rider always in sight: where the ground between rises into the view, the camera lifts to see over it,
     // quickly, and settles back down slowly once it is clear
     if (state != 'title')
@@ -3465,10 +3553,10 @@ function gameUpdatePost()
             const t = .3, ax = px + vx*t, ay = max(py + vy*t - G_AIR*t*t/2, rideY(ax));
             need = max(need, sightLift(ax, ay + .35*RS, wz(ax, pz), cx, cy, cz));
         }
-        camLift += (need - camLift)*damp(need > camLift ? 6 : 1.2, dt);
+        camLift = spring(camLift, need, CS.lift, need > camLift ? 6 : 1.4, dt);
         cy += max(0, camLift);
     }
-    let eye = vec3(cx - OX + j(), cy - OY + j(), cz), look = vec3(camX - OX, camY - OY, zW);
+    let eye = vec3(cx - OX + j(0), cy - OY + j(2.1), cz), look = vec3(camX - OX, camY - OY, zW);
     // on the menu the camera stands square on to the logo, and swings round onto the rider as the ride starts
     titleCamW = state == 'title' ? min(1, titleCamW + dt*1.4) : max(0, titleCamW - dt/1.3);
     garageW += ((state == 'title' && menu == 'garage' ? 1 : 0) - garageW)*damp(3, dt);
@@ -3481,7 +3569,7 @@ function gameUpdatePost()
             te = te.lerp(ge, g); tl = tl.lerp(gl, g);
         }
         const w = titleCamW*titleCamW*(3 - 2*titleCamW);
-        eye = eye.lerp(te.add(vec3(j(), j(), 0)), w); look = look.lerp(tl, w);
+        eye = eye.lerp(te.add(vec3(j(0), j(2.1), 0)), w); look = look.lerp(tl, w);
     }
     // a test can hold the camera where it wants it, for close-ups
     if (window.__camAt) { eye = window.__camAt.pos; look = window.__camAt.look; }
@@ -3835,18 +3923,6 @@ function updateFeatures(dt, pxWas)
             if (!f.done && px > f.x1) { f.done = true; if (f.on > .4) addTrick('BRIDGE', 100); }
         }
         if (f.type == 'dropin' && !f.braked && px > f.x0) { f.braked = true; if (sp > f.v + 2) sfx('berm'); }
-        if (f.type == 'berms')
-        {
-            // carved on the ground through each turn, or only just off it over a bump: points and a pump of speed out of it
-            for (const a of f.apexes) if (pxWas < a && px >= a && (grounded || offGroundT < .3))
-            {
-                ++f.carved;
-                addTrick('BERM', 120);
-                sfx('berm');
-                boostT = max(boostT, .45);
-            }
-            if (!f.done && px > f.x1) { f.done = true; if (f.carved == f.apexes.length) { addTrick('BERM RUN x' + f.carved, 100*f.carved); countTrick('BERM RUN'); } }
-        }
         if (f.type == 'stairs')
         {
             if (took && px > f.x0 && px < f.x1 + 1) ++f.airs;
@@ -4829,7 +4905,8 @@ function autopilotInput()
         let wx = vx;
         while (t < 3 && (y > rideY(x) || t < .05)) { t += 1/60; if (wx > VMAX + 3) wx += (VMAX + 3 - wx)*damp(4, 1/60); x += wx/60; wy -= G_AIR/60; y += wy/60; }
         const clear = !rails.some(r=> x > r.x0 - 2 && x < r.x1 + 2);
-        window.__flipWanted = window.__flipPilot && t > .95 && clear;
+        // (a bike that flips slower needs longer)
+        window.__flipWanted = window.__flipPilot && t > .95/bike.flip && clear;
         window.__flipFront = window.__flipPilot == 'front';
         window.__flightT = clear ? t : 0;
     }
@@ -4970,7 +5047,7 @@ function mpDropInAt(s, x, v, runT, day)
     placeRider(at);
     state = 'ride'; sp = max(10, v || 12); titleCamW = 0; logoFall = 1; logoDown = true; menu = 'main';
     runTime = runT || 0; dayT = day ?? dayT;
-    camX = at + 8; camY = groundY(at);
+    camX = at + 8; camY = groundY(at); camReset();
     mpNewRound();
 }
 // both start over on a new mountain, at the top, after a count of three
@@ -5285,6 +5362,10 @@ window.__mtb = {
     endRun: ()=> endRun(),
     // the middle of rider and bike as drawn, for close-ups
     riderAt: ()=> wrecked() ? vec3(rag.x - OX, rag.y - OY, rag.z) : bikeMatrix().transformPoint(vec3(0, 1, 0)),
+    // the camera and where the rider is on screen, for measuring how smooth the ride looks
+    camState: ()=> { const c = render3D.camera, r = bikeMatrix().transformPoint(vec3(0, 1, 0)), p = project(r);
+        return {ex: c.pos.x + OX, ey: c.pos.y + OY, ez: c.pos.z, lx: (camLook?.x ?? 0) + OX, ly: (camLook?.y ?? 0) + OY, lz: camLook?.z ?? 0,
+            rx: r.x + OX, ry: r.y + OY, rz: r.z, sx: p?.x, sy: p?.y, pitch: grounded || grinding ? ang + landVis : ang, grounded: grounded || !!grinding, airT}; },
     // how well the rider is in view: how far off the middle of the screen (1 = at its edge) and how much of the
     // body the ground hides from the camera
     view: ()=>

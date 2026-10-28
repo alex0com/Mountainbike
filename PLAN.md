@@ -519,6 +519,57 @@ Each phase is a separate commit (or a few), tested with the Phase 0 harness befo
 
 - **The logo falls over instead of flying away: done.** On PLAY the sign tips over backwards about the back edge of its foot (`stepLogoFall`): slowly at first, faster as it leans, then a thud, dust and a little bounce. It lies face up beside the trail, stopped where its top meets the hillside (`logoRest`). Its posts come out of the ground with it.
 
+## Smoothness: done
+The ride felt jittery and snappy, and a trick during a turn flew round the bend. The aim was a ride as smooth as Alto's Adventure.
+
+- **Measured first** (`tools/smooth.mjs`): frame-to-frame jolts of the rider on screen, the camera's eye and aim, the rider's line across the trail and the bike's pitch, plus a count of little hops.
+  - The old ride left the ground about 116 times per km, and 105 of those were hops under a quarter second. That was the "skipping parts of the trail".
+- **The trail goes straight-ish:**
+  - The bends into drop-ins and the berm turns are gone. They turned as tight as a 7.7 m radius.
+  - The weave keeps its long swings. The second, tighter swing is down from 7 m to 2.5 m. Nothing turns tighter than about 90 m now.
+  - The turn-offs onto the lines are about twice as long: PRO 56 m (and up the hill by 18 m, not 20); HIGH and LOW 44 m.
+    - They ease in and out of the turn with no sudden change in how hard it turns (`sstep5`).
+    - The blocks of lines are 40 m longer to make room.
+    - Berm walls are scaled to the gentler turns.
+- **Flights go straight:** in the air the bike carries on the way it was heading.
+  - Its sideways position follows a smooth curve from where it left the ground to where it will land, met the way the trail runs there (a Hermite curve to `flightEndX`).
+  - The bike turns along that curve too, and doesn't lean into a turn it isn't making.
+  - The rider's offset up a berm wall eases in and out, instead of snapping when the wheels leave the ground.
+- **The ground rolls:**
+  - The surface noise is long low swells. The old version had 5 cm lumps every 2.7 m and 2.5 cm ones every 0.8 m.
+  - Rollers are capped at a curvature a fast bike rolls over.
+  - A change of grade eases over a distance that grows with the change, both on the trail (`addRun`) and on the lines (`run`, and the corner where a landing gives way to the way back).
+  - **Stays down over little crests** (`wouldFly`): where the ground falls away, the bike only takes off if the flight would last more than 0.2 s or rise more than 10 cm. Lips, drops, chasms and real crests still throw it.
+  - **Pace zones brake evenly:** a drop-in's ledge or a gap's run-in sets its speed over the way in, reaching it a few metres before the end. It used to brake at up to 25 m/s².
+- **The camera rides on springs** (critically damped, `spring`):
+  - Along the trail it keeps right up with the rider. Up and down it follows a little behind, so landings and crests are soft swings.
+  - Its lead ahead of the rider shrinks smoothly when the rider would go off-screen, instead of in jumps.
+  - Zoom follows a smoothed speed.
+  - The look ahead at the ground averages over about 12 m, so a lip or drop slides into view.
+  - The drop-in, crash, send and big-air views ease in and out over a second or two.
+  - Its floor looks ahead along where the camera is going and rises smoothly.
+  - The lift to see over a crest is a spring too.
+  - A shake is a smooth wobble that dies away, not random jitter, and only a big one shows much.
+  - The bike's yaw and lean are on springs as well.
+- **Results** (3/4 landscape, 6 km; SIDE portrait 390×844, 6 km), before → after:
+
+    | | 3/4 | SIDE portrait | CHASE | HIGH |
+    |---|---|---|---|---|
+    | camera eye, rms cm/frame² | 6.84 → 1.19 | 8.21 → 1.20 | 8.03 → 0.55 | 4.86 → 0.59 |
+    | camera aim, rms °/frame² | 0.139 → 0.013 | 0.094 → 0.007 | 0.211 → 0.012 | 0.140 → 0.010 |
+    | rider on screen, rms %H/frame² | 0.121 → 0.068 | 0.069 → 0.036 | 0.184 → 0.076 | 0.104 → 0.051 |
+    | bike pitch, rms °/frame² | 0.285 → 0.184 | 0.254 → 0.190 | | |
+    | hops under 0.25 s, per km | 105 → 0.7 | 103 → 0.7 | | |
+
+  - CHASE and HIGH are over 3 km each.
+  - Rider sideways on the upper lines: 7.9 → 1.25 cm/frame² rms, with the worst frame 190 → 19. Before the bike's yaw and lean went onto springs.
+  - Real flights are unchanged: about 11 per km, both before and after.
+- **Tests:** `tools/sim.mjs`.
+  - 49 km plain and 49 km with tricks and flips: 0 crashes, as before. Hard landings per km 0.16 → 0.06.
+  - 32 km each on every bike with tricks and flips, up the lines with turbo, and down them with front flips: 0 crashes. The autopilot now waits for a longer flight before flipping a bike that flips slower.
+  - Every line still gets its feature (none plain, where a few were before).
+- **Gone:** BERM RUN scoring, with the berm turns. BERM points on the lines' turn-offs stay.
+
 ## Two players: built (core)
 Decisions: the server can run Node; online only; the match just keeps going; a crash costs time rather than the run; a breakaway wins and restarts. The slipstream is on, and each player keeps their own collectibles.
 
@@ -673,5 +724,6 @@ Two kinds, so the players have different powers and different choices:
 
     node tools/sim.mjs [--seeds 20] [--km 5] [--flips back|front] [--tricks] [--lanes rand|up|down|main] [--turbo] [--json out.json] [--salt n] [--game other.html] [--bike 0..3]
     node tools/shot.mjs --seed 3 --at 800 --view SIDE --zoom 1 --day .3 --out shot.png [--size 390x844] [--js "code"] [--game other.html]
+    node tools/smooth.mjs [--view 3/4] [--size 900x600] [--seeds 3] [--km 2] [--lanes main] [--game other.html]
 
 `--lanes` takes rand, up, down, main, pro, high or none.

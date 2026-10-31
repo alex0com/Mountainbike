@@ -4105,6 +4105,7 @@ addEventListener('keydown', e=>
     else if (e.code == 'KeyC') camNextView();
     else if (e.code == 'KeyV') camNextZoom();
     else if (e.code == 'KeyM') toggleSound();
+    else if (e.code == 'KeyN') toggleMusic();
 });
 addEventListener('keyup', e=>
 {
@@ -4211,6 +4212,8 @@ function drawHUD()
 
     const bw = 58, bh = 38;
     button(W - 12 - bw, top, bw, bh, soundOn ? 'SND' : 'MUTE', toggleSound, !soundOn);
+    // (on a tall screen in a ride with a friend, below the round box and the room's SHARE button)
+    musicButton(W, W < H && mp.code ? top + 116 : top + bh + 7);
     camButtons(W, top, bw, bh);
 
     // the combo in progress, with the time left to keep it going. On a tall screen the rider is in the middle, so
@@ -4484,6 +4487,7 @@ function drawTitle(W, H, top, bottom)
         }
     }
     button(W - 12 - 58, top, 58, 38, soundOn ? 'SND' : 'MUTE', toggleSound, !soundOn);
+    musicButton(W, top + 45);
     camButtons(W, top, 58, 38);
 }
 // the garage: the bike, with how it rides, and the kit, each picked with arrows either side, the rider shown above
@@ -4593,6 +4597,8 @@ function drawAbout(W, H, top, bottom)
 }
 const CONTACT = 'alex@alex0.com';
 // the view and the zoom, next to the sound button
+// the music on or off, under the sound button, lit while it plays
+const musicButton = (W, y)=> button(W - 12 - 76, y, 76, 32, musicOn ? 'MUSIC ON' : 'MUSIC OFF', toggleMusic, musicOn, 11);
 function camButtons(W, top, bw, bh)
 {
     button(W - 12 - bw*2 - 7, top, bw, bh, camZoomName(), camNextZoom, false, 12);
@@ -4653,7 +4659,9 @@ function drawResults(W, H)
 // SOUND - a big beat tune; the tyres and the air going by, soft and low; arcade blips and jingles for pickups,
 // boosts, tricks and crashes; and thumps for landings
 // ============================================================================
-let au, soundOn = true;
+let au, soundOn = true, musicOn = false;
+// the music is off until the player turns it on, and stays as they left it
+try { musicOn = localStorage.getItem('bcr.music') == '1'; } catch(e) {}
 // thumps and splashes: ZzFX one shots, each through a low pass so nothing hisses or crackles
 const SFX = {
     land:     new Sound([.5,.1,70,.006,.03,.2,4,1.2,-8,,,,,4,,,.04,.5,,,-1000]),
@@ -4817,6 +4825,18 @@ function toggleSound()
     soundOn = !soundOn;
     setSoundVolume(soundOn ? .5 : 0);
 }
+// the music on or off: on, it starts from the top, the drums coming in through the filter
+function toggleMusic()
+{
+    musicOn = !musicOn;
+    try { localStorage.setItem('bcr.music', musicOn ? '1' : '0'); } catch(e) {}
+    if (!mus) return;
+    const now = mus.ac.currentTime;
+    mus.out.gain.cancelScheduledValues(now);
+    mus.out.gain.setValueAtTime(mus.out.gain.value, now);
+    mus.out.gain.linearRampToValueAtTime(musicOn ? MUSIC_LEVEL : 0, now + (musicOn ? .3 : .4));
+    if (musicOn) { mus.bar = 0; mus.t = now + .1; }
+}
 function audioUnlock()
 {
     if (audioContext && audioContext.state != 'running') audioContext.resume?.().catch?.(()=> {});
@@ -4897,7 +4917,7 @@ function audioInit()
     try
     {
         au = soundLoops(audioContext, audioMasterGain);
-        mus = makeMusic(audioContext, audioMasterGain);
+        mus = makeMusic(audioContext, audioMasterGain, musicOn);
     }
     catch(e) { au = undefined; }
 }
@@ -4948,14 +4968,14 @@ function drive(ac, k)
 // the music's own mix, into dest: the drums through a filter (opened up over the intro), a little drive and a hard
 // compressor; the bass through its own drive; the hook with an echo; a pad's filter for the breakdown; all of it
 // glued by a last compressor; and a bus for the jingles
-function makeMusic(ac, dest)
+function makeMusic(ac, dest, on=true)
 {
     const m = {ac, bar: 0, t: ac.currentTime + .3}, chain = (...n)=> { for (let i = 1; i < n.length; ++i) n[i - 1].connect(n[i]); return n[0]; };
     const comp = (threshold, ratio)=> { const c = ac.createDynamicsCompressor(); c.threshold.value = threshold; c.knee.value = 8; c.ratio.value = ratio; c.attack.value = .004; c.release.value = .12; return c; };
     const lp = f=> { const b = ac.createBiquadFilter(); b.type = 'lowpass'; b.frequency.value = f; return b; };
     m.out = ac.createGain(); m.out.connect(dest);
     m.out.gain.setValueAtTime(0, ac.currentTime);
-    m.out.gain.linearRampToValueAtTime(MUSIC_LEVEL, ac.currentTime + 1);
+    m.out.gain.linearRampToValueAtTime(on ? MUSIC_LEVEL : 0, ac.currentTime + 1);
     m.mix = chain(ac.createGain(), comp(-14, 2.5), m.out);
     m.drumLP = lp(18000);
     const loud = v=> { const g = ac.createGain(); g.gain.value = v; return g; };
@@ -5104,7 +5124,7 @@ function musicTick(m, until)
 }
 function musicUpdate(now)
 {
-    if (!mus) return;
+    if (!mus || !musicOn) return;
     musicTick(mus, now + .4);
 }
 
@@ -5698,6 +5718,7 @@ window.__mtb = {
     zones: (n=5)=> ({seq: zoneSeq.slice(0, n), at: zoneB.slice(0, n).map(round), MT}),
     // a recording of the tune and the ride's sounds, as a WAV file in base64
     audioPreview: (sec, parts)=> audioPreview(sec, parts),
+    music: ()=> ({on: musicOn, bar: mus ? mus.bar : -1, level: mus ? mus.out.gain.value : -1}), toggleMusic: ()=> toggleMusic(),
 };
 
 engineInit(gameInit, gameUpdate, gameUpdatePost, undefined, gameRenderPost);

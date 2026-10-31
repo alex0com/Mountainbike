@@ -588,6 +588,11 @@ The pedal power's chain sound screeched, and the wind was a loud hiss of static.
     - **The breakdown:** the drums drop to hats under a dark F minor pad that opens up. A sawtooth riser and a snare roll build back into the drop.
     - One time round is about a minute.
   - **The mix:** the drums and the bass about level, the hook a few dB under, and a last compressor over the whole band.
+- **The MUSIC button** (`toggleMusic`):
+  - Off by default. The choice is remembered (`bcr.music`), and N on a keyboard does the same.
+  - It sits under SND on the menu and while riding; on a tall screen in a ride with a friend, below the room box.
+  - Turned on, the tune starts from the top with the drums filtering in. While it is off, no bars are laid out at all.
+  - The jingles, loops and thumps go on regardless; SND still mutes everything.
 - **Arcade jingles** (`JINGLES`, `blip`, `note`): pulse waves in F minor, the fanfares in its relative major (Ab), louder than the music so they pop.
   - **A sprocket:** a coin's two quick notes a fourth apart, climbing the scale as a run is picked up.
   - **A battery cell:** a zap up an octave.

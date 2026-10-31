@@ -4650,62 +4650,71 @@ function drawResults(W, H)
 }
 
 // ============================================================================
-// SOUND - a gentle tune; the tyres and the air going by, soft and low; bell chimes in the tune's key for pickups,
-// boosts and tricks; and soft thumps for landings and crashes
+// SOUND - an upbeat arcade tune; the tyres and the air going by, soft and low; arcade blips and jingles for pickups,
+// boosts, tricks and crashes; and thumps for landings
 // ============================================================================
 let au, soundOn = true;
-// thumps, whooshes and splashes: ZzFX one shots, each through a low pass so nothing hisses or crackles
+// thumps and splashes: ZzFX one shots, each through a low pass so nothing hisses or crackles
 const SFX = {
-    jump:     new Sound([.3,.05,220,.01,.04,.14,0,1.4,60,,,,,,,,,.45,,,-1500]),
-    whoosh:   new Sound([.22,.1,300,.06,.1,.22,4,.6,-25,,,,,1.5,,,,.4,,,-500]),
-    land:     new Sound([.5,.1,70,.006,.03,.2,4,1.2,-8,,,,,4,,,.04,.5,,,-300]),
-    landHard: new Sound([.7,.1,55,.006,.06,.34,4,1.6,-6,,,,,6,,,.07,.4,,,-250]),
-    crash:    new Sound([.75,.15,85,.01,.18,.6,4,2.2,-4,,,,.09,8,,,.1,.35,,,-300]),
+    land:     new Sound([.5,.1,70,.006,.03,.2,4,1.2,-8,,,,,4,,,.04,.5,,,-1000]),
+    landHard: new Sound([.7,.1,55,.006,.06,.34,4,1.6,-6,,,,,6,,,.07,.4,,,-700]),
+    crash:    new Sound([.7,.15,85,.01,.18,.6,4,2.2,-4,,,,.09,8,,,.1,.35,,,-800]),
     grind:    new Sound([.25,.2,900,.01,.05,.12,4,1,-6,,,,,6,,,.02,.5,,,-1200]),
-    click:    new Sound([.15,,880,,.01,.04,0,,,,,,,,,,,.5]),
     splash:   new Sound([.45,.3,500,.01,.12,.35,4,.4,,,,,,9,,,.06,.5,,,-900]),
     berm:     new Sound([.3,.2,180,.08,.25,.35,4,.8,-4,,,,,2.5,,,.06,.45,,,-450]),
-    thud:     new Sound([.55,.1,60,.006,.04,.15,4,1.5,-5,,,,,6,,,.05,.4,,,-250]),
+    thud:     new Sound([.55,.1,60,.006,.04,.15,4,1.5,-5,,,,,6,,,.05,.4,,,-700]),
     clank:    new Sound([.25,.05,520,.003,.02,.14,1,1.4,,,,,,,,,.03,.5,.1,,-900]),
     bonk:     new Sound([.7,.05,170,.004,.05,.3,1,2,-12,,,,,3,,,.04,.5,,,-500])};
 
-// ---------- bells in the tune's key, D major pentatonic, from D5 up two octaves
-const LADDER = [74, 76, 78, 81, 83, 86, 88, 90, 93, 95, 98];
+// ---------- the arcade voice: pulse waves, the sound of the old machines, softened a little through a low pass
 const midiHz = m=> 440*2**((m - 69)/12);
-// a soft struck bell: a sine with a little of its octave and twelfth, which die away first
-function bell(dest, midi, t, vol, ring=.8)
+const WAVES = new WeakMap;
+// a pulse wave, high for this much of each cycle: .5 a square, .25 and .125 thinner and brighter
+function pulseWave(ac, duty)
 {
-    const ac = dest.context, f = midiHz(midi), out = ac.createGain();
-    out.gain.value = vol;
-    out.connect(dest);
-    for (const [k, a, d] of [[1, 1, 1], [2, .25, .45], [3, .06, .25]])
+    let w = WAVES.get(ac);
+    if (!w) WAVES.set(ac, w = {});
+    if (!w[duty])
     {
-        const o = ac.createOscillator(), g = ac.createGain();
-        o.frequency.value = f*k;
-        g.gain.setValueAtTime(0, t);
-        g.gain.linearRampToValueAtTime(a, t + .005);
-        g.gain.setTargetAtTime(0, t + .005, ring*d/4);
-        o.connect(g); g.connect(out);
-        o.start(t); o.stop(t + ring*d + .3);
+        const n = 48, re = new Float32Array(n), im = new Float32Array(n);
+        for (let k = 1; k < n; ++k) { re[k] = sin(TAU*k*duty)/(PI*k); im[k] = (1 - cos(TAU*k*duty))/(PI*k); }
+        w[duty] = ac.createPeriodicWave(re, im);
     }
+    return w[duty];
 }
-// a soft swell sliding up under a boost: a low voice and its octave, through a low pass
-function swell(dest, f0, f1, t, len, vol)
+// the oscillator and low pass under a note, from t to end, perhaps sliding in pitch to another note and perhaps with
+// a vibrato (in cents) that grows in; gives the gain to shape it with
+function voice(dest, midi, t, end, {wave=.25, cut=4000, to, glide=end, vib=0}={})
 {
-    const ac = dest.context, g = ac.createGain(), lp = ac.createBiquadFilter();
-    lp.type = 'lowpass'; lp.frequency.value = 900; lp.Q.value = .5;
-    g.gain.setValueAtTime(0, t);
-    g.gain.linearRampToValueAtTime(vol, t + len*.45);
-    g.gain.linearRampToValueAtTime(0, t + len);
-    for (const [type, k] of [['sine', 1], ['triangle', 2]])
+    const ac = dest.context, o = ac.createOscillator(), f = ac.createBiquadFilter(), g = ac.createGain();
+    if (wave == 'tri') o.type = 'triangle'; else o.setPeriodicWave(pulseWave(ac, wave));
+    o.frequency.setValueAtTime(midiHz(midi), t);
+    if (to !== undefined) o.frequency.exponentialRampToValueAtTime(midiHz(to), glide);
+    if (vib)
     {
-        const o = ac.createOscillator();
-        o.type = type;
-        o.frequency.setValueAtTime(f0*k, t);
-        o.frequency.exponentialRampToValueAtTime(f1*k, t + len);
-        o.connect(lp); o.start(t); o.stop(t + len + .05);
+        const lfo = ac.createOscillator(), depth = ac.createGain();
+        lfo.frequency.value = 6.5;
+        depth.gain.setValueAtTime(0, t); depth.gain.linearRampToValueAtTime(vib, t + min(.25, (end - t)*.6));
+        lfo.connect(depth); depth.connect(o.detune); lfo.start(t); lfo.stop(end + .02);
     }
-    lp.connect(g); g.connect(dest);
+    f.type = 'lowpass'; f.frequency.value = cut;
+    o.connect(f); f.connect(g); g.connect(dest);
+    o.start(t); o.stop(end + .02);
+    return g.gain;
+}
+// a note: struck, held and let go
+function note(dest, midi, t, len, vol, opt={})
+{
+    const r = opt.release ?? .05, gain = voice(dest, midi, t, t + len + r, {...opt, glide: t + len});
+    gain.setValueAtTime(0, t); gain.linearRampToValueAtTime(vol, t + .004);
+    gain.setValueAtTime(vol, t + max(.004, len - .01)); gain.linearRampToValueAtTime(0, t + len + r);
+}
+// a blip: struck, and dying away as it sounds
+function blip(dest, midi, t, len, vol, opt={})
+{
+    const gain = voice(dest, midi, t, t + len, opt);
+    gain.setValueAtTime(0, t); gain.linearRampToValueAtTime(vol, t + .004);
+    gain.exponentialRampToValueAtTime(vol*.45, t + len*.5); gain.exponentialRampToValueAtTime(.0005, t + len);
 }
 // a spare tyre picked up: a rubbery boing
 function boing(dest, t, vol)
@@ -4721,33 +4730,36 @@ function boing(dest, t, vol)
     o.connect(g); g.connect(dest);
     o.start(t); wob.start(t); o.stop(t + .6); wob.stop(t + .6);
 }
-// what each chime plays: notes as [MIDI, delay, loudness, ring]
-const CHIMES = {
-    // sprockets step up the scale as a run of them is picked up; battery cells ring lower, with a fifth
-    orb:      v=> [[LADDER[3 + v % 8], 0, .08, .5]],
-    cell:     v=> [[LADDER[v % 6], 0, .09, 1.1], [LADDER[v % 6] + 7, .03, .045, 1]],
-    tyre:     ()=> [[86, .06, .04, .5]],
-    trick:    ()=> [[81, 0, .06, .7], [86, .09, .07, .9]],
-    trickBig: ()=> [[74, 0, .05, .8], [78, .07, .05, .8], [81, .14, .06, .9], [86, .21, .07, 1.2]],
-    perfect:  ()=> [[93, 0, .04, .5], [98, .06, .04, .7]],
-    bank:     ()=> [[74, 0, .06, 1], [81, .08, .06, 1], [86, .16, .07, 1.1], [90, .24, .07, 1.4]],
-    line:     ()=> [[79, 0, .06, 1], [83, .08, .06, 1], [86, .16, .07, 1.4]],
-    go:       ()=> [[74, 0, .06, .8], [81, .12, .06, .8], [86, .24, .08, 1.4]],
-    ready:    ()=> [[88, 0, .05, .6], [93, .1, .06, 1]],
-    // pedal power: a quick run up the scale over a soft swell
-    chain:    ()=> [74, 76, 78, 81, 83, 86].map((n, i)=> [n, i*.05, .04 + i*.006, .7]),
-    turbo:    ()=> [[81, .1, .05, .9], [86, .2, .06, 1], [90, .3, .06, 1.3]],
-    send:     ()=> [[74, 0, .05, 1.4], [78, .05, .05, 1.4], [81, .1, .05, 1.4], [86, .15, .06, 1.6], [90, .2, .06, 1.8]]};
-// and the swell under a boost: from, to (Hz), how long, how loud
-const SWELLS = {chain: [147, 294, .7, .05], turbo: [73, 147, .9, .07], send: [73, 220, 1.2, .07]};
-function chime(name, v=0, m=mus, t)
+// the jingles, in the tune's key of D: each plays into d from time t, v telling it which one (a streak, a direction)
+const COIN = [76, 78, 81, 83, 86, 88, 90, 93];
+const JINGLES = {
+    // a sprocket: a coin's two quick notes, a fourth apart, climbing the scale as a run of them is picked up
+    orb:      (d, t, v)=> { const n = COIN[v % 8]; blip(d, n, t, .06, .07); blip(d, n + 5, t + .06, .28, .07); },
+    // a battery cell: a zap up an octave, and the octave again
+    cell:     (d, t, v)=> { const n = [69, 71, 73, 74, 76, 78][v % 6]; blip(d, n, t, .1, .07, {to: n + 12, wave: .125}); blip(d, n + 12, t + .09, .2, .06, {wave: .125}); },
+    jump:     (d, t)=> blip(d, 62, t, .14, .06, {to: 76, wave: .5, cut: 2600}),
+    // a trick starting: a quick fwip, pitched by the way it was swiped
+    whoosh:   (d, t, v)=> blip(d, 70 + v, t, .11, .035, {to: 86 + v, wave: .125, cut: 3000}),
+    trick:    (d, t)=> { blip(d, 81, t, .08, .06); blip(d, 86, t + .08, .25, .06); },
+    trickBig: (d, t)=> [74, 78, 81, 86].forEach((n, i)=> blip(d, n, t + i*.065, i == 3 ? .35 : .08, .06)),
+    bank:     (d, t)=> { [74, 78, 81, 86, 90].forEach((n, i)=> blip(d, n, t + i*.06, .08, .055)); blip(d, 86, t + .32, .45, .05); blip(d, 93, t + .32, .45, .04, {wave: .125}); },
+    perfect:  (d, t)=> { blip(d, 93, t, .06, .045); blip(d, 98, t + .07, .16, .045); },
+    line:     (d, t)=> [79, 83, 86, 91].forEach((n, i)=> blip(d, n, t + i*.065, i == 3 ? .35 : .08, .055)),
+    go:       (d, t)=> { blip(d, 81, t, .1, .06); blip(d, 93, t + .13, .4, .06); },
+    ready:    (d, t)=> [88, 93, 88, 93].forEach((n, i)=> blip(d, n, t + i*.075, .07, .045)),
+    // pedal power: the power-up climb, up through the chord three times, a step higher each time
+    chain:    (d, t)=> [62, 66, 69, 74, 66, 69, 74, 78, 69, 74, 78, 81, 86].forEach((n, i)=> blip(d, n, t + i*.04, i == 12 ? .3 : .07, .05)),
+    // the turbo: a motor winding up, and a little fanfare as it kicks in; a send the same, bigger
+    turbo:    (d, t)=> { note(d, 43, t, .45, .05, {to: 67, wave: .125, cut: 1800, vib: 25, release: .1}); [74, 78, 81, 86].forEach((n, i)=> blip(d, n, t + .45 + i*.055, i == 3 ? .3 : .07, .05)); },
+    send:     (d, t)=> { note(d, 43, t, .6, .055, {to: 79, wave: .125, cut: 2000, vib: 25, release: .1}); [74, 78, 81, 86, 90].forEach((n, i)=> blip(d, n, t + .6 + i*.055, i == 4 ? .4 : .07, .05)); },
+    tyre:     (d, t)=> { boing(d, t, .1); blip(d, 86, t + .07, .14, .035); },
+    // a crash: the wah, wah, wahhh of losing a life
+    crash:    (d, t)=> { note(d, 67, t + .2, .2, .045, {wave: .5, cut: 1500}); note(d, 66, t + .45, .2, .045, {wave: .5, cut: 1500}); note(d, 65, t + .7, .55, .045, {to: 59, wave: .5, cut: 1500, vib: 45, release: .15}); },
+    click:    (d, t)=> blip(d, 96, t, .03, .03, {wave: .5})};
+function jingle(name, v=0, m=mus, t)
 {
     if (!m) return;
-    t ??= m.ac.currentTime + .01;
-    for (const [n, d, vol, ring] of CHIMES[name](v)) bell(m.fx, n, t + d, vol*1.5, ring);
-    const s = SWELLS[name];
-    if (s) swell(m.fx, s[0], s[1], t, s[2], s[3]);
-    if (name == 'tyre') boing(m.fx, t, .11);
+    JINGLES[name](m.fx, t ?? m.ac.currentTime + .005, v);
 }
 
 // a cow's moo, made from scratch: a buzzing voice through a mouth that opens from mmm to ooo and closes again,
@@ -4793,11 +4805,10 @@ function moo(pitch=1, d=1.7, loud=.5)
 function sfx(name, v=0)
 {
     if (!soundOn) return;
-    if (CHIMES[name]) { if (audioContext?.state == 'running') chime(name, v); return; }
+    if (JINGLES[name] && audioContext?.state == 'running') jingle(name, v);
     const s = SFX[name];
     if (!s) return;
     if (name == 'land') s.play(undefined, .45 + v*.6);
-    else if (name == 'whoosh') s.play(undefined, 1, .85 + v*.07);
     else s.play();
 }
 function toggleSound()
@@ -4904,101 +4915,107 @@ function audioUpdate()
     musicUpdate(now);
 }
 
-// ---------- the tune: slow and warm in D major at 78 beats a minute. A pad holds each chord, a bass under it, a music
-// box picks out the chord in eighths, and a soft lead sings the tune over the top, all through an echo. Two sections,
-// A and B, with three tunes over them; round it goes every two and a half minutes.
+// ---------- the tune: an upbeat arcade tune in D major at 126 beats a minute. Drums, a bass bouncing between each
+// chord's root and its octave, chord stabs on the off beats, and a pulse wave lead with the hook, through a little
+// echo and a compressor. A few bars of beat to start, then round: the hook, a lift, the hook again higher, and a
+// breakdown with the chords picked out in sixteenths.
 let mus;
-const BEAT = 60/78, BAR = 4*BEAT, MUSIC_LEVEL = 1.3;
-// each chord: its bass note, then the four notes the pad holds and the music box picks out
-const CHORD = {D: [50, 66, 69, 73, 76], Bm: [47, 62, 66, 69, 74], G: [43, 62, 66, 71, 74], Asus: [45, 62, 64, 69, 73],
-    Fm: [42, 64, 69, 73, 76], Em: [40, 62, 67, 71, 74], A7: [45, 62, 67, 69, 76]};
-const PROG_A = ['D', 'Bm', 'G', 'Asus', 'D', 'Fm', 'G', 'A7'], PROG_B = ['G', 'Asus', 'Fm', 'Bm', 'Em', 'A7', 'D', 'D'];
-// the tunes, eight bars each: a note (MIDI, 0 for a rest) and how many beats it lasts, four beats to a bar
-const TUNE1 = [78,1.5, 76,.5, 74,1, 69,1,  71,1.5, 74,.5, 78,2,  79,1, 78,.5, 76,.5, 74,1, 71,1,  73,1.5, 71,.5, 69,2,
-               78,1.5, 81,.5, 78,1, 76,1,  73,1.5, 76,.5, 81,2,  83,1, 81,.5, 79,.5, 78,1, 74,1,  76,3, 0,1];
-const TUNE2 = [74,.5, 76,.5, 78,1, 81,1.5, 78,.5,  76,1, 74,1, 71,2,  71,.5, 74,.5, 79,1.5, 78,.5, 76,1,  76,1.5, 73,.5, 69,2,
-               69,.5, 74,.5, 78,1, 76,.5, 74,.5, 76,1,  73,2, 69,1, 73,1,  71,1, 74,1, 79,1, 78,1,  76,1.5, 74,.5, 74,2];
-const TUNE3 = [83,1.5, 81,.5, 79,1, 78,1,  76,1.5, 78,.5, 76,1, 73,1,  73,1.5, 76,.5, 81,1, 78,1,  78,2, 74,1, 76,1,
-               79,1.5, 78,.5, 76,1, 74,1,  76,1, 74,.5, 76,.5, 79,1, 76,1,  78,3, 0,1,  0,2, 69,.5, 71,.5, 74,1];
-// the chords with no tune to begin, then round and round the rest
-const SONG = [[PROG_A, null], [PROG_A, TUNE1], [PROG_A, TUNE2], [PROG_B, TUNE3], [PROG_A, TUNE1], [PROG_B, TUNE3]];
-// a tune's notes in a bar: [MIDI, beat in the bar, beats long]
+const BEAT = 60/126, BAR = 4*BEAT, MUSIC_LEVEL = .8;
+// each chord: its bass note, and the three notes of the stabs
+const CHORD = {D: [50, 62, 66, 69], A: [45, 61, 64, 69], Bm: [47, 62, 66, 71], G: [43, 62, 67, 71], Fm: [42, 61, 66, 69]};
+const PROG_A = ['D', 'A', 'Bm', 'G', 'D', 'A', 'Bm', 'G'], PROG_B = ['G', 'A', 'Fm', 'Bm', 'G', 'A', 'D', 'D'];
+// the tunes, eight bars each: a note (MIDI, 0 for a rest) and how many eighths it lasts, eight to a bar
+const HOOK = [74,1, 78,1, 81,2, 78,1, 81,1, 83,2,  81,3, 76,1, 73,2, 76,2,  74,1, 78,1, 83,2, 81,1, 78,1, 74,2,  76,1, 78,1, 79,2, 78,1, 76,1, 74,2,
+              74,1, 78,1, 81,2, 78,1, 81,1, 86,2,  85,3, 83,1, 81,2, 76,2,  78,1, 81,1, 83,2, 81,1, 83,1, 86,2,  83,2, 81,2, 79,1, 78,1, 76,2];
+const LIFT = [79,2, 74,2, 79,1, 81,1, 83,2,  81,2, 76,2, 81,1, 83,1, 85,2,  85,2, 81,2, 78,2, 81,2,  83,3, 81,1, 78,2, 74,2,
+              79,2, 83,2, 86,2, 83,2,  85,2, 88,2, 85,1, 83,1, 81,2,  86,4, 81,2, 78,2,  0,4, 69,1, 71,1, 73,2];
+const HOOK2 = [81,1, 78,1, 74,2, 78,1, 81,1, 86,2,  85,2, 81,1, 76,1, 81,2, 85,2,  83,1, 81,1, 78,2, 74,1, 78,1, 83,2,  81,2, 79,2, 78,2, 76,2,
+               78,1, 81,1, 86,2, 81,1, 86,1, 90,2,  88,3, 85,1, 81,2, 85,2,  86,2, 83,2, 81,1, 78,1, 74,2,  76,2, 78,2, 79,2, 81,2];
+// the sections: their chords, their tune, and how much of the band plays
+const INTRO = {prog: PROG_A, drums: 'half'};
+const SONG = [{prog: PROG_A, tune: HOOK, drums: 'full'}, {prog: PROG_B, tune: LIFT, drums: 'full'},
+    {prog: PROG_A, tune: HOOK2, drums: 'full'}, {prog: PROG_B, drums: 'half', arp: true}];
+// where in a bar of sixteenths the kick lands
+const KICK = 'x.....x.x.......';
+// a tune's notes in a bar: [MIDI, eighth in the bar, eighths long]
 const tuneBar = (tune, bar)=>
 {
     const out = [];
-    for (let i = 0, b = 0; i < tune.length; b += tune[i + 1], i += 2)
-        if (b >= bar*4 && b < bar*4 + 4 && tune[i]) out.push([tune[i], b - bar*4, tune[i + 1]]);
+    for (let i = 0, e = 0; i < tune.length; e += tune[i + 1], i += 2)
+        if (e >= bar*8 && e < bar*8 + 8 && tune[i]) out.push([tune[i], e - bar*8, tune[i + 1]]);
     return out;
 };
-// the music's own mix, into dest: the voices through a soft low pass and an echo with its repeats darkening, and a
-// bus for the chimes that shares the echo
+// the music's own mix, into dest: the band into a compressor, the lead with a short echo, and a bus for the jingles
 function makeMusic(ac, dest)
 {
-    // (into the chords half way through, so the tune comes in after a few bars)
-    const m = {ac, bar: 4, t: ac.currentTime + .4};
+    const m = {ac, bar: 4, t: ac.currentTime + .3};
     m.out = ac.createGain(); m.out.connect(dest);
     m.out.gain.setValueAtTime(0, ac.currentTime);
-    m.out.gain.linearRampToValueAtTime(MUSIC_LEVEL, ac.currentTime + 4);
-    m.lp = ac.createBiquadFilter(); m.lp.type = 'lowpass'; m.lp.frequency.value = 2600; m.lp.Q.value = .4;
-    m.lp.connect(m.out);
-    const delay = ac.createDelay(1), fb = ac.createGain(), dark = ac.createBiquadFilter(), send = ac.createGain(), fxSend = ac.createGain();
-    delay.delayTime.value = BEAT*.75; fb.gain.value = .32; send.gain.value = .3; fxSend.gain.value = .5;
-    dark.type = 'lowpass'; dark.frequency.value = 1800;
-    m.lp.connect(send); send.connect(delay); delay.connect(dark); dark.connect(fb); fb.connect(delay); dark.connect(m.out);
-    m.fx = ac.createGain(); m.fx.connect(dest); m.fx.connect(fxSend); fxSend.connect(delay);
+    m.out.gain.linearRampToValueAtTime(MUSIC_LEVEL, ac.currentTime + 1.5);
+    const comp = ac.createDynamicsCompressor();
+    comp.threshold.value = -20; comp.knee.value = 12; comp.ratio.value = 3; comp.attack.value = .005; comp.release.value = .15;
+    comp.connect(m.out);
+    m.mix = ac.createGain(); m.mix.connect(comp);
+    m.lead = ac.createGain(); m.lead.connect(m.mix);
+    const delay = ac.createDelay(1), fb = ac.createGain(), send = ac.createGain();
+    delay.delayTime.value = BEAT*.75; fb.gain.value = .25; send.gain.value = .2;
+    m.lead.connect(send); send.connect(delay); delay.connect(fb); fb.connect(delay); delay.connect(m.mix);
+    // the jingles ring out over the music
+    m.fx = ac.createGain(); m.fx.gain.value = 3.5; m.fx.connect(dest);
+    // a second of white noise for the snare and the hats
+    const sr = ac.sampleRate;
+    m.noise = ac.createBuffer(1, sr, sr);
+    const d = m.noise.getChannelData(0);
+    for (let i = 0; i < d.length; ++i) d[i] = Math.random()*2 - 1;
     return m;
 }
-// the voices: a pad of two soft triangles a hair apart, a round bass, and a lead with a slow vibrato
-function pad(m, midi, t, len)
+// the drums: a kick that drops in pitch, a snare of noise with a little tone in it, and a tick of a hat
+function drumKick(m, t, vol=.45)
 {
-    const ac = m.ac, g = ac.createGain();
-    g.gain.setValueAtTime(0, t);
-    g.gain.linearRampToValueAtTime(.012, t + .6);
-    g.gain.setTargetAtTime(0, t + len, .5);
-    for (const cents of [-5, 5])
-    {
-        const o = ac.createOscillator();
-        o.type = 'triangle'; o.frequency.value = midiHz(midi); o.detune.value = cents;
-        o.connect(g); o.start(t); o.stop(t + len + 3);
-    }
-    g.connect(m.lp);
+    const ac = m.ac, o = ac.createOscillator(), g = ac.createGain();
+    o.frequency.setValueAtTime(150, t); o.frequency.exponentialRampToValueAtTime(45, t + .1);
+    g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(.001, t + .18);
+    o.connect(g); g.connect(m.mix); o.start(t); o.stop(t + .2);
 }
-function bass(m, midi, t, len)
+function hiss(m, t, len, vol, type, freq)
 {
-    const ac = m.ac, o = ac.createOscillator(), o2 = ac.createOscillator(), h = ac.createGain(), g = ac.createGain();
-    o.frequency.value = midiHz(midi); o2.type = 'triangle'; o2.frequency.value = midiHz(midi); h.gain.value = .3;
-    g.gain.setValueAtTime(0, t);
-    g.gain.linearRampToValueAtTime(.07, t + .03);
-    g.gain.setTargetAtTime(.05, t + .03, .4);
-    g.gain.setTargetAtTime(0, t + len - .05, .12);
-    o.connect(g); o2.connect(h); h.connect(g); g.connect(m.lp);
-    o.start(t); o2.start(t); o.stop(t + len + 1); o2.stop(t + len + 1);
+    const ac = m.ac, src = ac.createBufferSource(), f = ac.createBiquadFilter(), g = ac.createGain();
+    src.buffer = m.noise; f.type = type; f.frequency.value = freq; f.Q.value = .7;
+    g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(.001, t + len);
+    src.connect(f); f.connect(g); g.connect(m.mix);
+    src.start(t, Math.random()*.8); src.stop(t + len + .01);
 }
-function lead(m, midi, t, len)
+function drumSnare(m, t)
 {
-    const ac = m.ac, o = ac.createOscillator(), o2 = ac.createOscillator(), h = ac.createGain(), g = ac.createGain();
-    const lfo = ac.createOscillator(), depth = ac.createGain();
-    o.frequency.value = o2.frequency.value = midiHz(midi); o2.type = 'triangle'; h.gain.value = .35;
-    lfo.frequency.value = 4.8;
-    depth.gain.setValueAtTime(0, t); depth.gain.linearRampToValueAtTime(7, t + .5);
-    lfo.connect(depth); depth.connect(o.detune); depth.connect(o2.detune);
-    g.gain.setValueAtTime(0, t);
-    g.gain.linearRampToValueAtTime(.06, t + .04);
-    g.gain.setTargetAtTime(.042, t + .04, .3);
-    g.gain.setTargetAtTime(0, t + len - .06, .12);
-    o.connect(g); o2.connect(h); h.connect(g); g.connect(m.lp);
-    for (const x of [o, o2, lfo]) { x.start(t); x.stop(t + len + 1); }
+    hiss(m, t, .13, .13, 'bandpass', 1900);
+    blip(m.mix, 54, t, .08, .07, {wave: 'tri', to: 50});
 }
+const drumHat = (m, t, vol)=> hiss(m, t, .035, vol, 'highpass', 7000);
 // one bar of the song at time t
 function musicBar(m, t)
 {
-    const k = m.bar++, s = k < 8 ? 0 : 1 + floor((k - 8)/8) % (SONG.length - 1), bar = k % 8;
-    const [prog, tune] = SONG[s], c = CHORD[prog[bar]];
-    for (const n of c.slice(1)) pad(m, n, t, BAR);
-    bass(m, c[0], t, 3*BEAT); bass(m, c[0] + 7, t + 3*BEAT, BEAT);
-    // the music box: up the chord and back down
-    [c[1], c[2], c[3], c[4], c[1] + 12, c[4], c[3], c[2]].forEach((n, i)=> bell(m.lp, n, t + i*BEAT/2, (i % 4 ? .022 : .03)*(tune ? .8 : 1), 1.4));
-    if (tune) for (const [n, b, len] of tuneBar(tune, bar)) lead(m, n, t + b*BEAT, len*BEAT);
+    const k = m.bar++, sec = k < 8 ? INTRO : SONG[floor((k - 8)/8) % SONG.length], bar = k % 8, c = CHORD[sec.prog[bar]], S = BEAT/4;
+    for (let i = 0; i < 16; ++i)
+    {
+        const at = t + i*S;
+        if (KICK[i] == 'x' && (sec.drums == 'full' || i == 0 || i == 8)) drumKick(m, at);
+        if (sec.drums == 'full' && (i == 4 || i == 12)) drumSnare(m, at);
+        if (i % 2 == 0) drumHat(m, at, i % 4 == 2 ? .035 : .018);
+    }
+    if (sec.arp)
+    {
+        // the breakdown: the bass held, the chord picked out in sixteenths up and down an octave
+        note(m.mix, c[0], t, BAR/2 - .03, .13, {wave: 'tri'}); note(m.mix, c[0], t + BAR/2, BAR/2 - .03, .13, {wave: 'tri'});
+        for (let i = 0; i < 16; ++i) note(m.mix, c[1 + i % 3] + (floor(i/3) % 2 ? 12 : 0), t + i*S, S*.7, .028, {wave: .125, cut: 2600, release: .03});
+    }
+    else
+    {
+        // the bass bouncing between the root and its octave in eighths, and the chord stabbed on the off beats
+        for (let i = 0; i < 8; ++i) note(m.mix, c[0] + (i % 2 ? 12 : 0), t + i*BEAT/2, BEAT/2 - .04, .1, {wave: 'tri', release: .03});
+        for (let i = 1; i < 8; i += 2) for (const n of c.slice(1)) note(m.mix, n, t + i*BEAT/2, .07, .03, {wave: .125, cut: 2200, release: .04});
+    }
+    if (sec.tune) for (const [n, e, len] of tuneBar(sec.tune, bar))
+        note(m.lead, n, t + e*BEAT/2, len*BEAT/2 - .05, .17, {wave: .25, cut: 3400, vib: len > 1 ? 14 : 0});
 }
 // the bars due before until, laid out ahead of time; after a stall it picks up from now rather than catching up
 function musicTick(m, until)
@@ -5009,20 +5026,18 @@ function musicTick(m, until)
 function musicUpdate(now)
 {
     if (!mus) return;
-    musicTick(mus, now + .5);
-    // darker at night
-    mus.lp.frequency.setTargetAtTime(night > .5 ? 1400 : 2600, now, 2);
+    musicTick(mus, now + .4);
 }
 
-// a recording of the tune with the ride's sounds and some chimes over it, for listening to outside the game: a WAV
-// file as base64. parts picks what is in it, any of music, loops, chimes and thumps
-async function audioPreview(seconds=40, parts='music loops chimes thumps')
+// a recording of the tune with the ride's sounds and some jingles over it, for listening to outside the game: a WAV
+// file as base64. parts picks what is in it, any of music, loops, jingles and thumps
+async function audioPreview(seconds=40, parts='music loops jingles thumps')
 {
     const sr = 44100, ac = new OfflineAudioContext(1, seconds*sr, sr), master = ac.createGain(), mute = ac.createGain();
     master.gain.value = .5; master.connect(ac.destination); mute.gain.value = 0; mute.connect(ac.destination);
     const has = k=> parts.includes(k) ? master : mute;
     const m = makeMusic(ac, has('music')), L = soundLoops(ac, has('loops'));
-    m.fx.disconnect(); m.fx.connect(has('chimes'));
+    m.fx.disconnect(); m.fx.connect(has('jingles'));
     musicTick(m, seconds);
     // riding along at a steady 16 m/s, a bit faster in the middle
     for (let t = 0; t < seconds; t += .25)
@@ -5030,14 +5045,14 @@ async function audioPreview(seconds=40, parts='music loops chimes thumps')
         const speed = 16 + 6*sin(PI*t/seconds)**2;
         soundLoopsSet(L, t, {riding: true, speed, onGround: true, air: false, turbo: t > 20 && t < 26});
     }
-    // a row of sprockets, a battery set, a trick or two, pedal power, a turbo
-    for (let k = 0; k < 8; ++k) chime('orb', k, m, 4 + k*.22);
-    chime('trick', 0, m, 8); chime('bank', 0, m, 10);
-    for (let k = 0; k < 6; ++k) chime('cell', k, m, 13 + k*.35);
-    chime('chain', 0, m, 16); chime('turbo', 0, m, 20); chime('ready', 0, m, 19.4);
-    chime('tyre', 0, m, 27); chime('perfect', 0, m, 29); chime('send', 0, m, 32); chime('line', 0, m, 36);
+    // the start, a row of sprockets, a jump with a trick, a battery set, pedal power, a turbo, a crash...
+    const at = [['go', 1], ['jump', 6.5], ['whoosh', 7, 2], ['trick', 8.5], ['bank', 10], ['chain', 16], ['ready', 19], ['turbo', 20],
+        ['tyre', 26], ['perfect', 28], ['send', 31], ['line', 35], ['crash', 38]];
+    for (let k = 0; k < 8; ++k) at.push(['orb', 3 + k*.22, k]);
+    for (let k = 0; k < 6; ++k) at.push(['cell', 12.5 + k*.35, k]);
+    for (const [name, t, v] of at) if (t < seconds - 1) jingle(name, v || 0, m, t);
     // and the thumps, from their own samples
-    for (const [name, t, vol] of [['jump', 7, 1], ['land', 8.6, .9], ['whoosh', 30.5, 1], ['landHard', 34, 1]])
+    for (const [name, t, vol] of [['land', 8.4, .9], ['landHard', 33.5, 1], ['crash', 38, 1]])
     {
         const data = SFX[name].sampleChannels?.[0] ?? SFX[name]._sampleChannels?.[0];
         if (!data) continue;

@@ -570,6 +570,26 @@ The ride felt jittery and snappy, and a trick during a turn flew round the bend.
   - Every line still gets its feature (none plain, where a few were before).
 - **Gone:** BERM RUN scoring, with the berm turns. BERM points on the lines' turn-offs stay.
 
+## Sound: done
+The pedal power's chain sound screeched, and the wind was a loud hiss of static. The aim was a peaceful, mellow ride with a tune under it.
+
+- **A tune** (`makeMusic`, `musicBar`): a slow, warm piece in D major at 78 beats a minute, scheduled a bar ahead, through a soft low pass and an echo with darkening repeats.
+  - **The voices:** a pad of two triangles a hair apart, a round bass, a music box picking out each chord in eighths, and a soft lead with a slow vibrato.
+  - **The chords:** section A is D, Bm7, Gmaj7, Asus, D, F#m7, Gmaj7, A7sus. Section B is Gmaj7, Asus, F#m7, Bm7, Em7, A7sus, D, D.
+  - **The tunes:** three 8-bar tunes go over them (A1, A2, B, A1, B). It starts with four bars of chords alone, and it loops every couple of minutes. It is darker at night.
+- **Chimes in the tune's key** (`chime`, `bell`): soft struck bells (a sine with a little of its octave and twelfth), through the music's echo.
+  - **Pickups:** a run of sprockets steps up the D major pentatonic; battery cells ring lower, with a fifth. A spare tyre is a rubbery boing.
+  - **Tricks and cues:** tricks, combos, lines, perfect landings, the start and TURBO READY are short arpeggios.
+  - **Boosts:** PEDAL POWER is a quick run up the scale over a soft swell. TURBO and SEND IT are warm low swells under rising chimes.
+- **The noise loops, soft and low** (`soundLoops`):
+  - **The wind:** deep brown noise through a low pass, coming and going in slow gusts. It used to be white noise through a wide band pass.
+  - **The tyres:** the crunch is pink noise, lower and quieter, on snow too. The roll is quieter.
+  - **The eBike motor:** a soft hum of a low note and its octave, instead of a sawtooth whine.
+  - Above 1.5 kHz, where the hiss was, the loops are 28–35 dB quieter than before.
+- **The thumps** (ZzFX): landings, crashes, splashes and whooshes are quieter, each through a low pass, with no bit crush.
+- **Listening:** `tools/listen.mjs` renders the sound offline to a WAV file (`__mtb.audioPreview`): the tune, the loops at riding speed, and the chimes and thumps over them.
+  - A check on the rendering: the first tune's opening 15 notes come out at the right pitches and on time.
+
 ## Two players: built (core)
 Decisions: the server can run Node; online only; the match just keeps going; a crash costs time rather than the run; a breakaway wins and restarts. The slipstream is on, and each player keeps their own collectibles.
 
@@ -725,5 +745,6 @@ Two kinds, so the players have different powers and different choices:
     node tools/sim.mjs [--seeds 20] [--km 5] [--flips back|front] [--tricks] [--lanes rand|up|down|main] [--turbo] [--json out.json] [--salt n] [--game other.html] [--bike 0..3]
     node tools/shot.mjs --seed 3 --at 800 --view SIDE --zoom 1 --day .3 --out shot.png [--size 390x844] [--js "code"] [--game other.html]
     node tools/smooth.mjs [--view 3/4] [--size 900x600] [--seeds 3] [--km 2] [--lanes main] [--game other.html]
+    node tools/listen.mjs [--out sound.wav] [--seconds 44] [--parts "music loops chimes thumps"] [--game other.html]
 
 `--lanes` takes rand, up, down, main, pro, high or none.

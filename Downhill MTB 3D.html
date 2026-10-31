@@ -3761,7 +3761,7 @@ function collectOrbs()
         if (o.tyre)
         {
             ++tyresGot; score += 50;
-            sfx('bonk');
+            sfx('tyre');
             new ParticleEmitter3D(W3(o.x, o.y, o.z || 0), .8, .08, 200, PI, undefined,
                 hsl(.07,1,.6), WHITE, hsl(.07,1,.6,0), CLEAR_WHITE, .5, .4, 0, .1, .92, -.002, .1, .4, true);
             if (++tyres >= 3)
@@ -4650,35 +4650,105 @@ function drawResults(W, H)
 }
 
 // ============================================================================
-// SOUND - tyres, wind and the grind as noise loops, ZzFX one shots for the rest,
-// and a slow generative score that drifts between soft chords
+// SOUND - a gentle tune; the tyres and the air going by, soft and low; bell chimes in the tune's key for pickups,
+// boosts and tricks; and soft thumps for landings and crashes
 // ============================================================================
 let au, soundOn = true;
+// thumps, whooshes and splashes: ZzFX one shots, each through a low pass so nothing hisses or crackles
 const SFX = {
-    jump:      new Sound([.5,.05,260,.01,.04,.12,0,1.6,90,,,,,,,,,.45]),
-    whoosh:    new Sound([.4,.1,300,.05,.1,.2,4,.6,-25,,,,,1.5,,,,.4]),
-    land:      new Sound([.8,.1,70,.004,.03,.18,4,1.2,-8,,,,,4,,,.04,.5]),
-    landHard:  new Sound([1.1,.1,55,.004,.06,.34,4,1.6,-6,,,,,6,,.1,.07,.4]),
-    crash:     new Sound([1.3,.15,85,.01,.18,.65,4,2.2,-4,,,,.09,8,,.3,.1,.35]),
-    orb:       new Sound([.35,,1675,,.06,.24,1,1.82,,,837,.06]),
-    trick:     new Sound([.6,0,523,.02,.15,.35,1,1.6,,,262,.07,.09,,,,,.7]),
-    trickBig:  new Sound([.7,0,392,.02,.25,.5,1,1.5,,,392,.08,.1,,,,.05,.75]),
-    perfect:   new Sound([.45,0,880,.01,.08,.3,1,1.8,,,660,.05,,,,,,.6]),
-    bank:      new Sound([.7,0,660,.02,.3,.6,1,1.5,,,330,.09,.12,,,,.08,.7]),
-    grind:     new Sound([.5,.2,900,.01,.05,.12,4,1,-6,,,,,6,,,.02,.5]),
-    go:        new Sound([.5,0,660,.02,.1,.25,1,1.5,,,330,.05]),
-    click:     new Sound([.25,,900,,.01,.03,1,,,,,,,,,,,.5]),
-    splash:    new Sound([.9,.3,500,.01,.12,.35,4,.4,,,,,,9,,.2,.06,.5]),
-    berm:      new Sound([.6,.2,180,.06,.25,.35,4,.8,-4,,,,,2.5,,,.06,.45]),
-    ready:     new Sound([.5,0,523,.02,.12,.3,1,1.4,,,1047,.08,.1,,,,,.6]),
-    turbo:     new Sound([.9,0,110,.05,.5,.6,2,1.2,22,,,,,,,,.1,.6,.1]),
-    send:      new Sound([.8,0,180,.02,.25,.45,2,1.4,18,,,,,,,,.06,.6,.15]),
-    line:      new Sound([.6,0,587,.02,.18,.4,1,1.6,,,880,.08,.12,,,,.06,.7]),
-    thud:      new Sound([1,.1,60,.005,.04,.15,4,1.5,-5,,,,,6,,.1,.05,.4]),
-    clank:     new Sound([.5,.05,700,.002,.02,.12,3,1.8,,,,,,,3,,.03,.5,.1]),
-    cell:      new Sound([.5,0,880,.01,.06,.22,2,1.5,6,,440,.04,,,,,,.6]),
-    bonk:      new Sound([1.4,.05,170,.002,.05,.3,1,2,-12,,,,,3,,.1,.04,.5]),
-    chain:     new Sound([.7,.1,320,.01,.35,.25,3,1,,,,,.035,1.5,,,,.6])};
+    jump:     new Sound([.3,.05,220,.01,.04,.14,0,1.4,60,,,,,,,,,.45,,,-1500]),
+    whoosh:   new Sound([.22,.1,300,.06,.1,.22,4,.6,-25,,,,,1.5,,,,.4,,,-500]),
+    land:     new Sound([.5,.1,70,.006,.03,.2,4,1.2,-8,,,,,4,,,.04,.5,,,-300]),
+    landHard: new Sound([.7,.1,55,.006,.06,.34,4,1.6,-6,,,,,6,,,.07,.4,,,-250]),
+    crash:    new Sound([.75,.15,85,.01,.18,.6,4,2.2,-4,,,,.09,8,,,.1,.35,,,-300]),
+    grind:    new Sound([.25,.2,900,.01,.05,.12,4,1,-6,,,,,6,,,.02,.5,,,-1200]),
+    click:    new Sound([.15,,880,,.01,.04,0,,,,,,,,,,,.5]),
+    splash:   new Sound([.45,.3,500,.01,.12,.35,4,.4,,,,,,9,,,.06,.5,,,-900]),
+    berm:     new Sound([.3,.2,180,.08,.25,.35,4,.8,-4,,,,,2.5,,,.06,.45,,,-450]),
+    thud:     new Sound([.55,.1,60,.006,.04,.15,4,1.5,-5,,,,,6,,,.05,.4,,,-250]),
+    clank:    new Sound([.25,.05,520,.003,.02,.14,1,1.4,,,,,,,,,.03,.5,.1,,-900]),
+    bonk:     new Sound([.7,.05,170,.004,.05,.3,1,2,-12,,,,,3,,,.04,.5,,,-500])};
+
+// ---------- bells in the tune's key, D major pentatonic, from D5 up two octaves
+const LADDER = [74, 76, 78, 81, 83, 86, 88, 90, 93, 95, 98];
+const midiHz = m=> 440*2**((m - 69)/12);
+// a soft struck bell: a sine with a little of its octave and twelfth, which die away first
+function bell(dest, midi, t, vol, ring=.8)
+{
+    const ac = dest.context, f = midiHz(midi), out = ac.createGain();
+    out.gain.value = vol;
+    out.connect(dest);
+    for (const [k, a, d] of [[1, 1, 1], [2, .25, .45], [3, .06, .25]])
+    {
+        const o = ac.createOscillator(), g = ac.createGain();
+        o.frequency.value = f*k;
+        g.gain.setValueAtTime(0, t);
+        g.gain.linearRampToValueAtTime(a, t + .005);
+        g.gain.setTargetAtTime(0, t + .005, ring*d/4);
+        o.connect(g); g.connect(out);
+        o.start(t); o.stop(t + ring*d + .3);
+    }
+}
+// a soft swell sliding up under a boost: a low voice and its octave, through a low pass
+function swell(dest, f0, f1, t, len, vol)
+{
+    const ac = dest.context, g = ac.createGain(), lp = ac.createBiquadFilter();
+    lp.type = 'lowpass'; lp.frequency.value = 900; lp.Q.value = .5;
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(vol, t + len*.45);
+    g.gain.linearRampToValueAtTime(0, t + len);
+    for (const [type, k] of [['sine', 1], ['triangle', 2]])
+    {
+        const o = ac.createOscillator();
+        o.type = type;
+        o.frequency.setValueAtTime(f0*k, t);
+        o.frequency.exponentialRampToValueAtTime(f1*k, t + len);
+        o.connect(lp); o.start(t); o.stop(t + len + .05);
+    }
+    lp.connect(g); g.connect(dest);
+}
+// a spare tyre picked up: a rubbery boing
+function boing(dest, t, vol)
+{
+    const ac = dest.context, o = ac.createOscillator(), wob = ac.createOscillator(), wg = ac.createGain(), g = ac.createGain();
+    o.frequency.setValueAtTime(300, t);
+    o.frequency.exponentialRampToValueAtTime(140, t + .3);
+    wob.frequency.value = 16; wg.gain.value = 18;
+    wob.connect(wg); wg.connect(o.frequency);
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(vol, t + .01);
+    g.gain.setTargetAtTime(0, t + .05, .08);
+    o.connect(g); g.connect(dest);
+    o.start(t); wob.start(t); o.stop(t + .6); wob.stop(t + .6);
+}
+// what each chime plays: notes as [MIDI, delay, loudness, ring]
+const CHIMES = {
+    // sprockets step up the scale as a run of them is picked up; battery cells ring lower, with a fifth
+    orb:      v=> [[LADDER[3 + v % 8], 0, .08, .5]],
+    cell:     v=> [[LADDER[v % 6], 0, .09, 1.1], [LADDER[v % 6] + 7, .03, .045, 1]],
+    tyre:     ()=> [[86, .06, .04, .5]],
+    trick:    ()=> [[81, 0, .06, .7], [86, .09, .07, .9]],
+    trickBig: ()=> [[74, 0, .05, .8], [78, .07, .05, .8], [81, .14, .06, .9], [86, .21, .07, 1.2]],
+    perfect:  ()=> [[93, 0, .04, .5], [98, .06, .04, .7]],
+    bank:     ()=> [[74, 0, .06, 1], [81, .08, .06, 1], [86, .16, .07, 1.1], [90, .24, .07, 1.4]],
+    line:     ()=> [[79, 0, .06, 1], [83, .08, .06, 1], [86, .16, .07, 1.4]],
+    go:       ()=> [[74, 0, .06, .8], [81, .12, .06, .8], [86, .24, .08, 1.4]],
+    ready:    ()=> [[88, 0, .05, .6], [93, .1, .06, 1]],
+    // pedal power: a quick run up the scale over a soft swell
+    chain:    ()=> [74, 76, 78, 81, 83, 86].map((n, i)=> [n, i*.05, .04 + i*.006, .7]),
+    turbo:    ()=> [[81, .1, .05, .9], [86, .2, .06, 1], [90, .3, .06, 1.3]],
+    send:     ()=> [[74, 0, .05, 1.4], [78, .05, .05, 1.4], [81, .1, .05, 1.4], [86, .15, .06, 1.6], [90, .2, .06, 1.8]]};
+// and the swell under a boost: from, to (Hz), how long, how loud
+const SWELLS = {chain: [147, 294, .7, .05], turbo: [73, 147, .9, .07], send: [73, 220, 1.2, .07]};
+function chime(name, v=0, m=mus, t)
+{
+    if (!m) return;
+    t ??= m.ac.currentTime + .01;
+    for (const [n, d, vol, ring] of CHIMES[name](v)) bell(m.fx, n, t + d, vol*1.5, ring);
+    const s = SWELLS[name];
+    if (s) swell(m.fx, s[0], s[1], t, s[2], s[3]);
+    if (name == 'tyre') boing(m.fx, t, .11);
+}
 
 // a cow's moo, made from scratch: a buzzing voice through a mouth that opens from mmm to ooo and closes again,
 // its pitch rising, holding with a wobble and sliding away at the end
@@ -4722,11 +4792,11 @@ function moo(pitch=1, d=1.7, loud=.5)
 
 function sfx(name, v=0)
 {
+    if (!soundOn) return;
+    if (CHIMES[name]) { if (audioContext?.state == 'running') chime(name, v); return; }
     const s = SFX[name];
-    if (!s || !soundOn) return;
-    if (name == 'orb') s.play(undefined, .7, 1 + v*.035);
-    else if (name == 'cell') s.play(undefined, .8, 1 + v*.05);
-    else if (name == 'land') s.play(undefined, .45 + v*.6);
+    if (!s) return;
+    if (name == 'land') s.play(undefined, .45 + v*.6);
     else if (name == 'whoosh') s.play(undefined, 1, .85 + v*.07);
     else s.play();
 }
@@ -4740,47 +4810,82 @@ function audioUnlock()
     if (audioContext && audioContext.state != 'running') audioContext.resume?.().catch?.(()=> {});
 }
 
+// ---------- the noise under it all, soft and low: the tyres rolling and crunching, the air going by, a rail's
+// grind and the motor's hum
+function soundLoops(ac, dest)
+{
+    const sr = ac.sampleRate;
+    const buffer = (seconds, fill)=>
+    {
+        const b = ac.createBuffer(1, seconds*sr | 0, sr);
+        fill(b.getChannelData(0));
+        return b;
+    };
+    // brown noise, a deep rumble, and pink, softer than white with less of the hiss at the top
+    const brown = buffer(2, d=>
+    {
+        let l = 0;
+        for (let i = 0; i < d.length; ++i) { l = (l + .02*(Math.random()*2 - 1))/1.02; d[i] = l*3.5; }
+    });
+    const pink = buffer(2, d=>
+    {
+        let b0 = 0, b1 = 0, b2 = 0;
+        for (let i = 0; i < d.length; ++i)
+        {
+            const w = Math.random()*2 - 1;
+            b0 = .99765*b0 + w*.099046; b1 = .963*b1 + w*.2965164; b2 = .57*b2 + w*1.0526913;
+            d[i] = (b0 + b1 + b2 + w*.1848)*.12;
+        }
+    });
+    const loop = (b, type, freq, q)=>
+    {
+        const src = ac.createBufferSource(), filter = ac.createBiquadFilter(), gain = ac.createGain();
+        src.buffer = b; src.loop = true;
+        filter.type = type; filter.frequency.value = freq; filter.Q.value = q;
+        gain.gain.value = 0;
+        src.connect(filter); filter.connect(gain); gain.connect(dest);
+        src.start();
+        return {src, filter, gain};
+    };
+    const L = {
+        roll: loop(brown, 'lowpass', 300, .7),
+        grit: loop(pink, 'bandpass', 500, .9),
+        wind: loop(brown, 'lowpass', 400, .5),
+        grind: loop(pink, 'bandpass', 1500, 1.2)};
+    // the eBike motor: a soft hum, a low note and its octave, rising a little with the speed
+    const o1 = ac.createOscillator(), o2 = ac.createOscillator(), h = ac.createGain(), f = ac.createBiquadFilter(), g = ac.createGain();
+    o1.frequency.value = 62; o2.frequency.value = 124; h.gain.value = .35;
+    f.type = 'lowpass'; f.frequency.value = 420;
+    g.gain.value = 0;
+    o1.connect(f); o2.connect(h); h.connect(f); f.connect(g); g.connect(dest);
+    o1.start(); o2.start();
+    L.motor = {o1, o2, g};
+    return L;
+}
+// how loud and bright each is: s holds how fast the rider is going and what they are on
+function soundLoopsSet(L, now, s)
+{
+    const set = (param, v, tc=.07)=> param.setTargetAtTime(v, now, tc), speed = s.speed;
+    set(L.roll.gain.gain, s.onGround ? clamp01(speed/12)*(s.deck ? .5 : s.snow ? .2 : .32) : 0);
+    set(L.roll.filter.frequency, s.deck ? 90 + speed*10 : 110 + speed*18);
+    set(L.grit.gain.gain, s.skid ? .18 : s.onGround ? clamp01(speed/14)*(s.deck ? .02 : s.snow ? .12 : .08) : 0);
+    set(L.grit.filter.frequency, s.skid ? 600 + speed*20 : s.snow ? 800 + speed*20 : 350 + speed*15);
+    // the air: a soft rush that grows with the speed and comes and goes in slow gusts
+    const gust = .8 + .2*sin(now*.7)*sin(now*.29 + 1);
+    set(L.wind.gain.gain, s.riding ? (clamp01((speed - 5)/25)**2*.18 + (s.air ? .03 : 0) + (s.boost ? .03 : 0))*gust : 0, .3);
+    set(L.wind.filter.frequency, 300 + speed*16, .3);
+    set(L.grind.gain.gain, s.grinding ? .1 : 0, .05);
+    set(L.motor.g.gain, s.turbo ? .06 : 0, .15);
+    set(L.motor.o1.frequency, 62 + speed*1.6); set(L.motor.o2.frequency, 124 + speed*3.2);
+}
+
 function audioInit()
 {
     if (au || !audioContext || !audioMasterGain) return;
     try
     {
-        const ac = audioContext, sr = ac.sampleRate;
-        const buffer = (seconds, fill)=>
-        {
-            const b = ac.createBuffer(1, seconds*sr | 0, sr);
-            fill(b.getChannelData(0));
-            return b;
-        };
-        const white = buffer(2, d=> { for (let i = 0; i < d.length; ++i) d[i] = Math.random()*2 - 1; });
-        const brown = buffer(2, d=>
-        {
-            let l = 0;
-            for (let i = 0; i < d.length; ++i) { l = (l + .02*(Math.random()*2 - 1))/1.02; d[i] = l*3.5; }
-        });
-        const loop = (b, type, freq, q)=>
-        {
-            const src = ac.createBufferSource(), filter = ac.createBiquadFilter(), gain = ac.createGain();
-            src.buffer = b; src.loop = true;
-            filter.type = type; filter.frequency.value = freq; filter.Q.value = q;
-            gain.gain.value = 0;
-            src.connect(filter); filter.connect(gain); gain.connect(audioMasterGain);
-            src.start();
-            return {src, filter, gain};
-        };
-        au = {
-            roll: loop(brown, 'lowpass', 300, .8),
-            grit: loop(white, 'bandpass', 900, 1.2),
-            wind: loop(white, 'bandpass', 700, .45),
-            grind: loop(white, 'bandpass', 2400, 4)};
-        // the eBike motor: a buzzing whine that climbs with the speed
-        const o = ac.createOscillator(), f = ac.createBiquadFilter(), g = ac.createGain();
-        o.type = 'sawtooth'; o.frequency.value = 150;
-        f.type = 'lowpass'; f.frequency.value = 1200; f.Q.value = 4;
-        g.gain.value = 0;
-        o.connect(f); f.connect(g); g.connect(audioMasterGain); o.start();
-        au.motor = {o, f, g};
-        musicInit(ac);
+        au = soundLoops(audioContext, audioMasterGain);
+        mus = makeMusic(audioContext, audioMasterGain);
     }
     catch(e) { au = undefined; }
 }
@@ -4792,70 +4897,164 @@ function audioUpdate()
         if (audioContext?.state == 'running') audioInit();
         return;
     }
-    const now = audioContext.currentTime, set = (param, v, tc=.07)=> param.setTargetAtTime(v, now, tc);
-    const riding = state == 'ride', speed = riding ? hypot(vx, vy) : 0, onGround = riding && (grounded || !!grinding?.deck);
-    const snow = surfNow == S_SNOW;
-    const deck = riding && !!grinding?.deck, skid = riding && braking && grounded;
-    set(au.roll.gain.gain, onGround ? clamp01(speed/12)*(deck ? 1 : snow ? .4 : .75) : 0);
-    set(au.roll.filter.frequency, deck ? 90 + speed*12 : 120 + speed*24);
-    set(au.grit.gain.gain, skid ? .34 : onGround ? clamp01(speed/14)*(deck ? .06 : snow ? .28 : .16) : 0);
-    set(au.grit.filter.frequency, skid ? 1500 + speed*30 : snow ? 2200 + speed*40 : 700 + speed*50);
-    set(au.wind.gain.gain, riding ? clamp01((speed - 4)/24)**2*.55 + (grounded ? 0 : .06) + (boostT > 0 ? .1 : 0) : 0);
-    set(au.wind.filter.frequency, 450 + speed*40);
-    set(au.grind.gain.gain, riding && grinding && !grinding.deck ? .3 + .08*sin(now*40) : 0, .03);
-    set(au.motor.g.gain, riding && turboT > 0 ? .085 : 0, .05);
-    set(au.motor.o.frequency, 110 + speed*11);
-    set(au.motor.f.frequency, 900 + speed*60);
+    const now = audioContext.currentTime, riding = state == 'ride', speed = riding ? hypot(vx, vy) : 0;
+    soundLoopsSet(au, now, {riding, speed, onGround: riding && (grounded || !!grinding?.deck), deck: riding && !!grinding?.deck,
+        snow: surfNow == S_SNOW, skid: riding && braking && grounded, air: !grounded, boost: boostT > 0,
+        grinding: riding && grinding && !grinding.deck, turbo: riding && turboT > 0});
     musicUpdate(now);
 }
 
-// ---------- the score: soft chords with a slow swell and a few plucked notes, through a gentle echo
+// ---------- the tune: slow and warm in D major at 78 beats a minute. A pad holds each chord, a bass under it, a music
+// box picks out the chord in eighths, and a soft lead sings the tune over the top, all through an echo. Two sections,
+// A and B, with three tunes over them; round it goes every two and a half minutes.
 let mus;
-const CHORDS = [[45, 57, 60, 64, 67], [41, 53, 57, 60, 64], [36, 48, 55, 59, 64], [43, 55, 59, 62, 66],
-    [38, 50, 57, 60, 65], [41, 53, 57, 60, 67], [36, 48, 52, 55, 62], [43, 55, 59, 62, 67]];
-const midiHz = m=> 440*2**((m - 69)/12);
-function musicInit(ac)
+const BEAT = 60/78, BAR = 4*BEAT, MUSIC_LEVEL = 1.3;
+// each chord: its bass note, then the four notes the pad holds and the music box picks out
+const CHORD = {D: [50, 66, 69, 73, 76], Bm: [47, 62, 66, 69, 74], G: [43, 62, 66, 71, 74], Asus: [45, 62, 64, 69, 73],
+    Fm: [42, 64, 69, 73, 76], Em: [40, 62, 67, 71, 74], A7: [45, 62, 67, 69, 76]};
+const PROG_A = ['D', 'Bm', 'G', 'Asus', 'D', 'Fm', 'G', 'A7'], PROG_B = ['G', 'Asus', 'Fm', 'Bm', 'Em', 'A7', 'D', 'D'];
+// the tunes, eight bars each: a note (MIDI, 0 for a rest) and how many beats it lasts, four beats to a bar
+const TUNE1 = [78,1.5, 76,.5, 74,1, 69,1,  71,1.5, 74,.5, 78,2,  79,1, 78,.5, 76,.5, 74,1, 71,1,  73,1.5, 71,.5, 69,2,
+               78,1.5, 81,.5, 78,1, 76,1,  73,1.5, 76,.5, 81,2,  83,1, 81,.5, 79,.5, 78,1, 74,1,  76,3, 0,1];
+const TUNE2 = [74,.5, 76,.5, 78,1, 81,1.5, 78,.5,  76,1, 74,1, 71,2,  71,.5, 74,.5, 79,1.5, 78,.5, 76,1,  76,1.5, 73,.5, 69,2,
+               69,.5, 74,.5, 78,1, 76,.5, 74,.5, 76,1,  73,2, 69,1, 73,1,  71,1, 74,1, 79,1, 78,1,  76,1.5, 74,.5, 74,2];
+const TUNE3 = [83,1.5, 81,.5, 79,1, 78,1,  76,1.5, 78,.5, 76,1, 73,1,  73,1.5, 76,.5, 81,1, 78,1,  78,2, 74,1, 76,1,
+               79,1.5, 78,.5, 76,1, 74,1,  76,1, 74,.5, 76,.5, 79,1, 76,1,  78,3, 0,1,  0,2, 69,.5, 71,.5, 74,1];
+// the chords with no tune to begin, then round and round the rest
+const SONG = [[PROG_A, null], [PROG_A, TUNE1], [PROG_A, TUNE2], [PROG_B, TUNE3], [PROG_A, TUNE1], [PROG_B, TUNE3]];
+// a tune's notes in a bar: [MIDI, beat in the bar, beats long]
+const tuneBar = (tune, bar)=>
 {
-    const out = ac.createGain(), lp = ac.createBiquadFilter(), delay = ac.createDelay(1), fb = ac.createGain(), wet = ac.createGain();
-    out.gain.value = .0;
-    lp.type = 'lowpass'; lp.frequency.value = 1600; lp.Q.value = .3;
-    delay.delayTime.value = .46; fb.gain.value = .38; wet.gain.value = .35;
-    lp.connect(out); out.connect(audioMasterGain);
-    out.connect(delay); delay.connect(fb); fb.connect(delay); delay.connect(wet); wet.connect(audioMasterGain);
-    mus = {ac, out, lp, next: ac.currentTime + .3, chord: 0, pluckNext: ac.currentTime + 2};
-    out.gain.setTargetAtTime(.16, ac.currentTime, 3);
+    const out = [];
+    for (let i = 0, b = 0; i < tune.length; b += tune[i + 1], i += 2)
+        if (b >= bar*4 && b < bar*4 + 4 && tune[i]) out.push([tune[i], b - bar*4, tune[i + 1]]);
+    return out;
+};
+// the music's own mix, into dest: the voices through a soft low pass and an echo with its repeats darkening, and a
+// bus for the chimes that shares the echo
+function makeMusic(ac, dest)
+{
+    // (into the chords half way through, so the tune comes in after a few bars)
+    const m = {ac, bar: 4, t: ac.currentTime + .4};
+    m.out = ac.createGain(); m.out.connect(dest);
+    m.out.gain.setValueAtTime(0, ac.currentTime);
+    m.out.gain.linearRampToValueAtTime(MUSIC_LEVEL, ac.currentTime + 4);
+    m.lp = ac.createBiquadFilter(); m.lp.type = 'lowpass'; m.lp.frequency.value = 2600; m.lp.Q.value = .4;
+    m.lp.connect(m.out);
+    const delay = ac.createDelay(1), fb = ac.createGain(), dark = ac.createBiquadFilter(), send = ac.createGain(), fxSend = ac.createGain();
+    delay.delayTime.value = BEAT*.75; fb.gain.value = .32; send.gain.value = .3; fxSend.gain.value = .5;
+    dark.type = 'lowpass'; dark.frequency.value = 1800;
+    m.lp.connect(send); send.connect(delay); delay.connect(dark); dark.connect(fb); fb.connect(delay); dark.connect(m.out);
+    m.fx = ac.createGain(); m.fx.connect(dest); m.fx.connect(fxSend); fxSend.connect(delay);
+    return m;
 }
-function musicNote(freq, start, len, vol, type='triangle', attack=1.6)
+// the voices: a pad of two soft triangles a hair apart, a round bass, and a lead with a slow vibrato
+function pad(m, midi, t, len)
 {
-    const {ac, lp} = mus, o = ac.createOscillator(), g = ac.createGain();
-    o.type = type; o.frequency.value = freq;
-    o.detune.value = (Math.random() - .5)*10;
-    g.gain.setValueAtTime(0, start);
-    g.gain.linearRampToValueAtTime(vol, start + attack);
-    g.gain.setTargetAtTime(0, start + len, len*.35);
-    o.connect(g); g.connect(lp);
-    o.start(start); o.stop(start + len*2.5 + 1);
+    const ac = m.ac, g = ac.createGain();
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(.012, t + .6);
+    g.gain.setTargetAtTime(0, t + len, .5);
+    for (const cents of [-5, 5])
+    {
+        const o = ac.createOscillator();
+        o.type = 'triangle'; o.frequency.value = midiHz(midi); o.detune.value = cents;
+        o.connect(g); o.start(t); o.stop(t + len + 3);
+    }
+    g.connect(m.lp);
+}
+function bass(m, midi, t, len)
+{
+    const ac = m.ac, o = ac.createOscillator(), o2 = ac.createOscillator(), h = ac.createGain(), g = ac.createGain();
+    o.frequency.value = midiHz(midi); o2.type = 'triangle'; o2.frequency.value = midiHz(midi); h.gain.value = .3;
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(.07, t + .03);
+    g.gain.setTargetAtTime(.05, t + .03, .4);
+    g.gain.setTargetAtTime(0, t + len - .05, .12);
+    o.connect(g); o2.connect(h); h.connect(g); g.connect(m.lp);
+    o.start(t); o2.start(t); o.stop(t + len + 1); o2.stop(t + len + 1);
+}
+function lead(m, midi, t, len)
+{
+    const ac = m.ac, o = ac.createOscillator(), o2 = ac.createOscillator(), h = ac.createGain(), g = ac.createGain();
+    const lfo = ac.createOscillator(), depth = ac.createGain();
+    o.frequency.value = o2.frequency.value = midiHz(midi); o2.type = 'triangle'; h.gain.value = .35;
+    lfo.frequency.value = 4.8;
+    depth.gain.setValueAtTime(0, t); depth.gain.linearRampToValueAtTime(7, t + .5);
+    lfo.connect(depth); depth.connect(o.detune); depth.connect(o2.detune);
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(.06, t + .04);
+    g.gain.setTargetAtTime(.042, t + .04, .3);
+    g.gain.setTargetAtTime(0, t + len - .06, .12);
+    o.connect(g); o2.connect(h); h.connect(g); g.connect(m.lp);
+    for (const x of [o, o2, lfo]) { x.start(t); x.stop(t + len + 1); }
+}
+// one bar of the song at time t
+function musicBar(m, t)
+{
+    const k = m.bar++, s = k < 8 ? 0 : 1 + floor((k - 8)/8) % (SONG.length - 1), bar = k % 8;
+    const [prog, tune] = SONG[s], c = CHORD[prog[bar]];
+    for (const n of c.slice(1)) pad(m, n, t, BAR);
+    bass(m, c[0], t, 3*BEAT); bass(m, c[0] + 7, t + 3*BEAT, BEAT);
+    // the music box: up the chord and back down
+    [c[1], c[2], c[3], c[4], c[1] + 12, c[4], c[3], c[2]].forEach((n, i)=> bell(m.lp, n, t + i*BEAT/2, (i % 4 ? .022 : .03)*(tune ? .8 : 1), 1.4));
+    if (tune) for (const [n, b, len] of tuneBar(tune, bar)) lead(m, n, t + b*BEAT, len*BEAT);
+}
+// the bars due before until, laid out ahead of time; after a stall it picks up from now rather than catching up
+function musicTick(m, until)
+{
+    if (m.t < m.ac.currentTime) m.t = m.ac.currentTime + .05;
+    while (m.t < until) { musicBar(m, m.t); m.t += BAR; }
 }
 function musicUpdate(now)
 {
     if (!mus) return;
-    // a new chord every 6.4 seconds, the low note under four soft voices
-    if (now > mus.next - .2)
+    musicTick(mus, now + .5);
+    // darker at night
+    mus.lp.frequency.setTargetAtTime(night > .5 ? 1400 : 2600, now, 2);
+}
+
+// a recording of the tune with the ride's sounds and some chimes over it, for listening to outside the game: a WAV
+// file as base64. parts picks what is in it, any of music, loops, chimes and thumps
+async function audioPreview(seconds=40, parts='music loops chimes thumps')
+{
+    const sr = 44100, ac = new OfflineAudioContext(1, seconds*sr, sr), master = ac.createGain(), mute = ac.createGain();
+    master.gain.value = .5; master.connect(ac.destination); mute.gain.value = 0; mute.connect(ac.destination);
+    const has = k=> parts.includes(k) ? master : mute;
+    const m = makeMusic(ac, has('music')), L = soundLoops(ac, has('loops'));
+    m.fx.disconnect(); m.fx.connect(has('chimes'));
+    musicTick(m, seconds);
+    // riding along at a steady 16 m/s, a bit faster in the middle
+    for (let t = 0; t < seconds; t += .25)
     {
-        const c = CHORDS[mus.chord++ % CHORDS.length], t = mus.next;
-        musicNote(midiHz(c[0] - 12), t, 6, .1, 'sine', 2);
-        for (let i = 1; i < c.length; ++i) musicNote(midiHz(c[i]), t + i*.05, 6, .035, 'triangle', 2.2);
-        mus.next += 6.4;
+        const speed = 16 + 6*sin(PI*t/seconds)**2;
+        soundLoopsSet(L, t, {riding: true, speed, onGround: true, air: false, turbo: t > 20 && t < 26});
     }
-    // now and then a plucked note from the chord, an octave up
-    if (now > mus.pluckNext)
+    // a row of sprockets, a battery set, a trick or two, pedal power, a turbo
+    for (let k = 0; k < 8; ++k) chime('orb', k, m, 4 + k*.22);
+    chime('trick', 0, m, 8); chime('bank', 0, m, 10);
+    for (let k = 0; k < 6; ++k) chime('cell', k, m, 13 + k*.35);
+    chime('chain', 0, m, 16); chime('turbo', 0, m, 20); chime('ready', 0, m, 19.4);
+    chime('tyre', 0, m, 27); chime('perfect', 0, m, 29); chime('send', 0, m, 32); chime('line', 0, m, 36);
+    // and the thumps, from their own samples
+    for (const [name, t, vol] of [['jump', 7, 1], ['land', 8.6, .9], ['whoosh', 30.5, 1], ['landHard', 34, 1]])
     {
-        const c = CHORDS[(mus.chord + CHORDS.length - 1) % CHORDS.length];
-        if (Math.random() < .6) musicNote(midiHz(c[1 + (Math.random()*4 | 0)] + 12), mus.pluckNext, .5, .035, 'sine', .01);
-        mus.pluckNext += [.8, 1.6, 2.4][Math.random()*3 | 0];
+        const data = SFX[name].sampleChannels?.[0] ?? SFX[name]._sampleChannels?.[0];
+        if (!data) continue;
+        const b = ac.createBuffer(1, data.length, audioDefaultSampleRate), src = ac.createBufferSource(), g = ac.createGain();
+        b.getChannelData(0).set(data); src.buffer = b; g.gain.value = vol;
+        src.connect(g); g.connect(has('thumps')); src.start(t);
     }
-    // the music sits back while riding hard, louder on the summit and after a crash
-    mus.lp.frequency.setTargetAtTime(night > .5 ? 900 : 1600, now, 2);
+    const d = (await ac.startRendering()).getChannelData(0), n = d.length, bytes = new Uint8Array(44 + n*2), v = new DataView(bytes.buffer);
+    const text = (o, s)=> { for (let i = 0; i < s.length; ++i) bytes[o + i] = s.charCodeAt(i); };
+    text(0, 'RIFF'); v.setUint32(4, 36 + n*2, true); text(8, 'WAVEfmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true);
+    v.setUint16(22, 1, true); v.setUint32(24, sr, true); v.setUint32(28, sr*2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+    text(36, 'data'); v.setUint32(40, n*2, true);
+    let peak = 0, sum = 0;
+    for (let i = 0; i < n; ++i) { const x = clampV(d[i], -1, 1); peak = max(peak, abs(x)); sum += x*x; v.setInt16(44 + i*2, x*32767, true); }
+    let s = '';
+    for (let i = 0; i < bytes.length; i += 32768) s += String.fromCharCode(...bytes.subarray(i, i + 32768));
+    return {wav: btoa(s), peak, rms: Math.sqrt(sum/n)};
 }
 
 // ============================================================================
@@ -5338,7 +5537,7 @@ window.__mtb = {
         OX, OY, night, dayT, boostT, grindDist, seed, ride: ride ? ride.lane : 0, riderZ: riderZ(), battery, turboT, turbos, lines, proLines,
         forkAhead: !!forkAhead, laneWant, view: camViewName(), zoom: camZoomName(), splits: splits.map(s=> [s.x0|0, s.x1|0, s.kinds.join('+')]),
         lineDetail: splits.map(s=> Object.values(s.lines).map(b=> b.kind + ':' + (b.what || 'plain')).join(' ')),
-        dropCam, braking, sentIt, camLift, baseY, wheelOffF, wheelOffR, drops: feats.filter(f=> f.type == 'dropin').map(f=> [f.x0|0, f.x1|0, f.landX|0, +f.F.toFixed(1)]),
+        dropCam, braking, sentIt, camLift, baseY, wheelOffF, wheelOffR, musicBar: mus ? mus.bar : -1, drops: feats.filter(f=> f.type == 'dropin').map(f=> [f.x0|0, f.x1|0, f.landX|0, +f.F.toFixed(1)]),
         bike: bike.name, kit: KITS[kitI][0], menu, trickCounts, tricksTotal, legBoosts, supers, sends, cellsGot, legT, superOn, tyres, tyresGot, brakeFuel, slides, cased, sketchy, perfects, maxAir, topSpeed, style: style?.name, styleT, airHist, hardLandings, combosBanked, multSum, queued: trickQueued, swipeCount, mainHeld, secondHeld}),
     start: ()=> startRide(),
     // steps the game by hand, a 60th of a second at a time, with the engine paused
@@ -5403,6 +5602,8 @@ window.__mtb = {
     charge: v=> { battery = v; },
     turbo: ()=> fireTurbo(),
     zones: (n=5)=> ({seq: zoneSeq.slice(0, n), at: zoneB.slice(0, n).map(round), MT}),
+    // a recording of the tune and the ride's sounds, as a WAV file in base64
+    audioPreview: (sec, parts)=> audioPreview(sec, parts),
 };
 
 engineInit(gameInit, gameUpdate, gameUpdatePost, undefined, gameRenderPost);

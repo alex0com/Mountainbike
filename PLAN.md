@@ -572,19 +572,23 @@ The ride felt jittery and snappy, and a trick during a turn flew round the bend.
 
 ## Sound: done
 The pedal power's chain sound screeched, and the wind was a loud hiss of static.
-- **First try:** a slow, warm tune with bell chimes. It sounded like an adventure game, not an arcade one, and the effects were worse.
-- **Now:** an upbeat arcade tune and classic arcade effects, still with nothing that screeches or hisses.
+- **First try:** a slow, warm tune with bell chimes. It sounded like an adventure game.
+- **Second try:** a bright chiptune tune. It didn't land either.
+- **Now:** big beat, after the Crystal Method's High Roller, with arcade jingles over it.
 
-- **The tune** (`makeMusic`, `musicBar`): upbeat chiptune pop in D major at 126 beats a minute, scheduled a bar ahead.
-  - **The band:**
-    - drums: a kick that drops in pitch, a snare of noise with a little tone, and quiet hats;
-    - a triangle bass bouncing between each chord's root and its octave in eighths;
-    - chord stabs on the off beats;
-    - a pulse-wave lead (25%) with the hook, through a short echo.
-  - Everything goes through a compressor.
-  - **The chords:** section A is D, A, Bm, G (twice). Section B is G, A, F#m, Bm, G, A, D, D.
-  - **The order:** four bars of beat, then round and round: the hook, a lift, the hook again higher, and a breakdown where the chord is picked out in sixteenths. One time round is about a minute.
-- **Arcade jingles** (`JINGLES`, `blip`, `note`): pulse waves in the tune's key, softened a little by a low pass, and louder than the music so they pop.
+- **The tune** (`makeMusic`, `musicBar`): a breakbeat at 112 beats a minute in F minor, scheduled a bar ahead.
+  - **The break:** two bars of sixteenths with a little swing: a kick that drops in pitch with a click on the front, a fat snare of noise and tone, ghost snares, and closed and open hats.
+    - The drums go through a filter, a soft clip and a hard compressor.
+  - **The bass:** a sawtooth through a resonant low pass that snaps shut after each note (the acid squelch), with a sine an octave under it, through its own soft clip.
+    - The riff is F, F, Ab, F, Eb, C, Bb over two bars.
+  - **The hook:** two sawtooths a few cents apart and a square an octave down, through a closing low pass and an echo.
+  - **The order:**
+    - Four bars of drums coming in through an opening filter.
+    - Then round and round: the groove; the hook; the riff moving through F, F, Db and Eb under a second hook; and a breakdown.
+    - **The breakdown:** the drums drop to hats under a dark F minor pad that opens up. A sawtooth riser and a snare roll build back into the drop.
+    - One time round is about a minute.
+  - **The mix:** the drums and the bass about level, the hook a few dB under, and a last compressor over the whole band.
+- **Arcade jingles** (`JINGLES`, `blip`, `note`): pulse waves in F minor, the fanfares in its relative major (Ab), louder than the music so they pop.
   - **A sprocket:** a coin's two quick notes a fourth apart, climbing the scale as a run is picked up.
   - **A battery cell:** a zap up an octave.
   - **A jump:** a square-wave bwoop up. **A trick starting:** a fwip, pitched by the swipe.
@@ -600,7 +604,7 @@ The pedal power's chain sound screeched, and the wind was a loud hiss of static.
   - Above 1.5 kHz, where the hiss was, the loops are 28–35 dB quieter than before.
 - **The thumps** (ZzFX): landings, crashes, splashes and grinds, each through a low pass, with no bit crush.
 - **Listening:** `tools/listen.mjs` renders the sound offline to a WAV file (`__mtb.audioPreview`): the tune, the loops at riding speed, and the jingles and thumps over them.
-  - A check on the rendering: rendered with only the lead, the hook's first 22 notes come out at the right pitches and on the beat.
+  - A check on the rendering: rendered with only the hook, its notes come out at the right pitches. Rendered a part at a time, the drums, bass and hook measure −24, −23 and −27 dB over the hook section.
 
 ## Two players: built (core)
 Decisions: the server can run Node; online only; the match just keeps going; a crash costs time rather than the run; a breakaway wins and restarts. The slipstream is on, and each player keeps their own collectibles.

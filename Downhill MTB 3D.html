@@ -4650,7 +4650,7 @@ function drawResults(W, H)
 }
 
 // ============================================================================
-// SOUND - an upbeat arcade tune; the tyres and the air going by, soft and low; arcade blips and jingles for pickups,
+// SOUND - a big beat tune; the tyres and the air going by, soft and low; arcade blips and jingles for pickups,
 // boosts, tricks and crashes; and thumps for landings
 // ============================================================================
 let au, soundOn = true;
@@ -4730,32 +4730,33 @@ function boing(dest, t, vol)
     o.connect(g); g.connect(dest);
     o.start(t); wob.start(t); o.stop(t + .6); wob.stop(t + .6);
 }
-// the jingles, in the tune's key of D: each plays into d from time t, v telling it which one (a streak, a direction)
-const COIN = [76, 78, 81, 83, 86, 88, 90, 93];
+// the jingles, in the tune's key of F minor (the fanfares in its relative major, Ab): each plays into d from time t,
+// v telling it which one (a streak, a direction)
+const COIN = [72, 75, 77, 80, 82, 84, 87, 89];
 const JINGLES = {
     // a sprocket: a coin's two quick notes, a fourth apart, climbing the scale as a run of them is picked up
     orb:      (d, t, v)=> { const n = COIN[v % 8]; blip(d, n, t, .06, .07); blip(d, n + 5, t + .06, .28, .07); },
     // a battery cell: a zap up an octave, and the octave again
-    cell:     (d, t, v)=> { const n = [69, 71, 73, 74, 76, 78][v % 6]; blip(d, n, t, .1, .07, {to: n + 12, wave: .125}); blip(d, n + 12, t + .09, .2, .06, {wave: .125}); },
-    jump:     (d, t)=> blip(d, 62, t, .14, .06, {to: 76, wave: .5, cut: 2600}),
+    cell:     (d, t, v)=> { const n = [63, 65, 67, 68, 70, 72][v % 6]; blip(d, n, t, .1, .07, {to: n + 12, wave: .125}); blip(d, n + 12, t + .09, .2, .06, {wave: .125}); },
+    jump:     (d, t)=> blip(d, 56, t, .14, .06, {to: 70, wave: .5, cut: 2600}),
     // a trick starting: a quick fwip, pitched by the way it was swiped
-    whoosh:   (d, t, v)=> blip(d, 70 + v, t, .11, .035, {to: 86 + v, wave: .125, cut: 3000}),
-    trick:    (d, t)=> { blip(d, 81, t, .08, .06); blip(d, 86, t + .08, .25, .06); },
-    trickBig: (d, t)=> [74, 78, 81, 86].forEach((n, i)=> blip(d, n, t + i*.065, i == 3 ? .35 : .08, .06)),
-    bank:     (d, t)=> { [74, 78, 81, 86, 90].forEach((n, i)=> blip(d, n, t + i*.06, .08, .055)); blip(d, 86, t + .32, .45, .05); blip(d, 93, t + .32, .45, .04, {wave: .125}); },
-    perfect:  (d, t)=> { blip(d, 93, t, .06, .045); blip(d, 98, t + .07, .16, .045); },
-    line:     (d, t)=> [79, 83, 86, 91].forEach((n, i)=> blip(d, n, t + i*.065, i == 3 ? .35 : .08, .055)),
-    go:       (d, t)=> { blip(d, 81, t, .1, .06); blip(d, 93, t + .13, .4, .06); },
-    ready:    (d, t)=> [88, 93, 88, 93].forEach((n, i)=> blip(d, n, t + i*.075, .07, .045)),
+    whoosh:   (d, t, v)=> blip(d, 64 + v, t, .11, .035, {to: 80 + v, wave: .125, cut: 3000}),
+    trick:    (d, t)=> { blip(d, 75, t, .08, .06); blip(d, 80, t + .08, .25, .06); },
+    trickBig: (d, t)=> [68, 72, 75, 80].forEach((n, i)=> blip(d, n, t + i*.065, i == 3 ? .35 : .08, .06)),
+    bank:     (d, t)=> { [68, 72, 75, 80, 84].forEach((n, i)=> blip(d, n, t + i*.06, .08, .055)); blip(d, 80, t + .32, .45, .05); blip(d, 87, t + .32, .45, .04, {wave: .125}); },
+    perfect:  (d, t)=> { blip(d, 87, t, .06, .045); blip(d, 92, t + .07, .16, .045); },
+    line:     (d, t)=> [73, 77, 80, 85].forEach((n, i)=> blip(d, n, t + i*.065, i == 3 ? .35 : .08, .055)),
+    go:       (d, t)=> { blip(d, 75, t, .1, .06); blip(d, 87, t + .13, .4, .06); },
+    ready:    (d, t)=> [82, 87, 82, 87].forEach((n, i)=> blip(d, n, t + i*.075, .07, .045)),
     // pedal power: the power-up climb, up through the chord three times, a step higher each time
-    chain:    (d, t)=> [62, 66, 69, 74, 66, 69, 74, 78, 69, 74, 78, 81, 86].forEach((n, i)=> blip(d, n, t + i*.04, i == 12 ? .3 : .07, .05)),
+    chain:    (d, t)=> [56, 60, 63, 68, 60, 63, 68, 72, 63, 68, 72, 75, 80].forEach((n, i)=> blip(d, n, t + i*.04, i == 12 ? .3 : .07, .05)),
     // the turbo: a motor winding up, and a little fanfare as it kicks in; a send the same, bigger
-    turbo:    (d, t)=> { note(d, 43, t, .45, .05, {to: 67, wave: .125, cut: 1800, vib: 25, release: .1}); [74, 78, 81, 86].forEach((n, i)=> blip(d, n, t + .45 + i*.055, i == 3 ? .3 : .07, .05)); },
-    send:     (d, t)=> { note(d, 43, t, .6, .055, {to: 79, wave: .125, cut: 2000, vib: 25, release: .1}); [74, 78, 81, 86, 90].forEach((n, i)=> blip(d, n, t + .6 + i*.055, i == 4 ? .4 : .07, .05)); },
-    tyre:     (d, t)=> { boing(d, t, .1); blip(d, 86, t + .07, .14, .035); },
+    turbo:    (d, t)=> { note(d, 41, t, .45, .05, {to: 65, wave: .125, cut: 1800, vib: 25, release: .1}); [68, 72, 75, 80].forEach((n, i)=> blip(d, n, t + .45 + i*.055, i == 3 ? .3 : .07, .05)); },
+    send:     (d, t)=> { note(d, 41, t, .6, .055, {to: 77, wave: .125, cut: 2000, vib: 25, release: .1}); [68, 72, 75, 80, 84].forEach((n, i)=> blip(d, n, t + .6 + i*.055, i == 4 ? .4 : .07, .05)); },
+    tyre:     (d, t)=> { boing(d, t, .1); blip(d, 80, t + .07, .14, .035); },
     // a crash: the wah, wah, wahhh of losing a life
-    crash:    (d, t)=> { note(d, 67, t + .2, .2, .045, {wave: .5, cut: 1500}); note(d, 66, t + .45, .2, .045, {wave: .5, cut: 1500}); note(d, 65, t + .7, .55, .045, {to: 59, wave: .5, cut: 1500, vib: 45, release: .15}); },
-    click:    (d, t)=> blip(d, 96, t, .03, .03, {wave: .5})};
+    crash:    (d, t)=> { note(d, 61, t + .2, .2, .045, {wave: .5, cut: 1500}); note(d, 60, t + .45, .2, .045, {wave: .5, cut: 1500}); note(d, 59, t + .7, .55, .045, {to: 53, wave: .5, cut: 1500, vib: 45, release: .15}); },
+    click:    (d, t)=> blip(d, 89, t, .03, .03, {wave: .5})};
 function jingle(name, v=0, m=mus, t)
 {
     if (!m) return;
@@ -4915,107 +4916,185 @@ function audioUpdate()
     musicUpdate(now);
 }
 
-// ---------- the tune: an upbeat arcade tune in D major at 126 beats a minute. Drums, a bass bouncing between each
-// chord's root and its octave, chord stabs on the off beats, and a pulse wave lead with the hook, through a little
-// echo and a compressor. A few bars of beat to start, then round: the hook, a lift, the hook again higher, and a
-// breakdown with the chords picked out in sixteenths.
+// ---------- the tune: big beat, after the Crystal Method's High Roller. A breakbeat at 112 beats a minute with a
+// little swing, through a saturated, squashed drum bus; a gritty acid bass riff in F minor; a dark sawtooth hook;
+// and a breakdown that builds back into the drop. Four bars of filtered drums to start, then round: the groove,
+// the hook, the riff moving through the chords, and the breakdown. About a minute each time round.
 let mus;
-const BEAT = 60/126, BAR = 4*BEAT, MUSIC_LEVEL = .8;
-// each chord: its bass note, and the three notes of the stabs
-const CHORD = {D: [50, 62, 66, 69], A: [45, 61, 64, 69], Bm: [47, 62, 66, 71], G: [43, 62, 67, 71], Fm: [42, 61, 66, 69]};
-const PROG_A = ['D', 'A', 'Bm', 'G', 'D', 'A', 'Bm', 'G'], PROG_B = ['G', 'A', 'Fm', 'Bm', 'G', 'A', 'D', 'D'];
-// the tunes, eight bars each: a note (MIDI, 0 for a rest) and how many eighths it lasts, eight to a bar
-const HOOK = [74,1, 78,1, 81,2, 78,1, 81,1, 83,2,  81,3, 76,1, 73,2, 76,2,  74,1, 78,1, 83,2, 81,1, 78,1, 74,2,  76,1, 78,1, 79,2, 78,1, 76,1, 74,2,
-              74,1, 78,1, 81,2, 78,1, 81,1, 86,2,  85,3, 83,1, 81,2, 76,2,  78,1, 81,1, 83,2, 81,1, 83,1, 86,2,  83,2, 81,2, 79,1, 78,1, 76,2];
-const LIFT = [79,2, 74,2, 79,1, 81,1, 83,2,  81,2, 76,2, 81,1, 83,1, 85,2,  85,2, 81,2, 78,2, 81,2,  83,3, 81,1, 78,2, 74,2,
-              79,2, 83,2, 86,2, 83,2,  85,2, 88,2, 85,1, 83,1, 81,2,  86,4, 81,2, 78,2,  0,4, 69,1, 71,1, 73,2];
-const HOOK2 = [81,1, 78,1, 74,2, 78,1, 81,1, 86,2,  85,2, 81,1, 76,1, 81,2, 85,2,  83,1, 81,1, 78,2, 74,1, 78,1, 83,2,  81,2, 79,2, 78,2, 76,2,
-               78,1, 81,1, 86,2, 81,1, 86,1, 90,2,  88,3, 85,1, 81,2, 85,2,  86,2, 83,2, 81,1, 78,1, 74,2,  76,2, 78,2, 79,2, 81,2];
-// the sections: their chords, their tune, and how much of the band plays
-const INTRO = {prog: PROG_A, drums: 'half'};
-const SONG = [{prog: PROG_A, tune: HOOK, drums: 'full'}, {prog: PROG_B, tune: LIFT, drums: 'full'},
-    {prog: PROG_A, tune: HOOK2, drums: 'full'}, {prog: PROG_B, drums: 'half', arp: true}];
-// where in a bar of sixteenths the kick lands
-const KICK = 'x.....x.x.......';
-// a tune's notes in a bar: [MIDI, eighth in the bar, eighths long]
-const tuneBar = (tune, bar)=>
+const BEAT = 60/112, BAR = 4*BEAT, STEP = BEAT/4, SWING = .1, MUSIC_LEVEL = .6;
+// the break, two bars of sixteenths: x a kick; S a snare, g a ghost of one; h a closed hat, o an open one
+const BREAK = [
+    {k: 'x......x..x.....', s: '....S....g..S..g', h: 'h.h.h.h.h.h.h.h.'},
+    {k: 'x.x.......x..x..', s: '....S..g....S.g.', h: 'h.h.h.o.h.h.h.o.'}];
+// the bass riff over two bars: [sixteenth, MIDI, sixteenths long, accented]
+const RIFF = [[0, 41, 3, 1], [3, 41, 1, 0], [6, 44, 2, 1], [8, 41, 2, 0], [10, 51, 2, 1], [12, 48, 2, 0], [14, 46, 2, 0],
+    [16, 41, 3, 1], [19, 41, 1, 0], [22, 44, 2, 1], [24, 46, 2, 0], [26, 48, 1, 1], [27, 46, 1, 0], [28, 44, 2, 0], [30, 39, 2, 1]];
+// the hooks over it: [sixteenth, MIDI, sixteenths long]
+const HOOK = [[0, 72, 2], [3, 72, 1], [4, 68, 2], [7, 65, 3], [16, 75, 2], [19, 72, 2], [22, 70, 1], [23, 68, 1], [24, 67, 6]];
+const HOOK_B = [[0, 77, 3], [3, 75, 1], [4, 72, 2], [6, 70, 2], [8, 72, 6], [16, 73, 3], [19, 72, 1], [20, 70, 2], [22, 68, 2], [24, 67, 6]];
+// the sections and how many bars each: the third moves the riff through F, F, Db and Eb, two bars each
+const INTRO = {drums: true, sweep: true};
+const SONG = [[{drums: true, bass: true}, 8], [{drums: true, bass: true, hook: HOOK}, 8],
+    [{drums: true, bass: true, hook: HOOK_B, move: [0, 0, -4, -2]}, 8], [{breakdown: true}, 4]];
+const LOOP = SONG.flatMap(([sec, n])=> Array.from({length: n}, (_, bar)=> [sec, bar]));
+// a soft clip, for grit without fizz
+function drive(ac, k)
 {
-    const out = [];
-    for (let i = 0, e = 0; i < tune.length; e += tune[i + 1], i += 2)
-        if (e >= bar*8 && e < bar*8 + 8 && tune[i]) out.push([tune[i], e - bar*8, tune[i + 1]]);
-    return out;
-};
-// the music's own mix, into dest: the band into a compressor, the lead with a short echo, and a bus for the jingles
+    const w = ac.createWaveShaper(), n = 1024, c = new Float32Array(n);
+    for (let i = 0; i < n; ++i) { const x = i/(n - 1)*2 - 1; c[i] = Math.tanh(k*x)/Math.tanh(k); }
+    w.curve = c;
+    return w;
+}
+// the music's own mix, into dest: the drums through a filter (opened up over the intro), a little drive and a hard
+// compressor; the bass through its own drive; the hook with an echo; a pad's filter for the breakdown; all of it
+// glued by a last compressor; and a bus for the jingles
 function makeMusic(ac, dest)
 {
-    const m = {ac, bar: 4, t: ac.currentTime + .3};
+    const m = {ac, bar: 0, t: ac.currentTime + .3}, chain = (...n)=> { for (let i = 1; i < n.length; ++i) n[i - 1].connect(n[i]); return n[0]; };
+    const comp = (threshold, ratio)=> { const c = ac.createDynamicsCompressor(); c.threshold.value = threshold; c.knee.value = 8; c.ratio.value = ratio; c.attack.value = .004; c.release.value = .12; return c; };
+    const lp = f=> { const b = ac.createBiquadFilter(); b.type = 'lowpass'; b.frequency.value = f; return b; };
     m.out = ac.createGain(); m.out.connect(dest);
     m.out.gain.setValueAtTime(0, ac.currentTime);
-    m.out.gain.linearRampToValueAtTime(MUSIC_LEVEL, ac.currentTime + 1.5);
-    const comp = ac.createDynamicsCompressor();
-    comp.threshold.value = -20; comp.knee.value = 12; comp.ratio.value = 3; comp.attack.value = .005; comp.release.value = .15;
-    comp.connect(m.out);
-    m.mix = ac.createGain(); m.mix.connect(comp);
-    m.lead = ac.createGain(); m.lead.connect(m.mix);
+    m.out.gain.linearRampToValueAtTime(MUSIC_LEVEL, ac.currentTime + 1);
+    m.mix = chain(ac.createGain(), comp(-14, 2.5), m.out);
+    m.drumLP = lp(18000);
+    const loud = v=> { const g = ac.createGain(); g.gain.value = v; return g; };
+    m.drums = chain(ac.createGain(), m.drumLP, drive(ac, 1.6), comp(-22, 4), loud(1.5), m.mix);
+    m.bass = chain(ac.createGain(), drive(ac, 2.4), lp(2600), m.mix);
+    m.lead = chain(ac.createGain(), m.mix);
     const delay = ac.createDelay(1), fb = ac.createGain(), send = ac.createGain();
-    delay.delayTime.value = BEAT*.75; fb.gain.value = .25; send.gain.value = .2;
-    m.lead.connect(send); send.connect(delay); delay.connect(fb); fb.connect(delay); delay.connect(m.mix);
+    delay.delayTime.value = STEP*3; fb.gain.value = .3; send.gain.value = .25;
+    chain(m.lead, send, delay, fb, delay); delay.connect(m.mix);
+    m.padLP = lp(500); m.padLP.connect(m.mix);
     // the jingles ring out over the music
-    m.fx = ac.createGain(); m.fx.gain.value = 3.5; m.fx.connect(dest);
-    // a second of white noise for the snare and the hats
+    m.fx = ac.createGain(); m.fx.gain.value = 4.5; m.fx.connect(dest);
+    // a second of white noise for the snares and the hats
     const sr = ac.sampleRate;
     m.noise = ac.createBuffer(1, sr, sr);
     const d = m.noise.getChannelData(0);
     for (let i = 0; i < d.length; ++i) d[i] = Math.random()*2 - 1;
     return m;
 }
-// the drums: a kick that drops in pitch, a snare of noise with a little tone in it, and a tick of a hat
-function drumKick(m, t, vol=.45)
-{
-    const ac = m.ac, o = ac.createOscillator(), g = ac.createGain();
-    o.frequency.setValueAtTime(150, t); o.frequency.exponentialRampToValueAtTime(45, t + .1);
-    g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(.001, t + .18);
-    o.connect(g); g.connect(m.mix); o.start(t); o.stop(t + .2);
-}
-function hiss(m, t, len, vol, type, freq)
+// the drums: a kick that drops in pitch with a click on the front, a fat snare of noise and tone, and the hats
+function hiss(m, t, len, vol, type, freq, q=.7)
 {
     const ac = m.ac, src = ac.createBufferSource(), f = ac.createBiquadFilter(), g = ac.createGain();
-    src.buffer = m.noise; f.type = type; f.frequency.value = freq; f.Q.value = .7;
+    src.buffer = m.noise; f.type = type; f.frequency.value = freq; f.Q.value = q;
     g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(.001, t + len);
-    src.connect(f); f.connect(g); g.connect(m.mix);
-    src.start(t, Math.random()*.8); src.stop(t + len + .01);
+    src.connect(f); f.connect(g); g.connect(m.drums);
+    src.start(t, Math.random()*.7); src.stop(t + len + .01);
 }
-function drumSnare(m, t)
+function drumKick(m, t, vol=.75)
 {
-    hiss(m, t, .13, .13, 'bandpass', 1900);
-    blip(m.mix, 54, t, .08, .07, {wave: 'tri', to: 50});
+    const ac = m.ac, o = ac.createOscillator(), g = ac.createGain();
+    o.frequency.setValueAtTime(130, t); o.frequency.exponentialRampToValueAtTime(42, t + .09);
+    g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(.001, t + .3);
+    o.connect(g); g.connect(m.drums); o.start(t); o.stop(t + .32);
+    hiss(m, t, .012, vol*.2, 'highpass', 2000);
 }
-const drumHat = (m, t, vol)=> hiss(m, t, .035, vol, 'highpass', 7000);
+function drumSnare(m, t, vol=1)
+{
+    hiss(m, t, vol < .5 ? .09 : .2, .3*vol, 'bandpass', 1800, .6);
+    const ac = m.ac, o = ac.createOscillator(), g = ac.createGain();
+    o.type = 'triangle'; o.frequency.setValueAtTime(210, t); o.frequency.exponentialRampToValueAtTime(165, t + .1);
+    g.gain.setValueAtTime(.3*vol, t); g.gain.exponentialRampToValueAtTime(.001, t + .13);
+    o.connect(g); g.connect(m.drums); o.start(t); o.stop(t + .15);
+}
+const drumHat = (m, t, vol, open)=> hiss(m, t, open ? .22 : .04, vol, 'highpass', 7500);
+// the bass: a sawtooth through a resonant low pass that snaps shut after each note, the acid squelch, with a sine
+// an octave under it for weight
+function bassNote(m, midi, t, len, accent)
+{
+    const ac = m.ac, o = ac.createOscillator(), sub = ac.createOscillator(), f = ac.createBiquadFilter(), g = ac.createGain(), sg = ac.createGain();
+    o.type = 'sawtooth'; o.frequency.value = midiHz(midi); sub.frequency.value = midiHz(midi - 12);
+    f.type = 'lowpass'; f.Q.value = 6;
+    f.frequency.setValueAtTime(accent ? 2000 : 1200, t); f.frequency.exponentialRampToValueAtTime(230, t + .14 + len*.3);
+    const end = t + len, vol = accent ? .17 : .14;
+    for (const [gg, v] of [[g, vol], [sg, vol*.45]])
+    {
+        gg.gain.setValueAtTime(0, t); gg.gain.linearRampToValueAtTime(v, t + .004);
+        gg.gain.setValueAtTime(v, max(t + .004, end - .015)); gg.gain.linearRampToValueAtTime(0, end + .03);
+    }
+    o.connect(f); f.connect(g); g.connect(m.bass); sub.connect(sg); sg.connect(m.bass);
+    for (const x of [o, sub]) { x.start(t); x.stop(end + .05); }
+}
+// the hook: two sawtooths a few cents apart and a square an octave down, through a low pass that closes as it sounds
+function leadNote(m, midi, t, len)
+{
+    const ac = m.ac, f = ac.createBiquadFilter(), g = ac.createGain(), end = t + len;
+    f.type = 'lowpass'; f.Q.value = 3;
+    f.frequency.setValueAtTime(3400, t); f.frequency.exponentialRampToValueAtTime(1100, t + .3);
+    g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(.18, t + .006);
+    g.gain.setValueAtTime(.18, max(t + .006, end - .02)); g.gain.linearRampToValueAtTime(0, end + .08);
+    for (const [type, k, cents, v] of [['sawtooth', 1, -9, 1], ['sawtooth', 1, 9, 1], ['square', .5, 0, .35]])
+    {
+        const o = ac.createOscillator(), h = ac.createGain();
+        o.type = type; o.frequency.value = midiHz(midi)*k; o.detune.value = cents; h.gain.value = v;
+        o.connect(h); h.connect(f); o.start(t); o.stop(end + .1);
+    }
+    f.connect(g); g.connect(m.lead);
+}
+// the breakdown's pad: a dark F minor chord, two sawtooths a note, swelling in through the pad's low pass
+function padChord(m, notes, t, len)
+{
+    const ac = m.ac, g = ac.createGain();
+    g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(.05, t + 1.5);
+    g.gain.setValueAtTime(.05, t + len - .3); g.gain.linearRampToValueAtTime(0, t + len);
+    for (const n of notes) for (const cents of [-12, 12])
+    {
+        const o = ac.createOscillator();
+        o.type = 'sawtooth'; o.frequency.value = midiHz(n); o.detune.value = cents;
+        o.connect(g); o.start(t); o.stop(t + len + .05);
+    }
+    g.connect(m.padLP);
+}
+// a riser into the drop: a sawtooth climbing two octaves, opening up and growing
+function riser(m, t, len)
+{
+    const ac = m.ac, o = ac.createOscillator(), f = ac.createBiquadFilter(), g = ac.createGain();
+    o.type = 'sawtooth';
+    o.frequency.setValueAtTime(midiHz(53), t); o.frequency.exponentialRampToValueAtTime(midiHz(77), t + len);
+    f.type = 'lowpass'; f.Q.value = 2;
+    f.frequency.setValueAtTime(500, t); f.frequency.exponentialRampToValueAtTime(5000, t + len);
+    g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(.07, t + len); g.gain.linearRampToValueAtTime(0, t + len + .03);
+    o.connect(f); f.connect(g); g.connect(m.mix); o.start(t); o.stop(t + len + .05);
+}
 // one bar of the song at time t
 function musicBar(m, t)
 {
-    const k = m.bar++, sec = k < 8 ? INTRO : SONG[floor((k - 8)/8) % SONG.length], bar = k % 8, c = CHORD[sec.prog[bar]], S = BEAT/4;
-    for (let i = 0; i < 16; ++i)
+    const k = m.bar++, [sec, bar] = k < 4 ? [INTRO, k] : LOOP[(k - 4) % LOOP.length], at = i=> t + i*STEP + (i % 2 ? SWING*STEP : 0);
+    // the drums come in through a filter that opens over the intro
+    if (sec.sweep && bar == 0) { m.drumLP.frequency.setValueAtTime(300, t); m.drumLP.frequency.exponentialRampToValueAtTime(18000, t + 4*BAR); }
+    if (sec.drums)
     {
-        const at = t + i*S;
-        if (KICK[i] == 'x' && (sec.drums == 'full' || i == 0 || i == 8)) drumKick(m, at);
-        if (sec.drums == 'full' && (i == 4 || i == 12)) drumSnare(m, at);
-        if (i % 2 == 0) drumHat(m, at, i % 4 == 2 ? .035 : .018);
+        const p = BREAK[bar % 2];
+        for (let i = 0; i < 16; ++i)
+        {
+            if (p.k[i] == 'x') drumKick(m, at(i));
+            if (p.s[i] != '.') drumSnare(m, at(i), p.s[i] == 'S' ? 1 : .3);
+            if (p.h[i] != '.') drumHat(m, at(i), p.h[i] == 'o' ? .09 : i % 4 ? .07 : .045, p.h[i] == 'o');
+            else if (sec.bass) drumHat(m, at(i), .02);
+        }
     }
-    if (sec.arp)
+    if (sec.bass)
     {
-        // the breakdown: the bass held, the chord picked out in sixteenths up and down an octave
-        note(m.mix, c[0], t, BAR/2 - .03, .13, {wave: 'tri'}); note(m.mix, c[0], t + BAR/2, BAR/2 - .03, .13, {wave: 'tri'});
-        for (let i = 0; i < 16; ++i) note(m.mix, c[1 + i % 3] + (floor(i/3) % 2 ? 12 : 0), t + i*S, S*.7, .028, {wave: .125, cut: 2600, release: .03});
+        const shift = sec.move ? sec.move[bar >> 1] : 0;
+        for (const [s, n, len, acc] of RIFF) if ((s >> 4) == bar % 2) bassNote(m, n + shift, at(s & 15), len*STEP - .02, acc);
     }
-    else
+    if (sec.hook) for (const [s, n, len] of sec.hook) if ((s >> 4) == bar % 2) leadNote(m, n, at(s & 15), len*STEP - .03);
+    if (sec.breakdown)
     {
-        // the bass bouncing between the root and its octave in eighths, and the chord stabbed on the off beats
-        for (let i = 0; i < 8; ++i) note(m.mix, c[0] + (i % 2 ? 12 : 0), t + i*BEAT/2, BEAT/2 - .04, .1, {wave: 'tri', release: .03});
-        for (let i = 1; i < 8; i += 2) for (const n of c.slice(1)) note(m.mix, n, t + i*BEAT/2, .07, .03, {wave: .125, cut: 2200, release: .04});
+        // the pad and a held bass while the drums drop out to hats, then a riser and a snare roll into the drop
+        if (bar == 0)
+        {
+            padChord(m, [53, 56, 60, 63], t, 4*BAR);
+            m.padLP.frequency.setValueAtTime(400, t); m.padLP.frequency.exponentialRampToValueAtTime(2600, t + 4*BAR);
+        }
+        bassNote(m, 41, t, BAR*.9, 0);
+        for (let i = 0; i < 16; i += 2) drumHat(m, at(i), .04);
+        if (bar == 2) riser(m, t, 2*BAR);
+        if (bar == 3) for (let i = 0; i < 16; ++i) drumSnare(m, t + i*STEP, .15 + .55*i/15);
     }
-    if (sec.tune) for (const [n, e, len] of tuneBar(sec.tune, bar))
-        note(m.lead, n, t + e*BEAT/2, len*BEAT/2 - .05, .17, {wave: .25, cut: 3400, vib: len > 1 ? 14 : 0});
 }
 // the bars due before until, laid out ahead of time; after a stall it picks up from now rather than catching up
 function musicTick(m, until)

@@ -725,6 +725,16 @@ The game slowed the rider by itself on the ledges before drop-ins and on the run
   - Average speed went from 23.8 to 26–29 m/s.
   - Hard landings per km: 0.22 on the All-Rounder (0.11 before), 0.05 down the lines, 0.76 on the Dirt Jumper, whose landings are weaker by design.
 
+## Bunny hop: done
+The pop lifted the whole bike at once, flat, so it didn't look like a real bunny hop. Now it has the two phases a rider makes:
+
+1. **Front up** (0 to 0.12 s): the bike turns up by as much as 17° about where the back tyre meets the ground. The back tyre stays down for the first 0.05 s. The rider's hips go back and down over the back wheel on straight arms.
+2. **Back follows** (to about 0.4 s): the back wheel comes up, the legs tuck and the bike levels out. From there it settles toward the landing slope as before.
+
+- **Only drawn:** the flight, the landing check and the scoring are unchanged (`hopA`, `hopDrop`, `hopPull` and `hopTuck` in `updateVisuals`, applied by `hopTurn` in `bikeMatrix`). A hop that lands early finishes on the back wheel, and the front settles within a few frames.
+- **Two players:** the other rider's hop is drawn the same way (`hp` and `pu` in the pose).
+- **Test hook:** `__mtb.wheels()` gives where each tyre meets the ground as drawn.
+
 ## Next: proposals
 - **More fun:**
   - pumping (hold on a downslope for speed);

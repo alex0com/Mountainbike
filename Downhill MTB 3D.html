@@ -2120,6 +2120,10 @@ const DRAG = .0045, CRR = .018, SUB = 4;
 let state = 'title';
 let px = START_X, py = 0, vx = 0, vy = 0, sp = 0, grounded = true, grinding = null;
 let ang = 0, angVel = 0, baseY = 0, landVis = 0, surfNow = S_SNOW;
+// a bunny hop as it is drawn: how long since the pop, the bike's extra pitch, and the rider pulling back then tucking up
+// and, at first, how far it is held down to where it took off, so the back tyre stays on the ground while the front comes up
+let hopT = -1, hopA = 0, hopPull = 0, hopTuck = 0, hopDrop = 0, hopX0 = 0, hopY0 = 0, hopS = 0;
+const HOP_UP = .12, HOP_LEVEL = .3, HOP_PITCH = .3, HOP_HOLD = .05, HOP_FOLLOW = .17;
 let airT = 0, rot = 0, takeoffKind = '', takeoffX = 0, takeoffY = 0, pressInAir = false;
 let style, styleT = 0, styleIndex = 0, stylesDone = [];
 let suspF = .03, suspFV = 0, suspR = .03, suspRV = 0, compress = 0, compressKick = 0, crank = PI/2, wheelSpin = 0;
@@ -2220,7 +2224,7 @@ const countTrick = (name, n=1)=> trickCounts[name] = (trickCounts[name] || 0) + 
 function placeRider(x)
 {
     px = x; py = baseY = groundY(x); vx = vy = 0; sp = 0;
-    grounded = true; grinding = null; ang = atan(groundSlope(x)); angVel = 0; landVis = 0;
+    grounded = true; grinding = null; ang = atan(groundSlope(x)); angVel = 0; landVis = 0; hopT = -1; hopA = hopPull = hopTuck = hopDrop = 0;
     airT = rot = 0; style = undefined; stylesDone = []; trickQueued = null; trickBuf = 0; boostT = 0; legT = 0; superOn = superFlight = false; airMult = 1;
     suspF = suspR = .03; suspFV = suspRV = 0; wheelOffF = wheelOffR = 0; visYWas = py; visVyWas = 0;
     combo = comboPts = comboT = 0; comboNames = []; comboKeys = [];
@@ -2307,12 +2311,14 @@ function jumpNow()
     if (grinding) endGrind(true);
     if (!grounded && !grinding) sp = max(vFloor(px), vx*cos(th) + vy*sin(th));
     jumpBuf = 0; offGroundT = 1;
+    hopX0 = px; hopY0 = py; hopS = s;
     const pop = POP*bike.pop;
     vx = sp*cos(th) - sin(th)*pop*.5;
     vy = sp*sin(th) + cos(th)*pop*.5 + pop*.5;
     py += .05;
     suspFV -= 1.3; suspRV -= 1.3;
     takeoff('jump');
+    hopT = 0;
     sfx('jump');
     // popped right at the lip of a drop-in: higher, and it scores
     if (takeoffFeat?.type == 'dropin' && px > takeoffFeat.x1 - 5)
@@ -3128,12 +3134,13 @@ function drawBike(M, cF, cR, wheelSpin, crankA, whip=0, barA=0, offF=0, offR=0, 
 }
 
 // pose blends: 0 riding, the style tricks pull limbs away from the bike
-function drawRider(M, bikePts, comp, styleName, styleAmt)
+function drawRider(M, bikePts, comp, styleName, styleAmt, pull=0)
 {
     MC = M;
-    const down = vec3(0, -comp*.28, comp*.05);
-    let hip = vec3(0, 1.16, .3).add(down), chest = vec3(0, 1.49, -.1).add(down.scale(.8));
-    let head = vec3(0, 1.78, -.21).add(down.scale(.7));
+    // crouched by comp; pulling up the front of a hop, the hips go back and down over the back wheel on straight arms
+    const down = vec3(0, -comp*.28 - pull*.07, comp*.05 + pull*.2);
+    let hip = vec3(0, 1.16, .3).add(down), chest = vec3(0, 1.49, -.1).add(down.scale(.8 + pull*.1));
+    let head = vec3(0, 1.78, -.21).add(down.scale(.7 + pull*.15));
     let feet = [bikePts.pedals[0], bikePts.pedals[1]], hands = [bikePts.grips[0], bikePts.grips[1]];
     const s = styleAmt;
     if (styleName == 'SUPERMAN')
@@ -3212,10 +3219,14 @@ function bikeMatrix()
 {
     // flips turn about the middle of rider and bike, on the ground it pivots on the wheels
     const piv = .85*RS*airBlend, onSomething = grounded || grinding, t = trickAnim();
-    const M = sideMatrix(px, (onSomething ? baseY : py) + bermY, onSomething ? ang + landVis : ang, 0, piv, pz, yawV + t.spin, leanV);
+    const M = sideMatrix(px, (onSomething ? baseY : py - hopDrop) + bermY, onSomething ? ang + landVis : ang, 0, piv, pz, yawV + t.spin, leanV);
+    if (hopA) hopTurn(M, hopA);
     if (t.table) M.multiply(buildMatrix(vec3(0, .8, 0), vec3(0, 0, t.table))).multiply(Matrix4.translation(vec3(0, -.8, 0)));
     return M;
 }
+// a bunny hop turns the bike up about where its back tyre meets the ground
+const HOP_PIVOT = vec3(0, 0, AXLE_R.z), HOP_BACK = vec3(0, 0, -AXLE_R.z), HOP_AXIS = vec3();
+function hopTurn(M, a) { HOP_AXIS.x = a; M.multiply(Matrix4.translation(HOP_PIVOT)).multiply(Matrix4.rotation(HOP_AXIS)).multiply(Matrix4.translation(HOP_BACK)); }
 // the trick under way: its pose and how far round its spins are
 const TA = {};
 function trickAnim()
@@ -3257,8 +3268,7 @@ class RiderView extends EngineObject3D
         const M = bikeMatrix(), t = trickAnim();
         this.M = M;
         const pts = drawBike(M, suspF, suspR, wheelSpin, crank, t.whip, t.bar, wheelOffF, wheelOffR);
-        const tuck = grounded || grinding ? 0 : clamp01(abs(angVel)/5)*.7;
-        drawRider(M, pts, clamp01(compress + tuck + (t.spin || t.table ? .3*t.amt : 0)), t.name, t.amt);
+        drawRider(M, pts, riderComp(t), t.name, t.amt, hopPull);
     }
 }
 
@@ -3560,6 +3570,23 @@ function updateVisuals(dt)
     suspFV += (240*(sus - suspF) - 17*suspFV)*dt; suspF = clampV(suspF + suspFV*dt, -.02, .19);
     suspRV += (240*(sus - suspR) - 17*suspRV)*dt; suspR = clampV(suspR + suspRV*dt, -.02, .19);
     landVis *= 1 - damp(10, dt);
+    // a bunny hop: the front wheel comes up first, the bike turning up on its back tyre as the rider pulls back on the
+    // bars; then the back wheel follows, the legs tuck up and the bike levels out. Only drawn: the flight and the
+    // landing are the same as ever, and back on the ground whatever is left of it settles straight away
+    if (hopT >= 0 && state == 'ride' && !grounded && !grinding && (hopT += dt) < HOP_UP + HOP_LEVEL + .2)
+    {
+        const t = hopT, up = t < HOP_UP ? 1 - (1 - t/HOP_UP)**2 : 1 - sstep(clamp01((t - HOP_UP)/HOP_LEVEL));
+        hopA = HOP_PITCH*up;
+        hopPull = t < HOP_UP ? up : 1 - sstep(clamp01((t - HOP_UP)/.16));
+        hopTuck = .5*sin(PI*clamp01((t - .06)/(HOP_LEVEL + .14)));
+        hopDrop = clampV(py - hopY0 - hopS*(px - hopX0) - .04, 0, 1.2)*(1 - sstep((t - HOP_HOLD)/HOP_FOLLOW));
+    }
+    else
+    {
+        hopT = -1; hopDrop = 0;
+        const k = 1 - damp(16, dt);
+        hopA *= k; hopPull *= k; hopTuck *= k;
+    }
     // on a branch: across to its line, turned along it, leaned into the berms and riding up their walls
     let tYaw = 0, tLean = 0, tY = 0, tOff = 0;
     const bx = state == 'ride' || state == 'title' ? px : rag.x, zr = pathZr(bx), flying = state == 'ride' && !grounded && !grinding;
@@ -5854,7 +5881,7 @@ function mpStep(dt)
     mp.draft = state == 'ride' && !!mp.last && mp.last.st == 'r' && mp.last.x > px && mp.last.x - px < MP.draft;
 }
 const r3 = v=> round(v*1000)/1000;
-function riderComp(t) { return clamp01(compress + (grounded || grinding ? 0 : clamp01(abs(angVel)/5)*.7) + (t.spin || t.table ? .3*t.amt : 0)); }
+function riderComp(t) { return clamp01(compress + hopTuck + (grounded || grinding ? 0 : clamp01(abs(angVel)/5)*.7) + (t.spin || t.table ? .3*t.amt : 0)); }
 function mpPose()
 {
     const s = {t: 's', x: r3(px), sc: score, cc: mp.crashes, kit: kitI, bike: bikeI, tu: turboT > 0 ? 1 : 0, ba: r3(battery)};
@@ -5867,9 +5894,10 @@ function mpPose()
     else
     {
         const on = grounded || grinding, t = trickAnim();
-        Object.assign(s, {st: 'r', y: r3((on ? baseY : py) + bermY), a: r3(on ? ang + landVis : ang), pv: r3(.85*RS*airBlend), z: r3(pz),
+        Object.assign(s, {st: 'r', y: r3((on ? baseY : py - hopDrop) + bermY), a: r3(on ? ang + landVis : ang), pv: r3(.85*RS*airBlend), z: r3(pz),
             yw: r3(yawV + t.spin), ln: r3(leanV), tb: r3(t.table), cF: r3(suspF), cR: r3(suspR), ws: r3(wheelSpin), cr: r3(crank),
-            wh: r3(t.whip), br: r3(t.bar), oF: r3(wheelOffF), oR: r3(wheelOffR), cp: r3(riderComp(t)), tn: t.name, ta: r3(t.amt)});
+            wh: r3(t.whip), br: r3(t.bar), oF: r3(wheelOffF), oR: r3(wheelOffR), cp: r3(riderComp(t)), tn: t.name, ta: r3(t.amt),
+            hp: r3(hopA), pu: r3(hopPull)});
     }
     if (mp.you == 0) Object.assign(s, {rl: r3(mp.roundT), rn: mp.round, bk: mp.breakBy >= 0 ? r3(mp.breakT) : -1, bb: mp.breakBy});
     return s;
@@ -5928,9 +5956,10 @@ class RemoteView extends EngineObject3D
                 return;
             }
             const M = sideMatrix(r.x, r.y, r.a, 0, r.pv, r.z + MP.side, r.yw, r.ln);
+            if (r.hp) hopTurn(M, r.hp);
             if (r.tb) M.multiply(buildMatrix(vec3(0, .8, 0), vec3(0, 0, r.tb))).multiply(Matrix4.translation(vec3(0, -.8, 0)));
             const pts = drawBike(M, r.cF, r.cR, r.ws, r.cr, r.wh, r.br, r.oF, r.oR);
-            drawRider(M, pts, r.cp, r.tn, r.ta);
+            drawRider(M, pts, r.cp, r.tn, r.ta, r.pu || 0);
         });
     }
 }
@@ -5985,7 +6014,7 @@ function mpRecoverStep()
         // and back on: rolling away slowly from the bike's spot
         state = 'ride'; mp.rec = null; ragdoll = null; pieces = [];
         px = R.x; py = baseY = rideY(px); vx = vy = 0; sp = 5; grounded = true; grinding = null;
-        ang = atan(rideSlope(px)); angVel = 0; landVis = 0; airT = rot = 0; style = undefined; stylesDone = []; trickQueued = null;
+        ang = atan(rideSlope(px)); angVel = 0; landVis = 0; hopT = -1; hopA = hopPull = hopTuck = hopDrop = 0; airT = rot = 0; style = undefined; stylesDone = []; trickQueued = null;
         showMessage('BACK ON IT!', '', hsl(.13,.95,.6));
         sfx('go');
     }
@@ -6080,6 +6109,9 @@ window.__mtb = {
     endRun: ()=> endRun(),
     // the middle of rider and bike as drawn, for close-ups
     riderAt: ()=> wrecked() ? vec3(rag.x - OX, rag.y - OY, rag.z) : bikeMatrix().transformPoint(vec3(0, 1, 0)),
+    // where the wheels touch down as drawn, back then front, and the hop's pitch, for checking how a hop looks
+    wheels: ()=> { const M = bikeMatrix(), r = M.transformPoint(vec3(0, 0, AXLE_R.z)), f = M.transformPoint(vec3(0, 0, AXLE_F.z));
+        return {rx: r.x + OX, ry: r.y + OY, fx: f.x + OX, fy: f.y + OY, hop: hopA, pull: hopPull, tuck: hopTuck, ang, py, grounded}; },
     // the camera and where the rider is on screen, for measuring how smooth the ride looks
     camState: ()=> { const c = render3D.camera, r = bikeMatrix().transformPoint(vec3(0, 1, 0)), p = project(r);
         return {ex: c.pos.x + OX, ey: c.pos.y + OY, ez: c.pos.z, lx: (camLook?.x ?? 0) + OX, ly: (camLook?.y ?? 0) + OY, lz: camLook?.z ?? 0,

@@ -1051,7 +1051,7 @@ function trackInit(s)
     addRun(14, .04);
     addRun(40, .38);
 }
-const trackEnsure = x=> { while (genX() < x) genSection(); };
+const trackEnsure = x=> { while (genX() < x) { genSection(); perfMark(2); } };
 // how far ahead of the rider the track is laid out: past the longest block of lines beyond where the ground is built
 const TRACK_AHEAD = 950;
 
@@ -1075,6 +1075,23 @@ function trackPrune(x)
 const CH = 64, CHN = CH/DX;
 let OX = 0, OY = 0;                 // the world is drawn relative to this point, moved as the rider goes
 let chunks = new Map, anchored = [], sceneMeshes = [];
+// 3D text, built once for each string and kept from run to run: the distance signs and the line names repeat
+const TEXT3D = new Map;
+function text3D(s, size, depth)
+{
+    const k = s + '|' + size + '|' + depth;
+    let m = TEXT3D.get(k);
+    if (!m) TEXT3D.set(k, m = buildText3D(s, size, depth));
+    return m;
+}
+// a mesh sent to the GPU now, in the step of a chunk's building that makes it, rather than the first time it is
+// drawn, in the middle of a frame; and its bounds worked out, which the culling would otherwise do then too
+function preUpload(mesh)
+{
+    if (!mesh || mesh.buffer && !mesh.dirty && mesh.contextGeneration === render3D?.contextGeneration) return;
+    mesh.computeRadius?.();
+    if (glContext && render3D?.program) mesh.upload();
+}
 let M = {};                         // shared meshes
 
 // colors per biome, blended where zones meet
@@ -1134,7 +1151,14 @@ const ROWS = [[62, 'drop'], [45, 'drop'], [30, 'drop'], [19, 'drop'], [13.5, 'dr
     [-30, 'hill'], [-36, 'hill'], [-50, 'hill'], [-68, 'hill'], [-92, 'hill']];
 const HILL_ROW = ROWS.findIndex(r=> r[1] == 'bank');
 // the branches near a stretch of ground
-const branchesNear = (x0, x1)=> splits.flatMap(s=> s.x1 > x0 && s.x0 < x1 ? Object.values(s.lines) : []);
+// (into a shared list unless given one to keep: the camera asks dozens of times a frame)
+const BRANCHES = [];
+function branchesNear(x0, x1, out=BRANCHES)
+{
+    out.length = 0;
+    for (const s of splits) if (s.x1 > x0 && s.x0 < x1) for (const k in s.lines) out.push(s.lines[k]);
+    return out;
+}
 // how much a point of ground belongs to a branch cut through it: the height there, and how much it is trail
 // Where a branch turns off the trail and back, the outside of the turn is banked up into a berm.
 function carve(bs, x, z, y, out)
@@ -1240,7 +1264,7 @@ function sightLift(rx, ry, rz, cx, cy, cz)
 function* chunkMeshSteps(ch)
 {
     const x0 = ch.x0, y0 = ch.y0, cols = CHN + 1, R = ROWS.length, W = cols + 2, cv = {};
-    const bs = branchesNear(x0 - DX, x0 + CH + DX);
+    const bs = branchesNear(x0 - DX, x0 + CH + DX, []);
     const C = [];
     for (let i = -1; i <= cols; ++i)
     {
@@ -1251,77 +1275,106 @@ function* chunkMeshSteps(ch)
         C.push(c);
     }
     yield;
-    // the points, every row of every column including the extra two, and the colors of the chunk's own
-    const P = new Array(W*R), col = [];
+    // the points, every row of every column including the extra two, and the colors of the chunk's own: straight
+    // into flat arrays, with no object for each point, normal or colour
+    const P = new Float32Array(W*R*3), nV = R*(W - 2), rgba = new Uint32Array(nV);
+    const pack = (r, g, b)=> (255*clamp(r) + .5 | 0) + (255*clamp(g) + .5 << 8) + (255*clamp(b) + .5 << 16) + (255.5 << 24);
     for (let j = 0; j < R; ++j)
     {
         const [z, kind] = ROWS[j];
         for (let q = 0; q < W; ++q)
         {
-            const c = C[q], x = c.x;
+            const c = C[q], x = c.x, at = (j*W + q)*3;
             carve(bs, x, z, rowY(kind, z, x, c.p, c.s, c.g) - gullyCut(x, z, kind), cv);
             // bent sideways with the weave
-            P[j*W + q] = vec3(x - x0, cv.y - y0, wz(x, z));
+            P[at] = x - x0; P[at + 1] = cv.y - y0; P[at + 2] = wz(x, z);
             if (q == 0 || q == W - 1) continue;
             const n = NV(x*.21, z*.21)*.07 + NV(x*.05, z*.05 + 9)*.08;
-            let color;
+            let cr, cg, cb;
             if (kind == 'trail' || kind == 'edge')
             {
                 const t = c.trail, k = (kind == 'edge' ? .62 : abs(z) > 2 ? .84 : 1.04) + n;
-                color = new Color(t[0]*k, t[1]*k, t[2]*k);
+                cr = t[0]*k; cg = t[1]*k; cb = t[2]*k;
             }
             else if (kind == 'front' || kind == 'drop')
             {
                 // the slope falling away in front: hillside with rocky bands, shaded as it drops
                 const h = c.hill, fc = c.face, rockW = sstep(fbm(NC, x*.03 + 3, z*.05, 2)*2.2 + .1), k = (1.02 - min(.35, (z - 5.6)*.014)) + n;
-                color = new Color(mix(h[0], fc[0], rockW)*k, mix(h[1], fc[1], rockW)*k, mix(h[2], fc[2], rockW)*k);
+                cr = mix(h[0], fc[0], rockW)*k; cg = mix(h[1], fc[1], rockW)*k; cb = mix(h[2], fc[2], rockW)*k;
             }
             else
             {
                 const h = c.hill, r2 = c.hill2, rk = c.rock, rr = -z - 2.6, t = sstep(fbm(NC, x*.02, z*.04, 2)*1.6 + .5);
                 const rockW = sstep(fbm(NC, x*.015 + 7, z*.03, 2)*2.2 + rr/90*.7 - .35);
-                let cr = mix(h[0], r2[0], t), cg = mix(h[1], r2[1], t), cb = mix(h[2], r2[2], t);
+                cr = mix(h[0], r2[0], t); cg = mix(h[1], r2[1], t); cb = mix(h[2], r2[2], t);
                 cr = mix(cr, rk[0], rockW); cg = mix(cg, rk[1], rockW); cb = mix(cb, rk[2], rockW);
                 // snow lies on the high slopes of alpine country too
                 const snowW = c.alpine*sstep((rr - 45)/30)*.8;
-                cr = mix(cr, .92, snowW); cg = mix(cg, .94, snowW); cb = mix(cb, .98, snowW);
                 const k = 1 + n;
-                color = new Color(cr*k, cg*k, cb*k);
+                cr = mix(cr, .92, snowW)*k; cg = mix(cg, .94, snowW)*k; cb = mix(cb, .98, snowW)*k;
             }
             if (cv.w > 0)
             {
                 const t = c.trail, k = .9 + n - cv.lift*.09;
-                color = new Color(mix(color.r, t[0]*k, cv.w), mix(color.g, t[1]*k, cv.w), mix(color.b, t[2]*k, cv.w));
+                cr = mix(cr, t[0]*k, cv.w); cg = mix(cg, t[1]*k, cv.w); cb = mix(cb, t[2]*k, cv.w);
             }
-            col.push(color);
+            rgba[j*(W - 2) + q - 1] = pack(cr, cg, cb);
         }
-        if (j % 2) yield;
+        yield;
     }
-    // smooth normals from the neighbours along and across, and the chunk's own points
-    const pts = [], nrm = [], ind = [];
-    for (let j = 0; j < R; ++j)
+    // laid out the way the renderer reads its vertices: smooth normals from the neighbours along and across
+    const data = new ArrayBuffer(nV*RENDER3D_VERTEX_BYTES), F = new Float32Array(data), U = new Uint32Array(data), N = {x: 0, y: 1, z: 0};
+    let r2 = 0;
+    const lo = [1e9, 1e9, 1e9], hi = [-1e9, -1e9, -1e9];
+    for (let j = 0, v = 0; j < R; ++j)
     {
         const ja = max(0, j - 1)*W, jb = min(R - 1, j + 1)*W;
-        for (let q = 1; q < W - 1; ++q)
+        for (let q = 1; q < W - 1; ++q, ++v)
         {
-            const l = P[j*W + q - 1], r = P[j*W + q + 1], u = P[ja + q], d = P[jb + q];
-            const tx = r.x - l.x, ty = r.y - l.y, tz = r.z - l.z, bx = d.x - u.x, by = d.y - u.y, bz = d.z - u.z;
+            const l = (j*W + q - 1)*3, r = (j*W + q + 1)*3, u = (ja + q)*3, d = (jb + q)*3, o = (j*W + q)*3;
+            const tx = P[r] - P[l], ty = P[r + 1] - P[l + 1], tz = P[r + 2] - P[l + 2], bx = P[d] - P[u], by = P[d + 1] - P[u + 1], bz = P[d + 2] - P[u + 2];
             const nx = ty*bz - tz*by, ny = tz*bx - tx*bz, nz = tx*by - ty*bx, n = hypot(nx, ny, nz);
-            pts.push(P[j*W + q]);
-            nrm.push(n > 1e-9 ? vec3(nx/n, ny/n, nz/n) : vec3(0, 1, 0));
+            if (n > 1e-9) { N.x = nx/n; N.y = ny/n; N.z = nz/n; } else { N.x = 0; N.y = 1; N.z = 0; }
+            const px = P[o], py = P[o + 1], pz = P[o + 2];
+            render3DWriteVertex(F, U, v*RENDER3D_VERTEX_FLOATS, px, py, pz, N, 0, 0, rgba[v]);
+            r2 = max(r2, px*px + py*py + pz*pz);
+            lo[0] = min(lo[0], px); lo[1] = min(lo[1], py); lo[2] = min(lo[2], pz);
+            hi[0] = max(hi[0], px); hi[1] = max(hi[1], py); hi[2] = max(hi[2], pz);
         }
-        if (j % 10 == 9) yield;
+        if (j % 6 == 5) yield;
     }
-    for (let j = 0; j < R - 1; ++j)
+    // the triangles, wound the way the renderer winds an indexed mesh
+    const ind = new Uint16Array((R - 1)*(cols - 1)*6);
+    for (let j = 0, e = 0; j < R - 1; ++j)
     for (let i = 0; i < cols - 1; ++i)
     {
-        const a = j*cols + i, b = a + 1, d = a + cols + 1, e = a + cols;
-        ind.push(a, b, d, a, d, e);
+        const a = j*cols + i, b = a + 1, d = a + cols + 1, f = a + cols;
+        ind[e++] = a; ind[e++] = d; ind[e++] = b; ind[e++] = a; ind[e++] = f; ind[e++] = d;
     }
     yield;
-    const mesh = new Mesh().addTriangles(pts, ind, nrm, undefined, col);
+    const mesh = new Mesh();
     mesh.doubleSided = true;
+    mesh.radius = r2**.5; mesh.bounds = {min: vec3(...lo), max: vec3(...hi)};
+    mesh.computeRadius = ()=> mesh.radius;
+    mesh.upload = ()=> uploadPacked(mesh, data, ind);
     ch.mesh = mesh;
+    yield;
+    preUpload(mesh);
+}
+// a mesh already laid out the way the renderer reads it, sent to the GPU as it is
+function uploadPacked(mesh, data, ind)
+{
+    if (!render3D?.program || !glContext) return mesh;
+    const gl = glContext;
+    mesh.dispose();
+    mesh.buffer = gl.createBuffer(); mesh.indexBuffer = gl.createBuffer();
+    mesh.bufferCount = ind.length; mesh.indexType = gl.UNSIGNED_SHORT;
+    gl.bindBuffer(gl.ARRAY_BUFFER, mesh.buffer); gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, mesh.indexBuffer); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, ind, gl.STATIC_DRAW);
+    mesh.contextGeneration = render3D.contextGeneration; mesh.dirty = false;
+    render3DMeshBuffers?.register(mesh, {buffer: mesh.buffer, indexBuffer: mesh.indexBuffer, generation: mesh.contextGeneration}, mesh);
+    gl.bindBuffer(gl.ARRAY_BUFFER, glArrayBuffer);
+    return mesh;
 }
 
 // an object placed at a world position, moved when the origin moves; z is across the trail, bent by the weave
@@ -1344,16 +1397,16 @@ const placeAnchor = o=> o.pos3D = vec3(o.ax - OX, o.ay - OY, o.az);
 
 // a chunk of the world, built a step at a time; nothing is put into the scene until the last step, so a chunk
 // given up on part way leaves nothing behind
-function* buildChunk(i)
+function* buildChunk(ch)
 {
-    const x0 = i*CH, ch = {i, x0, y0: groundY(x0), objs: [], sets: []};
+    const i = ch.i, x0 = ch.x0;
     const rr = mulberry(seed*131 + i*977 + 5);
     yield* chunkMeshSteps(ch);
 
     // trees and bushes on the hillside behind, a few rocks and bushes on the slope in front
     const w = biomeW(x0 + CH/2, {}), lists = {pine: [], snowPine: [], broad: [], bush: [], rock: [], crag: []};
     // nothing grows on a branch, or between it and the camera
-    const bsN = branchesNear(x0 - 6, x0 + CH + 6);
+    const bsN = branchesNear(x0 - 6, x0 + CH + 6, []);
     const clearOf = (x, z)=> !bsN.some(b=> x > b.x0 - 5 && x < b.x1 + 5 && (b.dir > 0 ? z > b.z - 4.5 : z < b.z + 34 && z > 1))
         && !gullies.some(g=> abs(x - g.xc) < (g.bridge ? 4 : 3.5)) && !arches.some(a=> abs(x - a.x) < 4 && abs(z) < 11);
     const nTrees = round(8*w.snow + 14*w.alpine + 60*w.forest + 46*w.autumn + 10*w.desert);
@@ -1370,7 +1423,7 @@ function* buildChunk(i)
         if (pick < wl.desert + wl.snow) kind = 'snowPine';
         else if (pick < wl.desert + wl.snow + wl.autumn*.75) kind = 'broad';
         lists[kind].push({x, y, z, s: sc*(kind == 'broad' ? .9 : 1), rot: rr()*TAU, t: rr()});
-        if (k % 40 == 39) yield;
+        if (k % 20 == 19) yield;
     }
     yield;
     // trees down the slope in front too, far enough below the trail that they never hide the rider
@@ -1429,67 +1482,79 @@ function* buildChunk(i)
     for (const [kind, list] of Object.entries(lists))
     {
         if (!list.length) continue;
-        const set = new InstancedMesh3D(M[kind], list.length);
+        yield;
+        const set = new InstancedMesh3D(M[kind], list.length), s = {set, list, kind, color: kind == 'broad' ? broadTint : tint[kind]};
         set.castShadow = kind != 'bush';
-        ch.sets.push({set, list, kind, color: kind == 'broad' ? broadTint : tint[kind]});
+        placeSet(s);
+        ch.sets.push(s);
     }
 
-    // things on the track in this chunk
-    for (const r of rocks) if (r.x >= x0 && r.x < x0 + CH) ch.objs.push(makeRock(r));
-    for (const r of rails) if (r.x0 >= x0 && r.x0 < x0 + CH) ch.objs.push(r.deck ? makeDeck(r) : makeRail(r));
-    for (const s of signs) if (s.x >= x0 && s.x < x0 + CH) ch.objs.push(...makeSign(s));
-    if (i == 0) ch.objs.push(...makeSummit());
-    for (const g of gullies) if (g.x0 >= x0 && g.x0 < x0 + CH) { ch.objs.push(makeWater(g)); if (g.bridge) ch.objs.push(makeBridge(g)); }
-    for (const a of arches) if (a.x >= x0 && a.x < x0 + CH) ch.objs.push(makeArch(a));
-    for (const f of feats) if (f.type == 'dropin' && f.x1 >= x0 && f.x1 < x0 + CH) ch.objs.push(...makeDropMarks(f));
-    for (const sp of splits)
-    {
-        if (sp.x0 >= x0 && sp.x0 < x0 + CH) ch.objs.push(...makeForkSign(sp));
-    }
+    // things on the track in this chunk, a kind at a time, each sent to the GPU as it is made
+    const add = (...objs)=> { for (const o of objs) { preUpload(o.mesh); ch.objs.push(o); } };
+    const here = x=> x >= x0 && x < x0 + CH;
+    yield;
+    for (const r of rocks) if (here(r.x)) add(makeRock(r));
+    for (const r of rails) if (here(r.x0)) { yield; add(r.deck ? makeDeck(r) : makeRail(r)); }
+    for (const s of signs) if (here(s.x)) { yield; add(...makeSign(s)); }
+    if (i == 0) { yield; add(...makeSummit()); }
+    for (const g of gullies) if (here(g.x0)) { yield; add(makeWater(g)); if (g.bridge) { yield; add(makeBridge(g)); } }
+    for (const a of arches) if (here(a.x)) { yield; add(makeArch(a)); }
+    for (const f of feats) if (f.type == 'dropin' && here(f.x1)) { yield; add(...makeDropMarks(f)); }
+    for (const sp of splits) if (here(sp.x0)) { yield; add(...makeForkSign(sp)); }
     placeChunk(ch);
     chunks.set(i, ch);
+    perfMark(1);
 }
 
 function placeChunk(ch)
 {
     for (const o of ch.objs) placeAnchor(o);
-    for (const {set, list, kind, color} of ch.sets)
-        list.forEach((t, i)=>
-        {
-            const rot = kind == 'rock' ? vec3(t.rot*.3, t.rot, t.rot*.2) : kind == 'crag' ? vec3(t.t*.15, t.rot, t.t*.1) : vec3(0, t.rot, 0);
-            const sc = kind == 'rock' ? vec3(t.s, t.s*.7, t.s*.9) : kind == 'crag' ? vec3(t.s, t.s*t.tall, t.s*.85) : vec3(t.s);
-            set.setTransformAt(i, vec3(t.x - OX, t.y - OY, wz(t.x, t.z)), rot, sc);
-            set.setColorAt(i, color(t));
-        });
+    for (const s of ch.sets) placeSet(s);
+}
+function placeSet({set, list, kind, color})
+{
+    list.forEach((t, i)=>
+    {
+        const rot = kind == 'rock' ? vec3(t.rot*.3, t.rot, t.rot*.2) : kind == 'crag' ? vec3(t.t*.15, t.rot, t.t*.1) : vec3(0, t.rot, 0);
+        const sc = kind == 'rock' ? vec3(t.s, t.s*.7, t.s*.9) : kind == 'crag' ? vec3(t.s, t.s*t.tall, t.s*.85) : vec3(t.s);
+        set.setTransformAt(i, vec3(t.x - OX, t.y - OY, wz(t.x, t.z)), rot, sc);
+        set.setColorAt(i, color(t));
+    });
 }
 
 function destroyChunk(ch)
 {
     for (const o of ch.objs) o.destroy();
     for (const s of ch.sets) s.set.destroy();
-    ch.mesh.dispose?.();
+    ch.mesh?.dispose?.();
     chunks.delete(ch.i);
 }
 
 // keep the chunks around the camera built: the nearest one missing is built a step at a time within a slice of
-// each frame, so no frame stalls on it; all at once when the world is laid out fresh
-const CHUNK_MS = 3;
+// each frame, so no frame stalls on it; all at once when the world is laid out fresh. Each step's usual time is
+// learnt as chunks are built, and a step that would not fit in what is left of the slice waits for the next frame
+// (unless the frame has done nothing yet, so the work always moves on)
+const CHUNK_MS = 2, stepCost = [];
 let chunkJob = null;
 function updateChunks(camX, force, more=0)
 {
-    const a = floor((camX - 150)/CH), b = floor((camX + 400 + more)/CH), until = performance.now() + (force ? 1e9 : CHUNK_MS);
-    if (chunkJob && (chunkJob.i < a - 1 || chunkJob.i > b + 2)) chunkJob = null;
-    while (performance.now() < until)
+    const a = floor((camX - 150)/CH), b = floor((camX + 400 + more)/CH), start = performance.now(), until = start + (force ? 1e9 : CHUNK_MS);
+    if (chunkJob && (chunkJob.ch.i < a - 1 || chunkJob.ch.i > b + 2)) { dropChunkJob(); }
+    for (let ran = 0;;)
     {
         if (!chunkJob)
         {
             let i = max(0, a);
             while (i <= b && chunks.has(i)) ++i;
             if (i > b) break;
-            chunkJob = {i, steps: buildChunk(i)};
+            const ch = {i, x0: i*CH, y0: groundY(i*CH), objs: [], sets: []};
+            chunkJob = {ch, step: 0, steps: buildChunk(ch)};
         }
-        let done;
-        while (!(done = chunkJob.steps.next().done) && performance.now() < until);
+        const now = performance.now(), k = chunkJob.step;
+        if (ran && now + (stepCost[k] || .3) > until) break;
+        const done = chunkJob.steps.next().done, took = performance.now() - now;
+        stepCost[k] = stepCost[k] ? stepCost[k]*.8 + took*.2 : took;
+        ++chunkJob.step; ++ran;
         if (done) chunkJob = null;
     }
     for (const ch of [...chunks.values()])
@@ -1570,9 +1635,8 @@ function makeSign(s)
 {
     const post = new EngineObject3D(vec3(), M.post, undefined, hsl(.08,.4,.28));
     const board = new EngineObject3D(vec3(), M.board, undefined, hsl(.09,.45,.45));
-    const text = new EngineObject3D(vec3(), buildText3D(s.d + ' m', .42, .08), undefined, WHITE);
+    const text = new EngineObject3D(vec3(), text3D(s.d + ' m', .42, .08), undefined, WHITE);
     text.emissive = .2;
-    sceneMeshes.push(text.mesh);
     return [anchor(post, s.x, s.y + 1.1, -3.4), anchor(board, s.x, s.y + 2.1, -3.4), anchor(text, s.x, s.y + 2.1, -3.2)].map(o=> alongTrail(o, s.x, -3.4));
 }
 
@@ -1597,9 +1661,8 @@ function makeForkSign(sp)
         const arrow = new EngineObject3D(vec3(), M.arrow, undefined, L.sign);
         arrow.rotation3D = vec3(0, 0, l < 0 ? PI : 0); arrow.scale3D = vec3(.75);
         arrow.emissive = .25;
-        const o = new EngineObject3D(vec3(), buildText3D(L.short, .45, .08), undefined, L.sign);
+        const o = new EngineObject3D(vec3(), text3D(L.short, .45, .08), undefined, L.sign);
         o.emissive = .3;
-        sceneMeshes.push(o.mesh);
         objs.push(alongTrail(anchor(arrow, x, ty, z + .1), x, z), alongTrail(anchor(o, x + 2.2, ty, z + .1), x, z));
     });
     return objs;
@@ -1611,9 +1674,8 @@ function makeDropMarks(f)
     const objs = [], x = f.x1 - 4, y = groundY(x), wood = hsl(.08,.4,.28);
     objs.push(anchor(new EngineObject3D(vec3(), M.post, undefined, wood), x, y + 1.1, -3.6));
     const board = new EngineObject3D(vec3(), M.board, undefined, hsl(.0,.75,.45));
-    const text = new EngineObject3D(vec3(), buildText3D('SEND IT', .4, .08), undefined, WHITE);
+    const text = new EngineObject3D(vec3(), text3D('SEND IT', .4, .08), undefined, WHITE);
     text.emissive = .3;
-    sceneMeshes.push(text.mesh);
     objs.push(anchor(board, x, y + 2.1, -3.6), anchor(text, x, y + 2.1, -3.4));
     for (const z of [-2.9, 2.9])
     {
@@ -1698,9 +1760,8 @@ function makeSummit()
     for (const dx of [-3.4, 3.4])
         objs.push(anchor(new EngineObject3D(vec3(), M.gatePost, undefined, blue), gx + dx, groundY(gx + dx) + 2.1, -3));
     objs.push(anchor(new EngineObject3D(vec3(), M.banner, undefined, blue), gx, gy + 4.3, -3));
-    const t = new EngineObject3D(vec3(), buildText3D('DROP IN', .72, .12), undefined, WHITE);
+    const t = new EngineObject3D(vec3(), text3D('DROP IN', .72, .12), undefined, WHITE);
     t.emissive = .3;
-    sceneMeshes.push(t.mesh);
     objs.push(anchor(t, gx, gy + 4.3, -2.8));
     const fx = START_X - 13, fy = groundY(fx);
     objs.push(anchor(new EngineObject3D(vec3(), M.pole, undefined, hsl(0,0,.85)), fx, fy + 2.5, -2));
@@ -1941,9 +2002,19 @@ function rebase(nx, ny)
         }
 }
 
+// a chunk given up on part way, out of reach now: what it had made so far taken down
+function dropChunkJob()
+{
+    const ch = chunkJob?.ch;
+    chunkJob = null;
+    if (!ch) return;
+    for (const o of ch.objs) o.destroy();
+    for (const s of ch.sets) s.set.destroy();
+    ch.mesh?.dispose?.();
+}
 function resetScene()
 {
-    chunkJob = null;
+    dropChunkJob();
     for (const ch of [...chunks.values()]) destroyChunk(ch);
     for (const r of ringObjs) r?.mesh.dispose?.();
     ringObjs = [];
@@ -3118,6 +3189,34 @@ class RiderView extends EngineObject3D
 }
 
 // the turbo: a cyan glow trailing the bike while it lasts
+// soft glowing discs drawn the way the particles are, one quad each through the GPU's instancing, rather than a fan
+// of triangles built and sent every frame. each(glow) calls glow(position, diameter, colour) for every disc
+const GLOW_SIZE = vec2();
+function drawGlows(obj, each)
+{
+    const a = render3D, tex = render3DSoftDot();
+    if (a.transparentQueue) return a.queueTransparent(obj.getWorldPos3D(), ()=> drawGlows(obj, each));
+    if (a.shadowPass) return;
+    if (!tex || !a.instancing || a.capture || !render3DCanDraw()) { each((p, s, c)=> a.drawSoftDisc(p, s, c)); return; }
+    const f = a.billboardMesh, k = render3DTextureOf(tex), l = render3DGetTileUVs(tex), lit = a.lighting, n = a.cameraBack;
+    render3DMeshUpload(f);
+    a.lighting = false; a.cullBackFaces = a.mirrored = false;
+    try
+    {
+        each((p, s, c)=>
+        {
+            GLOW_SIZE.x = GLOW_SIZE.y = s;
+            const D = render3DBillboardAxes(GLOW_SIZE, 0, false), B = render3DInstanceSlot(f, k), h = f.instanceData;
+            h[B] = 2*D[0]; h[B + 1] = 2*D[1]; h[B + 2] = 2*D[2]; h[B + 3] = 0;
+            h[B + 4] = 2*D[3]; h[B + 5] = 2*D[4]; h[B + 6] = 2*D[5]; h[B + 7] = 0;
+            h[B + 8] = n.x; h[B + 9] = n.y; h[B + 10] = n.z; h[B + 11] = 0;
+            h[B + 12] = p.x; h[B + 13] = p.y; h[B + 14] = p.z; h[B + 15] = 1;
+            h[B + 16] = c.r; h[B + 17] = c.g; h[B + 18] = c.b; h[B + 19] = c.a;
+            h[B + 20] = l.x; h[B + 21] = l.y; h[B + 22] = l.w; h[B + 23] = l.h;
+        });
+    }
+    finally { a.lighting = lit; a.flush(); render3DFlushInstances(f); }
+}
 class TurboGlow extends EngineObject3D
 {
     constructor() { super(vec3()); this.transparent = true; this.additive = true; this.castShadow = false; }
@@ -3125,12 +3224,11 @@ class TurboGlow extends EngineObject3D
     {
         if (turboT <= 0 || state != 'ride') return;
         const M = bikeMatrix(), a = clamp01(turboT*2)*(.75 + .25*sin(time*37));
-        for (let k = 0; k < 6; ++k)
+        drawGlows(this, glow=>
         {
-            const p = M.transformPoint(vec3(0, .45 + k*.04, .7 + k*.55));
-            render3D.drawSoftDisc(p, 2.2 - k*.22, hsl(.5, 1, .6, a*(.5 - k*.07)));
-        }
-        render3D.drawSoftDisc(M.transformPoint(vec3(0, .5, .1)), 2.6, hsl(.52, 1, .65, a*.35));
+            for (let k = 0; k < 6; ++k) glow(M.transformPoint(vec3(0, .45 + k*.04, .7 + k*.55)), 2.2 - k*.22, hsl(.5, 1, .6, a*(.5 - k*.07)));
+            glow(M.transformPoint(vec3(0, .5, .1)), 2.6, hsl(.52, 1, .65, a*.35));
+        });
     }
 }
 
@@ -3476,6 +3574,9 @@ function camNextZoom()
 const camViewName = ()=> camView[camPortrait() ? 'p' : 'l'];
 const camZoomName = ()=> CAM_ZOOMS[camView[camPortrait() ? 'zp' : 'zl']][0];
 const W3 = (x, y, zr=0)=> vec3(x - OX, y - OY, wz(x, zr));
+// a number as text for the HUD, from one formatter, kept while the number stays the same
+const NUMF = new Intl.NumberFormat(), NUMS = new Map;
+const fmt = n=> { let t = NUMS.get(n); if (t === undefined) { if (NUMS.size > 500) NUMS.clear(); NUMS.set(n, t = NUMF.format(n)); } return t; };
 // the camera moves on springs, critically damped: it never overshoots, and when what it follows jumps or turns it
 // eases into the change rather than jerking. With lead it also takes on the speed of what it follows, so it keeps
 // right up with something moving steadily rather than trailing behind it
@@ -3672,6 +3773,7 @@ const DAY = [
     [1,   [.22,.27,.52], [.98,.66,.5],  [.42,.34,.38], [1,.72,.5],   .9, .08]];
 const lerp3 = (a, b, t)=> [mix(a[0], b[0], t), mix(a[1], b[1], t), mix(a[2], b[2], t)];
 const col3 = c=> new Color(c[0], c[1], c[2]);
+let skyDay = -1;
 function updateSky(dt)
 {
     if (state == 'ride') dayT = (dayT + dt/DAY_LEN) % 1;
@@ -3682,10 +3784,12 @@ function updateSky(dt)
     const top = lerp3(a[1], b[1], t), hor = lerp3(a[2], b[2], t), bot = lerp3(a[3], b[3], t), sun = lerp3(a[4], b[4], t);
     const bright = mix(a[5], b[5], t), height = mix(a[6], b[6], t);
     night = clamp01(1 - (top[0] + top[1] + top[2])/.35);
-    // recolor the dome in place now and then: the day turns slowly enough that it never shows
+    // recolor the dome in place when the day has moved on a little (it turns slowly enough that it never shows), and
+    // straight away when it jumps, at the start of a run; each recolor sends the whole dome to the GPU again
     const sky = render3D.sky;
-    if (sky && frame % 12 == 0)
+    if (sky && abs(dayT - skyDay) > .004)
     {
+        skyDay = dayT;
         if (sky.colors.length != sky.points.length) sky.colors = sky.points.map(()=> new Color);
         sky.points.forEach((p, i)=>
         {
@@ -3730,14 +3834,13 @@ class SkyExtras extends EngineObject3D
     {
         if (night < .02) return;
         const c = render3D.camera.pos;
-        for (const s of stars)
+        drawGlows(this, glow=>
         {
-            const a = night*(.55 + .45*sin(time*2 + s.tw));
-            render3D.drawSoftDisc(c.add(s.d.scale(800)), s.s, hsl(.6,.3,.9, a));
-        }
-        const m = c.add(vec3(.45, .5, -.74).normalize().scale(800));
-        render3D.drawSoftDisc(m, 60, hsl(.6,.2,.95, night*.9));
-        render3D.drawSoftDisc(m, 170, hsl(.6,.5,.7, night*.15));
+            for (const s of stars) glow(c.add(s.d.scale(800)), s.s, hsl(.6,.3,.9, night*(.55 + .45*sin(time*2 + s.tw))));
+            const m = c.add(vec3(.45, .5, -.74).normalize().scale(800));
+            glow(m, 60, hsl(.6,.2,.95, night*.9));
+            glow(m, 170, hsl(.6,.5,.7, night*.15));
+        });
     }
 }
 
@@ -3795,12 +3898,15 @@ class OrbGlow extends EngineObject3D
     render3D()
     {
         const rz = riderZ();
-        for (const o of orbs)
+        drawGlows(this, glow=>
         {
-            if (!orbSeen(o, rz)) continue;
-            render3D.drawSoftDisc(orbBob(o), o.cell ? 3 : o.tyre ? 2.6 : o.air ? 1.9 : 1.6,
-                o.cell ? hsl(.52,1,.6,.6 + night*.3) : o.tyre ? hsl(.07,1,.55,.35 + night*.3) : hsl(.12,1,.55,.16 + night*.3));
-        }
+            for (const o of orbs)
+            {
+                if (!orbSeen(o, rz)) continue;
+                glow(orbBob(o), o.cell ? 3 : o.tyre ? 2.6 : o.air ? 1.9 : 1.6,
+                    o.cell ? hsl(.52,1,.6,.6 + night*.3) : o.tyre ? hsl(.07,1,.55,.35 + night*.3) : hsl(.12,1,.55,.16 + night*.3));
+            }
+        });
     }
 }
 function collectOrbs()
@@ -3858,7 +3964,7 @@ function updateEffects(dt)
     const inBerm = ride && px > ride.x0 && px < ride.x1 && (px < ride.x0 + ride.T || px > ride.x1 - ride.T) || !ride && abs(bankAt(px)) > .15;
     if (riding && grounded)
         rate = (snowy ? 3.2 : 2)*sp + (landVis ? abs(landVis)*120 : 0) + (inBerm ? abs(leanV)*260 : 0) + (turboT > 0 ? 40 : 0) + (braking ? 160 : 0);
-    dust.emitRate = min(rate, 320);
+    dust.emitRate = min(rate, 160);
     if (snowy) { dust.colorStartA = hsl(.6,.15,.97,.75); dust.colorStartB = hsl(.6,.2,.9,.6); }
     else { dust.colorStartA = hsl(.08,.3,.55,.6); dust.colorStartB = hsl(.09,.25,.45,.5); }
     dust.colorEndA = dust.colorStartA.scale(1, 0); dust.colorEndB = dust.colorStartB.scale(1, 0);
@@ -3900,16 +4006,41 @@ function dustBurst(x, y, count)
 // drop the resolution and shadow detail on phones that cannot hold the frame rate
 // looked at soon after the start and often at first, on the summit as well as riding, so a slow phone is on the
 // lighter settings within a second or two; one that is very slow drops two steps at once
-let quality = 3, qualityT = 0, qualityLooks = 0;
+// how finely the screen is drawn: 3 full, 2 a lower pixel ratio, 1 lower again with smaller shadows, 0 no shadows.
+// Stepped down when the frames run slow on average, or when one in twenty runs long (a hiccup that keeps coming
+// back); stepped back up after a good while with room to spare, though not after it has had to come down a few times
+const PHONE = /iPhone|iPad|Android/i.test(navigator.userAgent) || navigator.maxTouchPoints > 1 && /Mac/.test(navigator.platform || '');
+let quality = 3, qualityT = 0, qualityLooks = 0, qualityGood = 0, qualityDrops = 0;
+const frameGaps = new Float32Array(120);
+let frameGapI = 0, frameLast = 0;
+function noteFrame()
+{
+    const t = performance.now();
+    if (frameLast) frameGaps[frameGapI++ % frameGaps.length] = t - frameLast;
+    frameLast = t;
+}
+function applyQuality()
+{
+    setCanvasPixelRatio(quality == 3 ? min(window.devicePixelRatio || 1, 1.6) : quality == 2 ? min(window.devicePixelRatio || 1, 1.2) : 1);
+    render3D.shadowMapSize = quality >= 2 && !PHONE ? 2048 : 1024;
+    render3D.shadows = quality > 0;
+}
 function adaptQuality(dt)
 {
     if ((qualityT += dt) < (qualityLooks < 4 ? 1.2 : 3) || state != 'ride' && state != 'title') return;
     qualityT = 0; ++qualityLooks;
-    if (!(averageFPS > 0 && averageFPS < 45 && quality > 0)) return;
-    quality = max(0, quality - (averageFPS < 28 ? 2 : 1));
-    setCanvasPixelRatio(quality == 3 ? min(window.devicePixelRatio || 1, 1.6) : quality == 2 ? min(window.devicePixelRatio || 1, 1.2) : 1);
-    if (quality <= 1) render3D.shadowMapSize = 1024;
-    if (quality == 0) render3D.shadows = false;
+    const g = Array.from(frameGaps).filter(v=> v > 0).sort((a, b)=> a - b), p95 = g.length > 30 ? g[floor(g.length*.95)] : 0;
+    if (quality > 0 && (averageFPS > 0 && averageFPS < 45 || p95 > 24))
+    {
+        quality = max(0, quality - (averageFPS > 0 && averageFPS < 28 ? 2 : 1));
+        qualityGood = 0; ++qualityDrops;
+        perfMark(8); applyQuality();
+    }
+    else if (quality < 3 && qualityDrops < 3 && averageFPS > 57 && p95 > 0 && p95 < 18.5 && ++qualityGood >= 4)
+    {
+        ++quality; qualityGood = 0;
+        perfMark(8); applyQuality();
+    }
 }
 
 // ---------- forks: the line picked with a swipe before the split is taken at it, and scored at the merge
@@ -4250,8 +4381,8 @@ function drawHUD()
     if (state == 'ride' && (boostT > 0 || turboT > 0 || legT > 0)) drawSpeedLines(W, H, turboT > 0 ? 1 : max(clamp01(boostT*1.5), legT > 0 ? .7 : 0));
 
     // distance down the mountain, and the score
-    txt(floor(dist).toLocaleString() + ' m', 14, top + 20, 32, '#fff', 'left', 900);
-    txt(score.toLocaleString(), 14, top + 50, 18, 'rgba(255,255,255,.9)', 'left', 800);
+    txt(fmt(floor(dist)) + ' m', 14, top + 20, 32, '#fff', 'left', 900);
+    txt(fmt(score), 14, top + 50, 18, 'rgba(255,255,255,.9)', 'left', 800);
     drawGear(20, top + 74, 7.5, '#ffc93a');
     txt('' + orbsGot, 32, top + 74, 15, '#ffe9a0', 'left', 800);
 
@@ -4278,7 +4409,7 @@ function drawHUD()
     {
         const s = comboNames.slice(-3).join(' + ');
         txt(s, W/2, comboY, fitSize(s, 24*sc, wide), '#ffd23a', 'center', 900);
-        txt(comboPts.toLocaleString() + (combo > 1 ? '  x' + min(combo, 10) : ''), W/2, comboY + 28*sc, 20*sc, '#fff', 'center', 900);
+        txt(fmt(comboPts) + (combo > 1 ? '  x' + min(combo, 10) : ''), W/2, comboY + 28*sc, 20*sc, '#fff', 'center', 900);
         if (grounded)
         {
             const w = 120*clamp01(comboT/2.2);
@@ -4306,7 +4437,7 @@ function drawHUD()
         const a = clamp01(min(bankMsg.t*6, (2.2 - bankMsg.t)*3)), pop = 1 + .3*max(0, 1 - bankMsg.t*5), by = tall ? band - 4 : H*.25 + mo;
         ctx.globalAlpha = a;
         txt(bankMsg.title, W/2, by, 30*sc*pop, '#ffd23a', 'center', 900);
-        txt('+' + bankMsg.total.toLocaleString(), W/2, by + 32*sc, 22*sc, '#fff', 'center', 900);
+        txt('+' + fmt(bankMsg.total), W/2, by + 32*sc, 22*sc, '#fff', 'center', 900);
         ctx.globalAlpha = 1;
     }
     messages.forEach((m, i)=>
@@ -4536,7 +4667,7 @@ function drawTitle(W, H, top, bottom)
         }
         if (best.dist)
         {
-            const b = 'BEST  ' + best.dist.toLocaleString() + ' m   ·   ' + best.score.toLocaleString() + (best.combo ? '   ·   COMBO ' + best.combo.toLocaleString() : '');
+            const b = 'BEST  ' + fmt(best.dist) + ' m   ·   ' + fmt(best.score) + (best.combo ? '   ·   COMBO ' + fmt(best.combo) : '');
             txt(b, W/2, y - 16, fitSize(b, 14, W - 30, 700), 'rgba(255,255,255,.9)', 'center', 700);
         }
     }
@@ -4891,7 +5022,8 @@ function toggleMusic()
     mus.out.gain.cancelScheduledValues(now);
     mus.out.gain.setValueAtTime(mus.out.gain.value, now);
     mus.out.gain.linearRampToValueAtTime(musicOn ? MUSIC_LEVEL : 0, now + (musicOn ? .3 : .4));
-    if (musicOn) { mus.bar = 0; mus.t = now + .1; }
+    if (mus.src) { mus.src.stop(now + .5); mus.src = null; }
+    if (musicOn) { mus.bar = 0; mus.t = now + .1; musicPrepare(); }
 }
 function audioUnlock()
 {
@@ -4948,12 +5080,21 @@ function soundLoops(ac, dest)
     o1.connect(f); o2.connect(h); h.connect(f); f.connect(g); g.connect(dest);
     o1.start(); o2.start();
     L.motor = {o1, o2, g};
+    L.last = new Map;
     return L;
 }
 // how loud and bright each is: s holds how fast the rider is going and what they are on
 function soundLoopsSet(L, now, s)
 {
-    const set = (param, v, tc=.07)=> param.setTargetAtTime(v, now, tc), speed = s.speed;
+    // a parameter is only given a new target when it has moved by more than a couple of percent: every change is an
+    // event on the audio thread's timeline, and Safari is slow with many of them
+    const set = (param, v, tc=.07)=>
+    {
+        const was = L.last.get(param);
+        if (was !== undefined && abs(v - was) <= max(.002, abs(was)*.02)) return;
+        L.last.set(param, v);
+        param.setTargetAtTime(v, now, tc);
+    }, speed = s.speed;
     set(L.roll.gain.gain, s.onGround ? clamp01(speed/12)*(s.deck ? .5 : s.snow ? .2 : .32) : 0);
     set(L.roll.filter.frequency, s.deck ? 90 + speed*10 : 110 + speed*18);
     set(L.grit.gain.gain, s.skid ? .18 : s.onGround ? clamp01(speed/14)*(s.deck ? .02 : s.snow ? .12 : .08) : 0);
@@ -4974,6 +5115,7 @@ function audioInit()
     {
         au = soundLoops(audioContext, audioMasterGain);
         mus = makeMusic(audioContext, audioMasterGain, musicOn);
+        if (musicOn) musicPrepare();
     }
     catch(e) { au = undefined; }
 }
@@ -4986,10 +5128,12 @@ function audioUpdate()
         return;
     }
     const now = audioContext.currentTime, riding = state == 'ride', speed = riding ? hypot(vx, vy) : 0;
+    musicUpdate(now);
+    // every other frame is plenty for sounds that glide to where they are going
+    if (frame % 2) return;
     soundLoopsSet(au, now, {riding, speed, onGround: riding && (grounded || !!grinding?.deck), deck: riding && !!grinding?.deck,
         snow: surfNow == S_SNOW, skid: riding && braking && grounded, air: !grounded, boost: boostT > 0,
         grinding: riding && grinding && !grinding.deck, turbo: riding && turboT > 0});
-    musicUpdate(now);
 }
 
 // ---------- the tune: big beat, after the Crystal Method's High Roller. A breakbeat at 112 beats a minute with a
@@ -5024,7 +5168,7 @@ function drive(ac, k)
 // the music's own mix, into dest: the drums through a filter (opened up over the intro), a little drive and a hard
 // compressor; the bass through its own drive; the hook with an echo; a pad's filter for the breakdown; all of it
 // glued by a last compressor; and a bus for the jingles
-function makeMusic(ac, dest, on=true)
+function makeMusic(ac, dest, on=true, hookDest)
 {
     const m = {ac, bar: 0, t: ac.currentTime + .3}, chain = (...n)=> { for (let i = 1; i < n.length; ++i) n[i - 1].connect(n[i]); return n[0]; };
     const comp = (threshold, ratio)=> { const c = ac.createDynamicsCompressor(); c.threshold.value = threshold; c.knee.value = 8; c.ratio.value = ratio; c.attack.value = .004; c.release.value = .12; return c; };
@@ -5037,10 +5181,13 @@ function makeMusic(ac, dest, on=true)
     const loud = v=> { const g = ac.createGain(); g.gain.value = v; return g; };
     m.drums = chain(ac.createGain(), m.drumLP, drive(ac, 1.6), comp(-22, 4), loud(1.5), m.mix);
     m.bass = chain(ac.createGain(), drive(ac, 2.4), lp(2600), m.mix);
-    m.lead = chain(ac.createGain(), m.mix);
+    const hookTo = hookDest || m.mix;
+    m.lead = chain(ac.createGain(), hookTo);
     const delay = ac.createDelay(1), fb = ac.createGain(), send = ac.createGain();
     delay.delayTime.value = STEP*3; fb.gain.value = .3; send.gain.value = .25;
-    chain(m.lead, send, delay, fb, delay); delay.connect(m.mix);
+    chain(m.lead, send, delay, fb, delay); delay.connect(hookTo);
+    // where the rendered loop plays in, the band and the hook apart
+    m.loopBand = chain(ac.createGain(), m.out); m.loopHook = chain(ac.createGain(), m.out);
     m.padLP = lp(500); m.padLP.connect(m.mix);
     // the jingles ring out over the music
     m.fx = ac.createGain(); m.fx.gain.value = 4.5; m.fx.connect(dest);
@@ -5180,8 +5327,46 @@ function musicTick(m, until)
 }
 function musicUpdate(now)
 {
-    if (!mus || !musicOn) return;
+    if (!mus || !musicOn || mus.src) return;
+    // played live, a bar at a time, until the rendered loop is ready to take over at the start of a bar
+    if (mus.loop) { musicPlayLoop(mus, mus.t, mus.bar); return; }
     musicTick(mus, now + .4);
+}
+// the music rendered once, the intro and one time round, so playing it costs one node rather than a hundred every
+// bar: the band on one channel and the hook on the other, so the hook can still come and go. Laid out a couple of
+// bars at a time between frames, then rendered off the main thread
+async function renderMusicLoop()
+{
+    const sr = 32000, bars = 4 + LOOP.length + 1, ac = new OfflineAudioContext(2, ceil(bars*BAR*sr), sr), merge = ac.createChannelMerger(2);
+    const band = ac.createGain(), hook = ac.createGain();
+    band.connect(merge, 0, 0); hook.connect(merge, 0, 1); merge.connect(ac.destination);
+    const m = makeMusic(ac, band, true, hook);
+    m.out.gain.cancelScheduledValues(0); m.out.gain.setValueAtTime(1, 0);
+    m.t = 0;
+    for (let k = 0; k < bars; ++k)
+    {
+        musicBar(m, m.t); m.t += BAR;
+        if (k % 2) await new Promise(r=> setTimeout(r));
+    }
+    perfMark(4);
+    return ac.startRendering();
+}
+// the rendered loop playing from bar k (the intro is the first four) at time t, the live bars stopping there
+function musicPlayLoop(m, t, k)
+{
+    const now = m.ac.currentTime;
+    while (t < now + .02) { t += BAR; ++k; }
+    const src = m.ac.createBufferSource(), split = m.ac.createChannelSplitter(2);
+    src.buffer = m.loop; src.loop = true; src.loopStart = 4*BAR; src.loopEnd = (4 + LOOP.length)*BAR;
+    src.connect(split); split.connect(m.loopBand, 0); split.connect(m.loopHook, 1);
+    src.start(t, k < 4 ? k*BAR : (4 + (k - 4) % LOOP.length)*BAR);
+    m.src = src;
+}
+// rendered as soon as the music is on, once
+function musicPrepare()
+{
+    if (!mus || mus.loopP || typeof OfflineAudioContext == 'undefined') return;
+    mus.loopP = renderMusicLoop().then(b=> { mus.loop = b; }, ()=> {});
 }
 
 // a recording of the tune with the ride's sounds and some jingles over it, for listening to outside the game: a WAV
@@ -5299,7 +5484,7 @@ function gameInit()
     render3D.setSky(hsl(.6,.55,.42), hsl(.57,.35,.8), hsl(.3,.2,.4));
     render3D.setFog(140, 2600);
     render3D.shadows = true;
-    render3D.shadowMapSize = 2048;
+    render3D.shadowMapSize = PHONE ? 1024 : 2048;
     render3D.shadowRange = 55;
     render3D.smoothShading = true;
     render3D.camera.far = 6000;
@@ -5314,7 +5499,63 @@ function gameInit()
     const join = new URLSearchParams(location.search).get('join');
     if (join) { menu = 'two'; mpJoin(join); }
 }
-function gameRenderPost() { drawHUD(); }
+function gameRenderPost() { noteFrame(); drawHUD(); }
+
+// ---------- a performance meter, for checking on a phone (?perf=1): how long each frame took from the last, the
+// game's own work in it (the ride and the camera, then handing the scene to the renderer), the worst of the last
+// few seconds, and marks where a chunk of the world was finished, more track was laid out, the music was
+// rendered or the quality changed
+const PERF = /[?&]perf=1\b/.test(location.search) ? {n: 300, i: 0, gap: [], logic: [], draw: [], mark: [], last: 0, upd: 0, rs: 0, ev: 0} : null;
+const perfMark = k=> { if (PERF) PERF.ev |= k; };
+const PERF_MARKS = [[1, '#ffd23a', 'chunk'], [2, '#5ff', 'track'], [4, '#f7a', 'music'], [8, '#fff', 'quality']];
+function perfTimed(f, post)
+{
+    return ()=>
+    {
+        const t = performance.now();
+        f();
+        const e = performance.now();
+        PERF.upd += e - t;
+        if (post) PERF.rs = e;
+    };
+}
+function perfRenderPost()
+{
+    const t = performance.now(), P = PERF, k = P.i++ % P.n;
+    // from the end of the update to here is the scene handed to the renderer
+    P.gap[k] = P.last ? t - P.last : 16.7; P.logic[k] = P.upd; P.draw[k] = P.rs ? t - P.rs : 0; P.mark[k] = P.ev;
+    P.last = t; P.upd = P.rs = P.ev = 0;
+    gameRenderPost();
+    drawPerf();
+}
+function drawPerf()
+{
+    const P = PERF, W = mainCanvasSize.x, H = mainCanvasSize.y, n = min(P.i, P.n), w = min(W - 20, 300), h = 64;
+    const x0 = 10, y0 = H - safeBottom - 150;
+    ctx.save();
+    ctx.fillStyle = 'rgba(8,10,16,.72)'; ctx.fillRect(x0 - 4, y0 - 34, w + 8, h + 40);
+    const ms = v=> min(h, v*h/50), bw = w/P.n;
+    // 16.7 and 33 ms lines
+    ctx.fillStyle = 'rgba(255,255,255,.35)'; ctx.fillRect(x0, y0 + h - ms(16.7), w, 1); ctx.fillRect(x0, y0 + h - ms(33.3), w, 1);
+    let worst = 0, hitch = 0, lsum = 0, lmax = 0, dsum = 0, dmax = 0;
+    const gaps = [];
+    for (let j = 0; j < n; ++j)
+    {
+        const k = (P.i - n + j) % P.n, g = P.gap[k], l = P.logic[k], d = P.draw[k], x = x0 + j*bw;
+        ctx.fillStyle = g > 25 ? '#ff5a4a' : g > 18 ? '#ffc23a' : '#5fdc7a';
+        ctx.fillRect(x, y0 + h - ms(g), max(1, bw - .3), ms(g));
+        ctx.fillStyle = '#3a8cff'; ctx.fillRect(x, y0 + h - ms(l + d), max(1, bw - .3), ms(l + d));
+        ctx.fillStyle = '#b07aff'; ctx.fillRect(x, y0 + h - ms(l), max(1, bw - .3), ms(l));
+        for (const [bit, c] of PERF_MARKS) if (P.mark[k] & bit) { ctx.fillStyle = c; ctx.fillRect(x, y0 - 4 - 3*Math.log2(bit), max(2, bw), 2); }
+        worst = max(worst, g); hitch += g > 25; lsum += l; lmax = max(lmax, l); dsum += d; dmax = max(dmax, d); gaps.push(g);
+    }
+    gaps.sort((a, b)=> a - b);
+    const p95 = gaps[floor(gaps.length*.95)] || 0, f1 = v=> v.toFixed(1);
+    ctx.font = '700 11px ' + FONT; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#fff';
+    ctx.fillText(`${round(averageFPS)} fps   frame p95 ${f1(p95)}  worst ${f1(worst)} ms   hitches ${hitch}   q${quality}`, x0, y0 - 24);
+    ctx.fillText(`logic avg ${f1(lsum/max(1, n))} max ${f1(lmax)}   render avg ${f1(dsum/max(1, n))} max ${f1(dmax)} ms`, x0, y0 - 10);
+    ctx.restore();
+}
 
 
 // ============================================================================
@@ -5776,10 +6017,10 @@ window.__mtb = {
     // a recording of the tune and the ride's sounds, as a WAV file in base64
     audioPreview: (sec, parts)=> audioPreview(sec, parts),
     cel: on=> { if (on !== undefined) setCel(on); return celOn; },
-    music: ()=> ({on: musicOn, bar: mus ? mus.bar : -1, level: mus ? mus.out.gain.value : -1}), toggleMusic: ()=> toggleMusic(),
+    music: ()=> ({on: musicOn, bar: mus ? mus.bar : -1, level: mus ? mus.out.gain.value : -1, rendered: !!mus?.loop, looping: !!mus?.src}), toggleMusic: ()=> toggleMusic(),
 };
 
-engineInit(gameInit, gameUpdate, gameUpdatePost, undefined, gameRenderPost);
+engineInit(gameInit, PERF ? perfTimed(gameUpdate) : gameUpdate, PERF ? perfTimed(gameUpdatePost, true) : gameUpdatePost, undefined, PERF ? perfRenderPost : gameRenderPost);
 })();
 
 </script>

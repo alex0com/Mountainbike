@@ -571,10 +571,12 @@ The ride felt jittery and snappy, and a trick during a turn flew round the bend.
 - **Gone:** BERM RUN scoring, with the berm turns. BERM points on the lines' turn-offs stay.
 
 ## Sound: done
+**The music has been removed.** Rendering it crashed the browser on phones, so the tune, its offline render, the MUSIC button, the N key and the saved setting (`bcr.music`) are gone. The jingles keep their own bus (`makeFx`). The notes on the tune below are kept as a record.
+
 The pedal power's chain sound screeched, and the wind was a loud hiss of static.
 - **First try:** a slow, warm tune with bell chimes. It sounded like an adventure game.
 - **Second try:** a bright chiptune tune. It didn't land either.
-- **Now:** big beat, after the Crystal Method's High Roller, with arcade jingles over it.
+- **Third try:** big beat, after the Crystal Method's High Roller, with arcade jingles over it. Removed since.
 
 - **The tune** (`makeMusic`, `musicBar`): a breakbeat at 112 beats a minute in F minor, scheduled a bar ahead.
   - **The break:** two bars of sixteenths with a little swing: a kick that drops in pitch with a click on the front, a fat snare of noise and tone, ghost snares, and closed and open hats.
@@ -608,11 +610,11 @@ The pedal power's chain sound screeched, and the wind was a loud hiss of static.
   - **The eBike motor:** a soft hum of a low note and its octave, instead of a sawtooth whine.
   - Above 1.5 kHz, where the hiss was, the loops are 28–35 dB quieter than before.
 - **The thumps** (ZzFX): landings, crashes, splashes and grinds, each through a low pass, with no bit crush.
-- **Listening:** `tools/listen.mjs` renders the sound offline to a WAV file (`__mtb.audioPreview`): the tune, the loops at riding speed, and the jingles and thumps over them.
+- **Listening:** `tools/listen.mjs` renders the sound offline to a WAV file (`__mtb.audioPreview`): the loops at riding speed, and the jingles and thumps over them.
   - A check on the rendering: rendered with only the hook, its notes come out at the right pitches. Rendered a part at a time, the drums, bass and hook measure −24, −23 and −27 dB over the hook section.
 
 ## Cel shaded look: done
-A second look for the game, cartoon style, and the default since it was added. It's picked on the menu with CEL ON / CEL OFF under the MUSIC button.
+A second look for the game, cartoon style, and the default since it was added. It's picked on the menu with CEL ON / CEL OFF under the SND button.
 - **Turning it on:**
   - The choice is remembered (`bcr.cel`), and L on a keyboard toggles it.
   - A link with `?look=cel` or `?look=smooth` opens the game in that look without changing what was saved.
@@ -913,7 +915,7 @@ Two kinds, so the players have different powers and different choices:
     node tools/sim.mjs [--seeds 20] [--km 5] [--flips back|front] [--tricks] [--lanes rand|up|down|main] [--turbo] [--json out.json] [--salt n] [--game other.html] [--bike 0..3]
     node tools/shot.mjs --seed 3 --at 800 --view SIDE --zoom 1 --day .3 --out shot.png [--size 390x844] [--js "code"] [--game other.html]
     node tools/smooth.mjs [--view 3/4] [--size 900x600] [--seeds 3] [--km 2] [--lanes main] [--game other.html]
-    node tools/listen.mjs [--out sound.wav] [--seconds 44] [--parts "music loops jingles thumps"] [--game other.html]
+    node tools/listen.mjs [--out sound.wav] [--seconds 44] [--parts "loops jingles thumps"] [--game other.html]
 
 Open the game with `?perf=1` for the frame meter, and `?look=smooth` or `?look=cel` to pick the look (cel is the default).
 

@@ -4398,7 +4398,6 @@ addEventListener('keydown', e=>
     else if (e.code == 'KeyC') camNextView();
     else if (e.code == 'KeyV') camNextZoom();
     else if (e.code == 'KeyM') toggleSound();
-    else if (e.code == 'KeyN') toggleMusic();
     else if (e.code == 'KeyL') setCel(!celOn);
 });
 addEventListener('keyup', e=>
@@ -4507,8 +4506,6 @@ function drawHUD()
 
     const bw = 58, bh = 38;
     button(W - 12 - bw, top, bw, bh, soundOn ? 'SND' : 'MUTE', toggleSound, !soundOn);
-    // (on a tall screen in a ride with a friend, below the round box and the room's SHARE button)
-    musicButton(W, W < H && mp.code ? top + 116 : top + bh + 7);
     camButtons(W, top, bw, bh);
 
     // the combo in progress, with the time left to keep it going. On a tall screen the rider is in the middle, so
@@ -4795,9 +4792,8 @@ function drawTitle(W, H, top, bottom)
         }
     }
     button(W - 12 - 58, top, 58, 38, soundOn ? 'SND' : 'MUTE', toggleSound, !soundOn);
-    musicButton(W, top + 45);
     // the cel shaded look, on or off
-    button(W - 12 - 76, top + 84, 76, 32, celOn ? 'CEL ON' : 'CEL OFF', ()=> setCel(!celOn), celOn, 11);
+    button(W - 12 - 76, top + 45, 76, 32, celOn ? 'CEL ON' : 'CEL OFF', ()=> setCel(!celOn), celOn, 11);
     camButtons(W, top, 58, 38);
 }
 // the garage: the bike, with how it rides, and the kit, each picked with arrows either side, the rider shown above
@@ -4907,8 +4903,6 @@ function drawAbout(W, H, top, bottom)
 }
 const CONTACT = 'alex@alex0.com';
 // the view and the zoom, next to the sound button
-// the music on or off, under the sound button, lit while it plays
-const musicButton = (W, y)=> button(W - 12 - 76, y, 76, 32, musicOn ? 'MUSIC ON' : 'MUSIC OFF', toggleMusic, musicOn, 11);
 function camButtons(W, top, bw, bh)
 {
     button(W - 12 - bw*2 - 7, top, bw, bh, camZoomName(), camNextZoom, false, 12);
@@ -4966,12 +4960,10 @@ function drawResults(W, H)
 }
 
 // ============================================================================
-// SOUND - a big beat tune; the tyres and the air going by, soft and low; arcade blips and jingles for pickups,
-// boosts, tricks and crashes; and thumps for landings
+// SOUND - the tyres and the air going by, soft and low; arcade blips and jingles for pickups, boosts, tricks and
+// crashes; and thumps for landings. No music: rendering it brought phone browsers down
 // ============================================================================
-let au, soundOn = true, musicOn = false;
-// the music is off until the player turns it on, and stays as they left it
-try { musicOn = localStorage.getItem('bcr.music') == '1'; } catch(e) {}
+let au, fx, soundOn = true;
 // thumps and splashes: ZzFX one shots, each through a low pass so nothing hisses or crackles
 const SFX = {
     land:     new Sound([.5,.1,70,.006,.03,.2,4,1.2,-8,,,,,4,,,.04,.5,,,-1000]),
@@ -5075,7 +5067,7 @@ const JINGLES = {
     // a crash: the wah, wah, wahhh of losing a life
     crash:    (d, t)=> { note(d, 61, t + .2, .2, .045, {wave: .5, cut: 1500}); note(d, 60, t + .45, .2, .045, {wave: .5, cut: 1500}); note(d, 59, t + .7, .55, .045, {to: 53, wave: .5, cut: 1500, vib: 45, release: .15}); },
     click:    (d, t)=> blip(d, 89, t, .03, .03, {wave: .5})};
-function jingle(name, v=0, m=mus, t)
+function jingle(name, v=0, m=fx, t)
 {
     if (!m) return;
     JINGLES[name](m.fx, t ?? m.ac.currentTime + .005, v);
@@ -5134,19 +5126,6 @@ function toggleSound()
 {
     soundOn = !soundOn;
     setSoundVolume(soundOn ? .5 : 0);
-}
-// the music on or off: on, it starts from the top, the drums coming in through the filter
-function toggleMusic()
-{
-    musicOn = !musicOn;
-    try { localStorage.setItem('bcr.music', musicOn ? '1' : '0'); } catch(e) {}
-    if (!mus) return;
-    const now = mus.ac.currentTime;
-    mus.out.gain.cancelScheduledValues(now);
-    mus.out.gain.setValueAtTime(mus.out.gain.value, now);
-    mus.out.gain.linearRampToValueAtTime(musicOn ? MUSIC_LEVEL : 0, now + (musicOn ? .3 : .4));
-    if (mus.src) { mus.src.stop(now + .5); mus.src = null; }
-    if (musicOn) { mus.bar = 0; mus.t = now + .1; musicPrepare(); }
 }
 function audioUnlock()
 {
@@ -5237,8 +5216,7 @@ function audioInit()
     try
     {
         au = soundLoops(audioContext, audioMasterGain);
-        mus = makeMusic(audioContext, audioMasterGain, musicOn);
-        if (musicOn) musicPrepare();
+        fx = makeFx(audioContext, audioMasterGain);
     }
     catch(e) { au = undefined; }
 }
@@ -5251,7 +5229,6 @@ function audioUpdate()
         return;
     }
     const now = audioContext.currentTime, riding = state == 'ride', speed = riding ? hypot(vx, vy) : 0;
-    musicUpdate(now);
     // every other frame is plenty for sounds that glide to where they are going
     if (frame % 2) return;
     soundLoopsSet(au, now, {riding, speed, onGround: riding && (grounded || !!grinding?.deck), deck: riding && !!grinding?.deck,
@@ -5259,253 +5236,22 @@ function audioUpdate()
         grinding: riding && grinding && !grinding.deck, turbo: riding && turboT > 0});
 }
 
-// ---------- the tune: big beat, after the Crystal Method's High Roller. A breakbeat at 112 beats a minute with a
-// little swing, through a saturated, squashed drum bus; a gritty acid bass riff in F minor; a dark sawtooth hook;
-// and a breakdown that builds back into the drop. Four bars of filtered drums to start, then round: the groove,
-// the hook, the riff moving through the chords, and the breakdown. About a minute each time round.
-let mus;
-const BEAT = 60/112, BAR = 4*BEAT, STEP = BEAT/4, SWING = .1, MUSIC_LEVEL = .6;
-// the break, two bars of sixteenths: x a kick; S a snare, g a ghost of one; h a closed hat, o an open one
-const BREAK = [
-    {k: 'x......x..x.....', s: '....S....g..S..g', h: 'h.h.h.h.h.h.h.h.'},
-    {k: 'x.x.......x..x..', s: '....S..g....S.g.', h: 'h.h.h.o.h.h.h.o.'}];
-// the bass riff over two bars: [sixteenth, MIDI, sixteenths long, accented]
-const RIFF = [[0, 41, 3, 1], [3, 41, 1, 0], [6, 44, 2, 1], [8, 41, 2, 0], [10, 51, 2, 1], [12, 48, 2, 0], [14, 46, 2, 0],
-    [16, 41, 3, 1], [19, 41, 1, 0], [22, 44, 2, 1], [24, 46, 2, 0], [26, 48, 1, 1], [27, 46, 1, 0], [28, 44, 2, 0], [30, 39, 2, 1]];
-// the hooks over it: [sixteenth, MIDI, sixteenths long]
-const HOOK = [[0, 72, 2], [3, 72, 1], [4, 68, 2], [7, 65, 3], [16, 75, 2], [19, 72, 2], [22, 70, 1], [23, 68, 1], [24, 67, 6]];
-const HOOK_B = [[0, 77, 3], [3, 75, 1], [4, 72, 2], [6, 70, 2], [8, 72, 6], [16, 73, 3], [19, 72, 1], [20, 70, 2], [22, 68, 2], [24, 67, 6]];
-// the sections and how many bars each: the third moves the riff through F, F, Db and Eb, two bars each
-const INTRO = {drums: true, sweep: true};
-const SONG = [[{drums: true, bass: true}, 8], [{drums: true, bass: true, hook: HOOK}, 8],
-    [{drums: true, bass: true, hook: HOOK_B, move: [0, 0, -4, -2]}, 8], [{breakdown: true}, 4]];
-const LOOP = SONG.flatMap(([sec, n])=> Array.from({length: n}, (_, bar)=> [sec, bar]));
-// a soft clip, for grit without fizz
-function drive(ac, k)
+// ---------- the jingles' own bus, loud enough to ring out over the ride
+function makeFx(ac, dest)
 {
-    const w = ac.createWaveShaper(), n = 1024, c = new Float32Array(n);
-    for (let i = 0; i < n; ++i) { const x = i/(n - 1)*2 - 1; c[i] = Math.tanh(k*x)/Math.tanh(k); }
-    w.curve = c;
-    return w;
-}
-// the music's own mix, into dest: the drums through a filter (opened up over the intro), a little drive and a hard
-// compressor; the bass through its own drive; the hook with an echo; a pad's filter for the breakdown; all of it
-// glued by a last compressor; and a bus for the jingles
-function makeMusic(ac, dest, on=true, hookDest)
-{
-    const m = {ac, bar: 0, t: ac.currentTime + .3}, chain = (...n)=> { for (let i = 1; i < n.length; ++i) n[i - 1].connect(n[i]); return n[0]; };
-    const comp = (threshold, ratio)=> { const c = ac.createDynamicsCompressor(); c.threshold.value = threshold; c.knee.value = 8; c.ratio.value = ratio; c.attack.value = .004; c.release.value = .12; return c; };
-    const lp = f=> { const b = ac.createBiquadFilter(); b.type = 'lowpass'; b.frequency.value = f; return b; };
-    m.out = ac.createGain(); m.out.connect(dest);
-    m.out.gain.setValueAtTime(0, ac.currentTime);
-    m.out.gain.linearRampToValueAtTime(on ? MUSIC_LEVEL : 0, ac.currentTime + 1);
-    m.mix = chain(ac.createGain(), comp(-14, 2.5), m.out);
-    m.drumLP = lp(18000);
-    const loud = v=> { const g = ac.createGain(); g.gain.value = v; return g; };
-    m.drums = chain(ac.createGain(), m.drumLP, drive(ac, 1.6), comp(-22, 4), loud(1.5), m.mix);
-    m.bass = chain(ac.createGain(), drive(ac, 2.4), lp(2600), m.mix);
-    const hookTo = hookDest || m.mix;
-    m.lead = chain(ac.createGain(), hookTo);
-    const delay = ac.createDelay(1), fb = ac.createGain(), send = ac.createGain();
-    delay.delayTime.value = STEP*3; fb.gain.value = .3; send.gain.value = .25;
-    chain(m.lead, send, delay, fb, delay); delay.connect(hookTo);
-    // where the rendered loop plays in, the band and the hook apart
-    m.loopBand = chain(ac.createGain(), m.out); m.loopHook = chain(ac.createGain(), m.out);
-    m.padLP = lp(500); m.padLP.connect(m.mix);
-    // the jingles ring out over the music
-    m.fx = ac.createGain(); m.fx.gain.value = 4.5; m.fx.connect(dest);
-    // a second of white noise for the snares and the hats
-    const sr = ac.sampleRate;
-    m.noise = ac.createBuffer(1, sr, sr);
-    const d = m.noise.getChannelData(0);
-    for (let i = 0; i < d.length; ++i) d[i] = Math.random()*2 - 1;
-    return m;
-}
-// the drums: a kick that drops in pitch with a click on the front, a fat snare of noise and tone, and the hats
-function hiss(m, t, len, vol, type, freq, q=.7)
-{
-    const ac = m.ac, src = ac.createBufferSource(), f = ac.createBiquadFilter(), g = ac.createGain();
-    src.buffer = m.noise; f.type = type; f.frequency.value = freq; f.Q.value = q;
-    g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(.001, t + len);
-    src.connect(f); f.connect(g); g.connect(m.drums);
-    src.start(t, Math.random()*.7); src.stop(t + len + .01);
-}
-function drumKick(m, t, vol=.75)
-{
-    const ac = m.ac, o = ac.createOscillator(), g = ac.createGain();
-    o.frequency.setValueAtTime(130, t); o.frequency.exponentialRampToValueAtTime(42, t + .09);
-    g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(.001, t + .3);
-    o.connect(g); g.connect(m.drums); o.start(t); o.stop(t + .32);
-    hiss(m, t, .012, vol*.2, 'highpass', 2000);
-}
-function drumSnare(m, t, vol=1)
-{
-    hiss(m, t, vol < .5 ? .09 : .2, .3*vol, 'bandpass', 1800, .6);
-    const ac = m.ac, o = ac.createOscillator(), g = ac.createGain();
-    o.type = 'triangle'; o.frequency.setValueAtTime(210, t); o.frequency.exponentialRampToValueAtTime(165, t + .1);
-    g.gain.setValueAtTime(.3*vol, t); g.gain.exponentialRampToValueAtTime(.001, t + .13);
-    o.connect(g); g.connect(m.drums); o.start(t); o.stop(t + .15);
-}
-const drumHat = (m, t, vol, open)=> hiss(m, t, open ? .22 : .04, vol, 'highpass', 7500);
-// the bass: a sawtooth through a resonant low pass that snaps shut after each note, the acid squelch, with a sine
-// an octave under it for weight
-function bassNote(m, midi, t, len, accent)
-{
-    const ac = m.ac, o = ac.createOscillator(), sub = ac.createOscillator(), f = ac.createBiquadFilter(), g = ac.createGain(), sg = ac.createGain();
-    o.type = 'sawtooth'; o.frequency.value = midiHz(midi); sub.frequency.value = midiHz(midi - 12);
-    f.type = 'lowpass'; f.Q.value = 6;
-    f.frequency.setValueAtTime(accent ? 2000 : 1200, t); f.frequency.exponentialRampToValueAtTime(230, t + .14 + len*.3);
-    const end = t + len, vol = accent ? .17 : .14;
-    for (const [gg, v] of [[g, vol], [sg, vol*.45]])
-    {
-        gg.gain.setValueAtTime(0, t); gg.gain.linearRampToValueAtTime(v, t + .004);
-        gg.gain.setValueAtTime(v, max(t + .004, end - .015)); gg.gain.linearRampToValueAtTime(0, end + .03);
-    }
-    o.connect(f); f.connect(g); g.connect(m.bass); sub.connect(sg); sg.connect(m.bass);
-    for (const x of [o, sub]) { x.start(t); x.stop(end + .05); }
-}
-// the hook: two sawtooths a few cents apart and a square an octave down, through a low pass that closes as it sounds
-function leadNote(m, midi, t, len)
-{
-    const ac = m.ac, f = ac.createBiquadFilter(), g = ac.createGain(), end = t + len;
-    f.type = 'lowpass'; f.Q.value = 3;
-    f.frequency.setValueAtTime(3400, t); f.frequency.exponentialRampToValueAtTime(1100, t + .3);
-    g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(.18, t + .006);
-    g.gain.setValueAtTime(.18, max(t + .006, end - .02)); g.gain.linearRampToValueAtTime(0, end + .08);
-    for (const [type, k, cents, v] of [['sawtooth', 1, -9, 1], ['sawtooth', 1, 9, 1], ['square', .5, 0, .35]])
-    {
-        const o = ac.createOscillator(), h = ac.createGain();
-        o.type = type; o.frequency.value = midiHz(midi)*k; o.detune.value = cents; h.gain.value = v;
-        o.connect(h); h.connect(f); o.start(t); o.stop(end + .1);
-    }
-    f.connect(g); g.connect(m.lead);
-}
-// the breakdown's pad: a dark F minor chord, two sawtooths a note, swelling in through the pad's low pass
-function padChord(m, notes, t, len)
-{
-    const ac = m.ac, g = ac.createGain();
-    g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(.05, t + 1.5);
-    g.gain.setValueAtTime(.05, t + len - .3); g.gain.linearRampToValueAtTime(0, t + len);
-    for (const n of notes) for (const cents of [-12, 12])
-    {
-        const o = ac.createOscillator();
-        o.type = 'sawtooth'; o.frequency.value = midiHz(n); o.detune.value = cents;
-        o.connect(g); o.start(t); o.stop(t + len + .05);
-    }
-    g.connect(m.padLP);
-}
-// a riser into the drop: a sawtooth climbing two octaves, opening up and growing
-function riser(m, t, len)
-{
-    const ac = m.ac, o = ac.createOscillator(), f = ac.createBiquadFilter(), g = ac.createGain();
-    o.type = 'sawtooth';
-    o.frequency.setValueAtTime(midiHz(53), t); o.frequency.exponentialRampToValueAtTime(midiHz(77), t + len);
-    f.type = 'lowpass'; f.Q.value = 2;
-    f.frequency.setValueAtTime(500, t); f.frequency.exponentialRampToValueAtTime(5000, t + len);
-    g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(.07, t + len); g.gain.linearRampToValueAtTime(0, t + len + .03);
-    o.connect(f); f.connect(g); g.connect(m.mix); o.start(t); o.stop(t + len + .05);
-}
-// one bar of the song at time t
-function musicBar(m, t)
-{
-    const k = m.bar++, [sec, bar] = k < 4 ? [INTRO, k] : LOOP[(k - 4) % LOOP.length], at = i=> t + i*STEP + (i % 2 ? SWING*STEP : 0);
-    // the drums come in through a filter that opens over the intro
-    if (sec.sweep && bar == 0) { m.drumLP.frequency.setValueAtTime(300, t); m.drumLP.frequency.exponentialRampToValueAtTime(18000, t + 4*BAR); }
-    if (sec.drums)
-    {
-        const p = BREAK[bar % 2];
-        for (let i = 0; i < 16; ++i)
-        {
-            if (p.k[i] == 'x') drumKick(m, at(i));
-            if (p.s[i] != '.') drumSnare(m, at(i), p.s[i] == 'S' ? 1 : .3);
-            if (p.h[i] != '.') drumHat(m, at(i), p.h[i] == 'o' ? .09 : i % 4 ? .07 : .045, p.h[i] == 'o');
-            else if (sec.bass) drumHat(m, at(i), .02);
-        }
-    }
-    if (sec.bass)
-    {
-        const shift = sec.move ? sec.move[bar >> 1] : 0;
-        for (const [s, n, len, acc] of RIFF) if ((s >> 4) == bar % 2) bassNote(m, n + shift, at(s & 15), len*STEP - .02, acc);
-    }
-    if (sec.hook) for (const [s, n, len] of sec.hook) if ((s >> 4) == bar % 2) leadNote(m, n, at(s & 15), len*STEP - .03);
-    if (sec.breakdown)
-    {
-        // the pad and a held bass while the drums drop out to hats, then a riser and a snare roll into the drop
-        if (bar == 0)
-        {
-            padChord(m, [53, 56, 60, 63], t, 4*BAR);
-            m.padLP.frequency.setValueAtTime(400, t); m.padLP.frequency.exponentialRampToValueAtTime(2600, t + 4*BAR);
-        }
-        bassNote(m, 41, t, BAR*.9, 0);
-        for (let i = 0; i < 16; i += 2) drumHat(m, at(i), .04);
-        if (bar == 2) riser(m, t, 2*BAR);
-        if (bar == 3) for (let i = 0; i < 16; ++i) drumSnare(m, t + i*STEP, .15 + .55*i/15);
-    }
-}
-// the bars due before until, laid out ahead of time; after a stall it picks up from now rather than catching up
-function musicTick(m, until)
-{
-    if (m.t < m.ac.currentTime) m.t = m.ac.currentTime + .05;
-    while (m.t < until) { musicBar(m, m.t); m.t += BAR; }
-}
-function musicUpdate(now)
-{
-    if (!mus || !musicOn) return;
-    // riding, the hook only plays from the second level of flow up; on the menu it always does
-    const hook = state != 'ride' || flowLevel >= 2 ? 1 : 0;
-    if (hook != mus.hookOn) { mus.hookOn = hook; for (const g of [mus.lead, mus.loopHook]) g.gain.setTargetAtTime(hook, now, .4); }
-    if (mus.src) return;
-    // played live, a bar at a time, until the rendered loop is ready to take over at the start of a bar
-    if (mus.loop) { musicPlayLoop(mus, mus.t, mus.bar); return; }
-    musicTick(mus, now + .4);
-}
-// the music rendered once, the intro and one time round, so playing it costs one node rather than a hundred every
-// bar: the band on one channel and the hook on the other, so the hook can still come and go. Laid out a couple of
-// bars at a time between frames, then rendered off the main thread
-async function renderMusicLoop()
-{
-    const sr = 32000, bars = 4 + LOOP.length + 1, ac = new OfflineAudioContext(2, ceil(bars*BAR*sr), sr), merge = ac.createChannelMerger(2);
-    const band = ac.createGain(), hook = ac.createGain();
-    band.connect(merge, 0, 0); hook.connect(merge, 0, 1); merge.connect(ac.destination);
-    const m = makeMusic(ac, band, true, hook);
-    m.out.gain.cancelScheduledValues(0); m.out.gain.setValueAtTime(1, 0);
-    m.t = 0;
-    for (let k = 0; k < bars; ++k)
-    {
-        musicBar(m, m.t); m.t += BAR;
-        if (k % 2) await new Promise(r=> setTimeout(r));
-    }
-    perfMark(4);
-    return ac.startRendering();
-}
-// the rendered loop playing from bar k (the intro is the first four) at time t, the live bars stopping there
-function musicPlayLoop(m, t, k)
-{
-    const now = m.ac.currentTime;
-    while (t < now + .02) { t += BAR; ++k; }
-    const src = m.ac.createBufferSource(), split = m.ac.createChannelSplitter(2);
-    src.buffer = m.loop; src.loop = true; src.loopStart = 4*BAR; src.loopEnd = (4 + LOOP.length)*BAR;
-    src.connect(split); split.connect(m.loopBand, 0); split.connect(m.loopHook, 1);
-    src.start(t, k < 4 ? k*BAR : (4 + (k - 4) % LOOP.length)*BAR);
-    m.src = src;
-}
-// rendered as soon as the music is on, once
-function musicPrepare()
-{
-    if (!mus || mus.loopP || typeof OfflineAudioContext == 'undefined') return;
-    mus.loopP = renderMusicLoop().then(b=> { mus.loop = b; }, ()=> {});
+    const fx = ac.createGain();
+    fx.gain.value = 4.5; fx.connect(dest);
+    return {ac, fx};
 }
 
-// a recording of the tune with the ride's sounds and some jingles over it, for listening to outside the game: a WAV
-// file as base64. parts picks what is in it, any of music, loops, jingles and thumps
-async function audioPreview(seconds=40, parts='music loops jingles thumps')
+// a recording of the ride's sounds with some jingles over them, for listening to outside the game: a WAV file as
+// base64. parts picks what is in it, any of loops, jingles and thumps
+async function audioPreview(seconds=40, parts='loops jingles thumps')
 {
     const sr = 44100, ac = new OfflineAudioContext(1, seconds*sr, sr), master = ac.createGain(), mute = ac.createGain();
     master.gain.value = .5; master.connect(ac.destination); mute.gain.value = 0; mute.connect(ac.destination);
     const has = k=> parts.includes(k) ? master : mute;
-    const m = makeMusic(ac, has('music')), L = soundLoops(ac, has('loops'));
-    m.fx.disconnect(); m.fx.connect(has('jingles'));
-    musicTick(m, seconds);
+    const m = makeFx(ac, has('jingles')), L = soundLoops(ac, has('loops'));
     // riding along at a steady 16 m/s, a bit faster in the middle
     for (let t = 0; t < seconds; t += .25)
     {
@@ -5637,11 +5383,10 @@ function gameRenderPost() { noteFrame(); drawHUD(); }
 
 // ---------- a performance meter, for checking on a phone (?perf=1): how long each frame took from the last, the
 // game's own work in it (the ride and the camera, then handing the scene to the renderer), the worst of the last
-// few seconds, and marks where a chunk of the world was finished, more track was laid out, the music was
-// rendered or the quality changed
+// few seconds, and marks where a chunk of the world was finished, more track was laid out or the quality changed
 const PERF = /[?&]perf=1\b/.test(location.search) ? {n: 300, i: 0, gap: [], logic: [], draw: [], mark: [], last: 0, upd: 0, rs: 0, ev: 0} : null;
 const perfMark = k=> { if (PERF) PERF.ev |= k; };
-const PERF_MARKS = [[1, '#ffd23a', 'chunk'], [2, '#5ff', 'track'], [4, '#f7a', 'music'], [8, '#fff', 'quality']];
+const PERF_MARKS = [[1, '#ffd23a', 'chunk'], [2, '#5ff', 'track'], [8, '#fff', 'quality']];
 function perfTimed(f, post)
 {
     return ()=>
@@ -6085,7 +5830,7 @@ window.__mtb = {
         OX, OY, night, dayT, boostT, grindDist, seed, ride: ride ? ride.lane : 0, riderZ: riderZ(), battery, turboT, turbos, lines, proLines,
         forkAhead: !!forkAhead, laneWant, view: camViewName(), zoom: camZoomName(), splits: splits.map(s=> [s.x0|0, s.x1|0, s.kinds.join('+')]),
         lineDetail: splits.map(s=> Object.values(s.lines).map(b=> b.kind + ':' + (b.what || 'plain')).join(' ')),
-        dropCam, braking, sentIt, camLift, baseY, wheelOffF, wheelOffR, musicBar: mus ? mus.bar : -1, flow, flowLevel, drops: feats.filter(f=> f.type == 'dropin').map(f=> [f.x0|0, f.x1|0, f.landX|0, +f.F.toFixed(1)]),
+        dropCam, braking, sentIt, camLift, baseY, wheelOffF, wheelOffR, flow, flowLevel, drops: feats.filter(f=> f.type == 'dropin').map(f=> [f.x0|0, f.x1|0, f.landX|0, +f.F.toFixed(1)]),
         bike: bike.name, kit: KITS[kitI][0], menu, trickCounts, tricksTotal, legBoosts, supers, sends, cellsGot, legT, superOn, tyres, tyresGot, brakeFuel, slides, cased, sketchy, perfects, maxAir, topSpeed, style: style?.name, styleT, airHist, hardLandings, combosBanked, multSum, queued: trickQueued, swipeCount, mainHeld, secondHeld}),
     start: ()=> startRide(),
     // steps the game by hand, a 60th of a second at a time, with the engine paused
@@ -6156,7 +5901,7 @@ window.__mtb = {
     // a recording of the tune and the ride's sounds, as a WAV file in base64
     audioPreview: (sec, parts)=> audioPreview(sec, parts),
     cel: on=> { if (on !== undefined) setCel(on); return celOn; },
-    music: ()=> ({on: musicOn, bar: mus ? mus.bar : -1, level: mus ? mus.out.gain.value : -1, rendered: !!mus?.loop, looping: !!mus?.src}), toggleMusic: ()=> toggleMusic(),
+
 };
 
 engineInit(gameInit, PERF ? perfTimed(gameUpdate) : gameUpdate, PERF ? perfTimed(gameUpdatePost, true) : gameUpdatePost, undefined, PERF ? perfRenderPost : gameRenderPost);

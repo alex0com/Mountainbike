@@ -100,14 +100,14 @@ const CEL_GLSL = 'uniform float celShade;' +
 // the ink: dark lines where the depth of the scene jumps or folds, fading out into the distance, and the colours a
 // touch richer
 const CEL_INK = `        // ink lines
-        vec2 _o = 2.2 / iResolution.xy;
+        vec2 _o = 1. / iResolution.xy;
         if (LJS_HAS_DEPTH)
         {
             float _d = sceneDepth(uv);
             float _dx = abs(sceneDepth(uv + vec2(_o.x, 0)) + sceneDepth(uv - vec2(_o.x, 0)) - 2. * _d);
             float _dy = abs(sceneDepth(uv + vec2(0, _o.y)) + sceneDepth(uv - vec2(0, _o.y)) - 2. * _d);
             float _e = smoothstep(.012, .03, max(_dx, _dy) / max(abs(_d), 1e-6));
-            c.rgb = mix(c.rgb, vec3(.07, .05, .1), .9 * _e * (1. - smoothstep(150., 1400., _d)));
+            c.rgb = mix(c.rgb, vec3(.07, .05, .1), .8 * _e * (1. - smoothstep(150., 1400., _d)));
         }
         c.rgb = clamp(mix(vec3(dot(c.rgb, vec3(.3, .59, .11))), c.rgb, 1.15), 0., 1.);`;
 function setCel(on, keep=true)

@@ -623,7 +623,7 @@ A second look for the game, cartoon style, picked on the menu with CEL ON / CEL 
   - **The sky's light from above and the ground's from below:** two tones.
   - **Highlights:** a hard edge.
 - **Ink** (`CEL_INK`, a post process):
-  - **The lines:** dark lines about 2 px wide wherever the scene's depth jumps or folds. That covers the rider and bike, rocks, trees, ridgelines and the trail's edges.
+  - **The lines:** thin dark lines, about a pixel, wherever the scene's depth jumps or folds. That covers the rider and bike, rocks, trees, ridgelines and the trail's edges. They were twice that at first, which was too heavy.
   - **Fading:** the lines fade out between 150 m and 1.4 km, so the far mountains stay soft.
   - **Colour:** a touch more saturation.
   - Sprockets glow in this look, so the ink round their teeth doesn't dull them.

@@ -700,6 +700,26 @@ Speed as a reward: riding clean fills a FLOW meter beside the battery, and the m
   - Score per km with tricks went from 176k to 248k.
   - `tools/smooth.mjs` is unchanged.
 
+## Speed, and no forced slow-downs: done
+The game slowed the rider by itself on the ledges before drop-ins and on the run-in to chutes, so the brake did nothing useful. And the speed from flow wasn't felt; only turbo and pedal power were.
+
+- **Drop-ins** (main trail and the PRO line):
+  - **No forced slow-down.** On the ledge the brakes are free (`brakeZones`, `freeBrakeAt`): the BRAKE button shows and pulses, uses no tyres, and costs no flow.
+  - **Braked:** a precise drop onto the steep top of the landing, and the close drop-in camera comes in.
+  - **Ridden in fast:** a huge send. The camera stays as it is. The landing eases off (to 0.62 on the main trail, 0.42 on the PRO line) and runs on past where the fastest rider comes down (`extendLanding`, `flightLand`, `landingFar`).
+- **Chutes (LOW line) and canyon gaps:**
+  - The run-in no longer brakes (`up` paces): it only pedals a slower rider up to the speed that clears the chasm.
+  - A faster rider keeps their speed and flies further, onto a landing that runs on for them.
+- **The drop-in camera** only zooms in when the rider has slowed on the way in: below the drop's speed plus 4 m/s, latched until the landing.
+- **Speed:**
+  - **Base:** top speed 22 → 24 m/s, cruise 9.5 → 11.
+  - **Flow on the ground:** up to +7 m/s at full flow, like pedal power, with a stronger push (5 m/s² at full).
+  - **Flow in the air:** the speed allowed rises by up to 4 m/s, so a fast takeoff isn't braked mid-air.
+  - **Pickups** feed the flow now: sprockets +0.012, cells +0.03, tyres +0.03.
+  - **Feel:** the view widens up to 14% with flow, and speed lines show from level 2.
+  - **Landings for the speed:** every built landing (jumps, booters, decks, drop-ins, gaps) is laid out for the fastest flight, `V_FLY` = 32.2 m/s (it was 24). Kicker and booter landings are longer, and blocks of lines are longer (400–440 m with a PRO line, otherwise 330–380 m) so each line's feature still fits.
+- **The autopilot** brakes for half the drop-ins and sends the rest.
+
 ## Next: proposals
 - **More fun:**
   - pumping (hold on a downslope for speed);

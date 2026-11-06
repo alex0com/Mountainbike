@@ -195,7 +195,10 @@ function ridged(n, x, y, octaves)
 // ahead of the rider: runs with rollers, kickers, cliffs, gaps, rock gardens and
 // grind rails, with orbs to collect and a marker every 500 m
 // ============================================================================
-const DX = .5, GRADE_AVG = .3, G_RIDE = 9.81*1.05, G_AIR = 13.5, POP = 8, VMIN = 9.5, VMAX = 22;
+const DX = .5, GRADE_AVG = .3, G_RIDE = 9.81*1.05, G_AIR = 13.5, POP = 8, VMIN = 11, VMAX = 24;
+// the flow's share of the speed: up to FLOW_V more on the ground at full flow, FLOW_AIR more allowed in the air; and
+// the fastest a flight can be, on the quickest bike at full flow, which every built landing is laid out for
+const FLOW_V = 7, FLOW_AIR = 4, V_FLY = VMAX + 3 + 1.2 + FLOW_AIR;
 const S_DIRT = 0, S_GRASS = 1, S_ROCK = 2, S_SNOW = 3, S_WOOD = 4;
 const BIOMES = ['snow', 'alpine', 'forest', 'autumn', 'desert'];
 const BIOME_NAMES = {snow: 'SNOWFIELDS', alpine: 'ALPINE MEADOWS', forest: 'PINE FOREST', autumn: 'AUTUMN WOODS', desert: 'RED ROCK CANYON'};
@@ -424,7 +427,7 @@ function addMegaBooter(d)
     return f;
 }
 // a kicker with its own landing, steeper than the trail, laid along the flight off it
-function addJump(H, L, G, type='kicker', orbV=ORB_V, knuckle=.5, v=VMAX + 2, spare=12)
+function addJump(H, L, G, type='kicker', orbV=ORB_V, knuckle=.5, v=V_FLY, spare=12)
 {
     const f = addKicker(H, L, type), a = atan(f.lipSlope);
     // a knuckle off the lip, a short one or a whole step down, then the landing all the way past that flight
@@ -437,8 +440,10 @@ function addJump(H, L, G, type='kicker', orbV=ORB_V, knuckle=.5, v=VMAX + 2, spa
     return f;
 }
 
-// a drop-in, Rampage style: the trail runs out onto a flat ledge where the rider checks their speed,
-// then rolls off a sheer face, or pops off it with a tap at the lip, onto a long steep landing far below
+// a drop-in, Rampage style: the trail runs out onto a flat ledge where the rider can check their speed with the
+// brakes (free here), then rolls off a sheer face, or pops off it with a tap at the lip, onto a long steep landing far
+// below. Braked, it is a drop onto the steep top of the landing; ridden in fast it is a huge send, and the landing
+// eases off and runs on down the mountain past where the fastest rider comes down
 function addDropIn(d)
 {
     addRun(12, min(genGrade, .3), 0);
@@ -450,11 +455,29 @@ function addDropIn(d)
     for (let t = 0; t < 6 && y > -F - G*x; t += 1/60) { x += vx/60; vy -= G_AIR/60; y += vy/60; }
     genBase = lipY - F; genGrade = G;
     addRun(x + 14, G, 0);
+    extendLanding(lipX, lipY, atan(-.05), .62);
     const f = {type: 'dropin', x0, x1: lipX, x2: genX(), lipY, lipSlope: -.05, F, v, landX: lipX + x, orbV: v};
     feats.push(f);
-    paces.push({x0: x0 + 2, x1: lipX + .5, v, f});
+    brakeZones.push({x0: x0 - 20, x1: lipX + .5});
     addRun(24, gradeTarget(d), 0);
     return f;
+}
+// where a flight from (x, y) comes down on the ground laid out so far, or on its slope carried on past the end
+function flightLand(x, y, vx, vy)
+{
+    const gx = genX(), gy = ys[ys.length - 1];
+    for (let t = 0; t < 9; t += 1/60)
+    {
+        x += vx/60; vy -= G_AIR/60; y += vy/60;
+        const g = x <= gx ? groundY(x) : gy - genGrade*(x - gx);
+        if (y <= g && !(x <= gx && gapAt(x))) return x;
+    }
+    return x;
+}
+// a built landing carried on, easing to grade G, until past where the fastest flight off its lip (popped) comes down
+function extendLanding(lipX, lipY, a, G)
+{
+    for (let k = 0; k < 40 && flightLand(lipX, lipY, V_FLY*cos(a), V_FLY*sin(a) + POP) > genX() - 14; ++k) addRun(10, G, 0);
 }
 // a step-down: a small kicker off a ledge onto a landing a few metres lower, no chasm between
 const addStepDown = d=> addJump(1 + rnd()*.4, 4.5 + rnd(), .5 + rnd()*.1, 'stepdown', 14, 3 + rnd()*3 + d*2);
@@ -484,8 +507,9 @@ function addStairs(d)
     return f;
 }
 
-// a canyon gap: the trail sets the rider's speed on the run in, then a big kicker throws them across a wide chasm.
-// It is as wide as a rider at that speed, rolling off without a pop, clears with room to spare.
+// a canyon gap: a big kicker throws the rider across a wide chasm. It is as wide as a rider at a set speed, rolling off
+// without a pop, clears with room to spare; a slower one is pedalled up to that speed on the run in, a faster one
+// keeps their speed and flies on down the landing, laid out for the fastest
 function addCanyon(d)
 {
     const v = 15 + rnd()*3;
@@ -493,7 +517,7 @@ function addCanyon(d)
     const z0 = genX();
     addRun(26, .2, 0);
     const f = addKicker(1.9 + rnd()*.4, 6, 'canyon');
-    paces.push({x0: z0, x1: f.x1 + .2, v, hold: true, f});
+    paces.push({x0: z0, x1: f.x1 + .2, v, hold: true, up: true, f});
     const drop = 3 + rnd()*3, G = .55, a = atan(f.lipSlope), vx = v*cos(a), vy = v*sin(a);
     const clears = W=> { const t = (W + 3)/vx; return vy*t - .5*G_AIR*t*t > -drop - 3*G + .8; };
     let W = 26;
@@ -507,6 +531,7 @@ function addCanyon(d)
     for (let t = 0; t < 6 && y > -drop - G*max(0, x - f.W); t += 1/60) { x += wx/60; wy -= G_AIR/60; y += wy/60; }
     genBase = f.landY; genGrade = G;
     addRun(max(12, x - f.W + 12), G, 0);
+    extendLanding(f.x1, f.lipY, a, .45);
     f.landX = f.x1 + x;
     addRun(16, gradeTarget(d), 0);
     return f;
@@ -524,7 +549,7 @@ function addDeck(d)
     r.y1 = railY(r, r.x1);
     const h = r.y1 - groundY(r.x1);
     // the landing, far enough down the slope for a fast rider off the end
-    let x = 0, y = 0, vx = VMAX + 2, vy = 0;
+    let x = 0, y = 0, vx = V_FLY, vy = 0;
     for (let t = 0; t < 6 && y > -h - G*x; t += 1/60) { x += vx/60; vy -= G_AIR/60; y += vy/60; }
     addRun(x + 10, G, 0);
     rails.push(r);
@@ -540,7 +565,10 @@ function addDeck(d)
 
 // where the trail asks the rider to slow down, and to what speed
 const paceAt = x=> paces.find(p=> x > p.x0 && x < p.x1 && onLine(p, x));
-const vFloor = x=> { const p = paceAt(x); return p ? p.v*.85 : VMIN + 1.5*flow; };
+// where the brakes are free, tyres or no tyres: the run in to a drop-in, where how fast to go is the rider's call
+let brakeZones = [];
+const freeBrakeAt = x=> brakeZones.some(z=> x > z.x0 && x < z.x1 && onLine(z, x));
+const vFloor = x=> { const p = paceAt(x); return p ? p.v*.85 : VMIN + 2*flow; };
 
 // a little lip then a drop onto a steep landing
 function addCliff(d)
@@ -658,7 +686,7 @@ function placeSigns()
 function launchReach(f)
 {
     if (!f) return -1;
-    const a = atan(f.lipSlope), v = max(VMAX + 4, (f.sendV || 0) + 2), gx = genX(), gy = ys[ys.length - 1];
+    const a = atan(f.lipSlope), v = max(V_FLY + 1, (f.sendV || 0) + 2), gx = genX(), gy = ys[ys.length - 1];
     let x = f.x1, y = f.lipY, vx = v*cos(a) - sin(a)*POP*.5, vy = v*sin(a) + POP;
     for (let t = 0; t < 6; t += 1/60)
     {
@@ -731,7 +759,8 @@ function openFork(d)
     if (x0 > 500 && rnd() < .4 + clamp01(x0/6000)*.35) kinds.push('pro');
     if (rnd() < .7) kinds.push('high');
     if (rnd() < .7 || !kinds.length) kinds.push('low');
-    openSplit = {x0, kinds, len: kinds.includes('pro') ? 300 + rnd()*40 : 250 + rnd()*50};
+    // (long enough for each line's feature to land a rider who rides it fast, and climb back after)
+    openSplit = {x0, kinds, len: kinds.includes('pro') ? 400 + rnd()*40 : 330 + rnd()*50};
 }
 function closeFork(d)
 {
@@ -803,6 +832,7 @@ function buildLine(sp, kind)
             orbArc(f);
         }
         for (const p of plan.paces) { p.line = b; paces.push(p); }
+        for (const z of plan.brakes) { z.line = b; brakeZones.push(z); }
     }
     const busy = x=> brGap(b, x) || plan?.feats.some(f=> x > f.x0 - 3 && x < (f.x2 ?? f.x1) + 2);
     // in sets of up to ten, a new set after anything that breaks the row
@@ -821,7 +851,7 @@ const brGap = (b, x)=> b.gap[clampV(round((x - b.x0)/DX), 0, b.gap.length - 1)];
 function lineFeatures(b, lane, kind, sc)
 {
     const n = lane.length, off = new Float32Array(n), add = new Float32Array(n), gap = new Uint8Array(n);
-    const ka = ceil((b.T + 8)/DX), kb = n - 1 - ceil((b.T + 8)/DX), feats = [], paces = [];
+    const ka = ceil((b.T + 8)/DX), kb = n - 1 - ceil((b.T + 8)/DX), feats = [], paces = [], brakes = [];
     let k = ka, o = 0, what = '';
     const X = k=> b.x0 + k*DX, Y = k=> lane[k] + off[k] + add[k], bg = k=> (lane[k - 1] - lane[k])/DX, slopeAt = k=> (Y(k) - Y(k - 1))/DX;
     // how steeply the smoothed path falls on average here: landings are steeper than it by a set amount
@@ -847,6 +877,14 @@ function lineFeatures(b, lane, kind, sc)
         const a = atan(slope);
         let x = 0, y = 0, vx = v*cos(a), vy = v*sin(a) + pop;
         for (let t = 0; t < 6 && y > -drop - G*x; t += 1/60) { x += vx/60; vy -= G_AIR/60; y += vy/60; }
+        return x;
+    };
+    // the same onto a landing falling at G for L1 metres and at G2 beyond: where the fastest rider comes down
+    const landingFar = (slope, pop, drop, G, L1, G2)=>
+    {
+        const a = atan(slope);
+        let x = 0, y = 0, vx = V_FLY*cos(a), vy = V_FLY*sin(a) + pop;
+        for (let t = 0; t < 9 && y > -drop - (x < L1 ? G*x : G*L1 + G2*(x - L1)); t += 1/60) { x += vx/60; vy -= G_AIR/60; y += vy/60; }
         return x;
     };
     // the last stretch brings the offset back to nothing, downhill all the way: a line below its path climbs back
@@ -887,10 +925,12 @@ function lineFeatures(b, lane, kind, sc)
         run((40 + rnd()*10)*sc, .03);
         const lip = k - 1, v = 7 + rnd(), F = max(5, o + 1 + rnd()*3*sc), G = clampV(fall + .6, .75, 1);
         o -= F;
-        const xl = landing(slopeAt(lip), v + 2, POP, F, G);
+        const xl = landing(slopeAt(lip), v + 2, POP, F, G), xf = landingFar(slopeAt(lip), POP, F, G, xl + 10, .42);
         run(xl + 10, G, false);
+        // ridden in without braking, a long way further down, the landing easing off to get there
+        if (xf > xl) run(xf - xl + 6, .42);
         feats.push({type: 'dropin', x0: X(l0), x1: X(lip), x2: X(k), F, v, landX: X(lip) + xl, orbV: v});
-        paces.push({x0: X(l0) + 4, x1: X(lip) + .5, v});
+        brakes.push({x0: X(l0) - 10, x1: X(lip) + .5});
         what = 'DROP-IN ' + round(F) + 'm';
     }
     else if (kind == 'high')
@@ -930,14 +970,17 @@ function lineFeatures(b, lane, kind, sc)
         const g0 = k;
         for (const e = k + round(W/DX); k < e; ++k) { off[k] = o; add[k] = -40; gap[k] = 1; }
         o -= drop;
-        const xl = landing(slopeAt(lip), v + 1, POP, 1.9 + drop + .3*W, G);
-        run(max(14, xl - W + 10), G, false);
+        const xl = landing(slopeAt(lip), v + 1, POP, 1.9 + drop + .3*W, G), L1 = max(14, xl - W + 10);
+        const xf = landingFar(slopeAt(lip), POP, 1.9 + drop + .3*W, G, W + L1, .5);
+        run(L1, G, false);
+        if (xf - W > L1 - 4) run(xf - W - L1 + 14, .5);
         feats.push({type: 'gap', x0: X(s0), x1: X(lip), x2: X(g0 + round(W/DX)) + DX*.5, W, orbV: v});
-        paces.push({x0: X(p0), x1: X(lip) + .2, v, hold: true});
+        // a slower rider is pedalled up to the speed that clears it; a faster one keeps their speed
+        paces.push({x0: X(p0), x1: X(lip) + .2, v, hold: true, up: true});
         what = 'CHUTE + GAP';
     }
     if (!recover()) return null;
-    return {off, add, gap, feats, paces, what};
+    return {off, add, gap, feats, paces, brakes, what};
 }
 
 function genSection()
@@ -1044,7 +1087,7 @@ function trackInit(s)
     NA = makeNoise(rnd); NB = makeNoise(rnd); NC = makeNoise(rnd); NV = makeNoise(rnd);
     ys = []; gapF = []; rails = []; rocks = []; orbs = []; signs = []; feats = []; gaps = []; pendingArcs = [];
     splits = []; openSplit = null; lastSplitEnd = 0; nextSplitGap = 0; ride = null; noSign = []; gullies = []; arches = [];
-    nextSignX = 500; lastLaunch = null; nextBooterX = 200; nextDropX = 450; nextCanyonX = 900; nextMegaX = 380; nextTyreX = 140; paces = [];
+    nextSignX = 500; lastLaunch = null; nextBooterX = 200; nextDropX = 450; nextCanyonX = 900; nextMegaX = 380; nextTyreX = 140; paces = []; brakeZones = [];
     // the summit: the back of the peak rising from the left, a flat top to stand on, then the drop in
     genBase = -14; genGrade = -.6;
     pushY(genBase);
@@ -1066,7 +1109,7 @@ function trackPrune(x)
     orbs = orbs.filter(o=> o.x > x);
     splits = splits.filter(s=> s.x1 > x - 60); noSign = noSign.filter(f=> f.x1 > x);
     gullies = gullies.filter(g=> g.x1 > x - 80); arches = arches.filter(a=> a.x > x - 80);
-    paces = paces.filter(p=> p.x1 > x);
+    paces = paces.filter(p=> p.x1 > x); brakeZones = brakeZones.filter(z=> z.x1 > x);
 }
 
 // ============================================================================
@@ -2093,7 +2136,7 @@ const TURBO_LEN = 6, TURBO_V = 14;
 // and slide, for BRAKE_LEN seconds of holding them on, a little at a time or all at once
 const BRAKE_LEN = 5;
 let tyres = 0, brakeFuel = 0, brakeHeld = false, slideT = 0;
-const brakeOn = ()=> brakeHeld && brakeFuel > 0 && state == 'ride' && grounded && !grinding;
+const brakeOn = ()=> brakeHeld && (brakeFuel > 0 || freeBrakeAt(px)) && state == 'ride' && grounded && !grinding;
 // a full set of battery cells supercharges the motor: longer and harder than the turbo, and off the mega booter it
 // sends the rider at SEND_V. A full set of sprockets is leg power: a few seconds of hard pedalling
 const SUPER_LEN = 10, SEND_V = 30, LEG_LEN = 3;
@@ -2101,8 +2144,8 @@ let superOn = false, superFlight = false, legT = 0, supers = 0, legBoosts = 0, s
 // tricks score more on a boost
 // flow: riding clean fills it (landings, tricks, combos, lines, berms, sets), a sketchy or hard landing, the brakes
 // or a crash empty it, and it ebbs away slowly on its own, so it has to be earned the whole way. Each quarter of it
-// is a level; the more of it, the quicker the bike on the ground (by up to FLOW_SPEED) and the more tricks score
-const FLOW_SPEED = .15, FLOW_LEVELS = [.25, .5, .75, .97], FLOW_COLORS = ['#5fe3c8', '#ffd23a', '#ff9a3a', '#ff4fa0'];
+// is a level; the more of it, the quicker the bike (by up to FLOW_V on the ground) and the more tricks score
+const FLOW_LEVELS = [.25, .5, .75, .97], FLOW_COLORS = ['#5fe3c8', '#ffd23a', '#ff9a3a', '#ff4fa0'];
 let flow = 0, flowLevel = 0, flowShown = 0;
 function addFlow(d)
 {
@@ -2118,6 +2161,8 @@ function addFlow(d)
     while (flowLevel > 0 && flow < FLOW_LEVELS[flowLevel - 1] - .08) --flowLevel;
 }
 const boostMult = ()=> (turboT > 0 && superOn ? 2 : legT > 0 ? 1.5 : 1)*(1 + flowLevel*.125);
+// the fastest the bike goes in the air: the motor only drives the wheels, so speed over that bleeds away
+const airCap = ()=> superFlight ? SEND_V + 2 : VMAX + 3 + bike.speed + FLOW_AIR*flow;
 function supercharge()
 {
     turboT = SUPER_LEN; superOn = true; battery = 1; ++supers;
@@ -2196,10 +2241,11 @@ function stepGround(dt)
     // never slower than a cruise, unless the brakes are on: then nearly to a stop, and a slow bike gets going again
     // over a second or so rather than all at once
     const lo = state != 'ride' ? 0 : brakeOn() ? 3 : min(vFloor(px), max(3, sp) + 9*dt);
-    if (!pace) a += 2.5*flow;
-    sp = clampV(sp + a*dt, lo, (VMAX + bike.speed)*(1 + FLOW_SPEED*flow) + (mp.draft ? 2 : 0) + (turboT > 0 ? TURBO_V : legT > 0 ? 6 : boostT > 0 ? 4 : 0));
-    if (brakeOn()) { sp = max(3, sp - 24*dt); slideT += dt; addFlow(-.2*dt); }
-    braking = !!pace && sp > pace.v;
+    if (!pace) a += 5*flow;
+    sp = clampV(sp + a*dt, lo, VMAX + bike.speed + FLOW_V*flow + (mp.draft ? 2 : 0) + (turboT > 0 ? TURBO_V : legT > 0 ? 6 : boostT > 0 ? 4 : 0));
+    // (the free brakes before a drop-in cost no flow: slowing for it is riding it well)
+    if (brakeOn()) { sp = max(3, sp - 24*dt); slideT += dt; if (!freeBrakeAt(px)) addFlow(-.2*dt); }
+    braking = !!pace && !pace.up && sp > pace.v;
     // a pace sets its speed evenly over the way in, so the rider has it a few metres before the end however fast
     // they came: a fast one brakes down to it, and on the run in to a gap a slow one pedals up to it
     if (pace)
@@ -2344,7 +2390,7 @@ function stepAir(dt)
     const v = hypot(vx, vy), k = .0018*v*dt;
     vx -= vx*k; vy -= vy*k;
     // the motor only drives the wheels: turbo speed bleeds away in the air, so a flight carries no farther than the trail allows for
-    const cap = superFlight ? SEND_V + 2 : VMAX + 3 + bike.speed;
+    const cap = airCap();
     if (vx > cap) vx += (cap - vx)*damp(4, dt);
     const ox = px, oy = py;
     px += vx*dt; py += vy*dt;
@@ -3407,7 +3453,7 @@ function rideStep(dt)
     runTime += dt; hintT += dt;
     topSpeed = max(topSpeed, hypot(vx, vy));
     // the brakes: their grip runs down while they are on, and a long enough slide scores when it ends
-    if (brakeOn()) brakeFuel = max(0, brakeFuel - dt);
+    if (brakeOn() && !freeBrakeAt(px)) brakeFuel = max(0, brakeFuel - dt);
     else if (slideT > 0) { if (slideT > .6) { addTrick('POWER SLIDE', min(500, round(slideT*90/10)*10)); ++slides; } slideT = 0; }
     offGroundT = grounded || grinding ? 0 : offGroundT + dt;
     if (jumpQueued) jumpBuf = .15;
@@ -3633,7 +3679,7 @@ function gameUpdatePost()
     const vfov = portrait ? 1.0 : .78;
     // (the view widens a touch with the flow, for the speed, around the framing worked out for the usual width)
     flowShown += ((state == 'ride' ? flow : 0) - flowShown)*damp(1.5, dt);
-    cam.fov = vfov*(1 + .08*flowShown);
+    cam.fov = vfov*(1 + .14*flowShown);
     // the chosen view's numbers, eased toward so a change of view glides
     // the summit is always framed three quarter on, and the camera glides into the chosen view on the drop in
     const v = state == 'title' ? CAM_VIEWS['3/4'] : CAM_VIEWS[camView[portrait ? 'p' : 'l']] || CAM_VIEWS['3/4'], o = portrait ? 0 : 1;
@@ -3644,7 +3690,11 @@ function gameUpdatePost()
     const fy = state == 'crash' || state == 'results' ? rag.y : grounded || grinding ? baseY : py;
     // a drop-in: from rolling onto the ledge until just after the landing the camera comes in close, low and
     // round in front of the rider, so the drop and the tricks off it fill the screen, then eases back out
-    const di = state == 'ride' || state == 'crash' ? feats.find(f=> (f.type == 'dropin' || f.type == 'canyon') && fx > (f.camX0 ?? f.x0) - 6 && fx < f.landX + 6 && onLine(f, fx)) : null;
+    // Only when the rider has slowed for it on the way in, braking on the ledge: ridden in fast, it is a big send and
+    // the camera stays as it is
+    const near = state == 'ride' || state == 'crash' ? feats.find(f=> (f.type == 'dropin' || f.type == 'canyon') && fx > (f.camX0 ?? f.x0) - 6 && fx < f.landX + 6 && onLine(f, fx)) : null;
+    if (near && state == 'ride' && fx < near.x1) near.zoom ||= sp < (near.v ?? near.orbV ?? 10) + 4;
+    const di = near?.zoom ? near : null;
     dropR = ramp(dropR, di, 1.8, 2.2, dt); dropCam = sstep(dropR);
     // a canyon gap is framed wider, to see across it
     if (di) dropDist = di.camDist ?? DROP_VIEW.dist[o];
@@ -3947,7 +3997,7 @@ function collectOrbs()
         o.got = true; ++orbStreak;
         if (o.tyre)
         {
-            ++tyresGot; score += 50;
+            ++tyresGot; score += 50; addFlow(.03);
             sfx('tyre');
             new ParticleEmitter3D(W3(o.x, o.y, o.z || 0), .8, .08, 200, PI, undefined,
                 hsl(.07,1,.6), WHITE, hsl(.07,1,.6,0), CLEAR_WHITE, .5, .4, 0, .1, .92, -.002, .1, .4, true);
@@ -3961,6 +4011,7 @@ function collectOrbs()
             continue;
         }
         o.cell ? ++cellsGot : ++orbsGot;
+        addFlow(o.cell ? .03 : .012);
         score += o.cell ? 100 : o.air ? 50 : 20;
         charge(o.cell ? 400 : o.air ? 140 : 80);
         sfx(o.cell ? 'cell' : 'orb', min(orbStreak, 24));
@@ -4108,7 +4159,7 @@ function updateFork(pxWas)
 }
 
 // ---------- creeks, bridges and whoops as the rider meets them, and a word for the big set pieces as they come up
-const FEAT_WORDS = {dropin: ['DROP-IN', 'tap at the lip to send it'], canyon: ['CANYON GAP', 'the trail sets your speed'],
+const FEAT_WORDS = {dropin: ['DROP-IN', 'brake to drop in slow, or send it'], canyon: ['CANYON GAP', 'the trail sets your speed'],
     stairs: ['DROP STAIRS', 'drop off every ledge'], deck: ['DROP DECK', 'roll it out and drop off the end']};
 function updateFeatures(dt, pxWas)
 {
@@ -4135,7 +4186,6 @@ function updateFeatures(dt, pxWas)
             if (px > f.x0 && px < f.x1 && grounded) f.on = (f.on || 0) + dt;
             if (!f.done && px > f.x1) { f.done = true; if (f.on > .4) addTrick('BRIDGE', 100); }
         }
-        if (f.type == 'dropin' && !f.braked && px > f.x0) { f.braked = true; if (sp > f.v + 2) sfx('berm'); }
         if (f.type == 'stairs')
         {
             if (took && px > f.x0 && px < f.x1 + 1) ++f.airs;
@@ -4407,7 +4457,7 @@ function drawHUD()
     ctx.save();
     if (state == 'title') { drawTitle(W, H, top, bottom); ctx.restore(); return; }
 
-    if (state == 'ride' && (boostT > 0 || turboT > 0 || legT > 0 || flowLevel >= 3)) drawSpeedLines(W, H, turboT > 0 ? 1 : max(clamp01(boostT*1.5), legT > 0 ? .7 : 0, flowLevel >= 3 ? .35 + .25*(flowLevel - 3) : 0));
+    if (state == 'ride' && (boostT > 0 || turboT > 0 || legT > 0 || flowLevel >= 2)) drawSpeedLines(W, H, turboT > 0 ? 1 : max(clamp01(boostT*1.5), legT > 0 ? .7 : 0, flowLevel >= 2 ? .3 + .2*(flowLevel - 2) : 0));
 
     // distance down the mountain, and the score
     txt(fmt(floor(dist)) + ' m', 14, top + 20, 32, '#fff', 'left', 900);
@@ -4419,7 +4469,7 @@ function drawHUD()
     drawFlow(82, top + 92);
     drawBoosts(14, top + 116);
     if (state == 'ride' && battery >= 1 && turboT <= 0) drawTurboButton(W, H, bottom);
-    if (state == 'ride' && brakeFuel > 0) drawBrakeButton(W, H, bottom);
+    if (state == 'ride' && (brakeFuel > 0 || freeBrakeAt(px))) drawBrakeButton(W, H, bottom);
     drawMatch(W, H, top, bottom);
     if (state == 'ride' && !mp.code && !mp.ws) button(W - 12 - 58*2 - 7 - 70 - 82, top, 75, 38, 'INVITE', mpHost, false, 12);
     drawTyres(64, top + 74);
@@ -4611,7 +4661,8 @@ function drawTurboButton(W, H, bottom)
 // the brake, on the left: held, not tapped, its ring showing the grip left
 function drawBrakeButton(W, H, bottom)
 {
-    const r = 38, x = r + 18, y = bottom - (W > H ? 70 : 150), on = brakeHeld, f = brakeFuel/BRAKE_LEN;
+    // (full, and pulsing, where the brakes are free)
+    const free = freeBrakeAt(px), r = 38 + (free && !brakeHeld ? 2*sin(time*8) : 0), x = 38 + 18, y = bottom - (W > H ? 70 : 150), on = brakeHeld, f = free ? 1 : brakeFuel/BRAKE_LEN;
     ctx.beginPath(); ctx.arc(x, y, r, 0, TAU);
     ctx.fillStyle = on ? 'rgba(120,30,10,.9)' : 'rgba(40,16,10,.8)'; ctx.fill();
     ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(255,255,255,.25)'; ctx.stroke();
@@ -5482,6 +5533,11 @@ function autopilotInput()
         // rocks lie on the main trail only
         if (!onBranch(px)) for (const r of rocks) if (!r.jumped && r.x > px && r.x - px < lead && r.x - px > 1.5) { jumpQueued = true; r.jumped = true; }
         if (!onBranch(px)) for (const r of rails) if (!r.mount && r.x0 > px && r.x0 - px < sp*.25 + 1) jumpQueued = true;
+        // it brakes for half the drop-ins, as a rider checking their speed would, and sends the rest
+        const bz = brakeZones.find(z=> px > z.x0 && px < z.x1 && onLine(z, px));
+        if (bz && bz.ap === undefined) bz.ap = Math.random() < .5;
+        const wantBrake = !!bz?.ap && sp > 8.5;
+        if (wantBrake || window.__apBrake) { brakeHeld = wantBrake; window.__apBrake = wantBrake; }
         // half the time it pops off the lip of a drop-in
         const di = feats.find(f=> f.type == 'dropin' && px > f.x1 - 2.5 && px < f.x1 && onLine(f, px));
         if (di && !di.ap) { di.ap = true; if (Math.random() < .5) jumpQueued = true; }
@@ -5503,7 +5559,8 @@ function autopilotInput()
     {
         let x = px, y = py, wy = vy, t = 0;
         let wx = vx;
-        while (t < 3 && (y > rideY(x) || t < .05)) { t += 1/60; if (wx > VMAX + 3) wx += (VMAX + 3 - wx)*damp(4, 1/60); x += wx/60; wy -= G_AIR/60; y += wy/60; }
+        const cap = airCap();
+        while (t < 3 && (y > rideY(x) || t < .05)) { t += 1/60; if (wx > cap) wx += (cap - wx)*damp(4, 1/60); x += wx/60; wy -= G_AIR/60; y += wy/60; }
         const clear = !rails.some(r=> x > r.x0 - 2 && x < r.x1 + 2);
         // (a bike that flips slower needs longer)
         window.__flipWanted = window.__flipPilot && t > .95/bike.flip && clear;
@@ -5514,7 +5571,8 @@ function autopilotInput()
     if (window.__trickPilot && !style && !trickQueued && airT > .1 && window.__flightT)
     {
         let x = px, y = py, wx = vx, wy = vy, t = 0;
-        while (t < 3 && y > rideY(x)) { t += 1/60; if (wx > VMAX + 3) wx += (VMAX + 3 - wx)*damp(4, 1/60); x += wx/60; wy -= G_AIR/60; y += wy/60; }
+        const cap = airCap();
+        while (t < 3 && y > rideY(x)) { t += 1/60; if (wx > cap) wx += (cap - wx)*damp(4, 1/60); x += wx/60; wy -= G_AIR/60; y += wy/60; }
         const dir = Math.random()*8 | 0;
         if (t > TRICKS[SWIPE_TRICKS[dir]].dur + .2) airSwipe(dir);
     }

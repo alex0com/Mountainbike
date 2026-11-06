@@ -718,7 +718,12 @@ The game slowed the rider by itself on the ledges before drop-ins and on the run
   - **Pickups** feed the flow now: sprockets +0.012, cells +0.03, tyres +0.03.
   - **Feel:** the view widens up to 14% with flow, and speed lines show from level 2.
   - **Landings for the speed:** every built landing (jumps, booters, decks, drop-ins, gaps) is laid out for the fastest flight, `V_FLY` = 32.2 m/s (it was 24). Kicker and booter landings are longer, and blocks of lines are longer (400–440 m with a PRO line, otherwise 330–380 m) so each line's feature still fits.
+- **Big sends land clean:** a send off a drop-in, booter or gap that comes down on the landing built for it gets 1.5× the impact allowance before it counts as a hard landing. Super sends were already exempt.
 - **The autopilot** brakes for half the drop-ins and sends the rest.
+- **Tests:** `tools/sim.mjs`, 18 km per setup (every bike with tricks, up the lines with turbo, down them, the PRO line):
+  - 0 crashes everywhere.
+  - Average speed went from 23.8 to 26–29 m/s.
+  - Hard landings per km: 0.22 on the All-Rounder (0.11 before), 0.05 down the lines, 0.76 on the Dirt Jumper, whose landings are weaker by design.
 
 ## Next: proposals
 - **More fun:**

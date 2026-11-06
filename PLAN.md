@@ -693,6 +693,12 @@ Speed as a reward: riding clean fills a FLOW meter beside the battery, and the m
   - The view widens by up to 8% with the flow.
   - Speed lines from level 3.
   - With the music on, the hook only comes in from level 2 while riding.
+- **Tests:** `tools/sim.mjs`, 18 km on each bike with tricks and flips, plus up the lines with turbo, and plain.
+  - 0 crashes everywhere.
+  - Average speed with tricks went from 21.3 to 23.8 m/s on the All-Rounder. The other bikes ride at 22.7–24.7 m/s.
+  - Plain rides went from 21.0 to 23.4 m/s.
+  - Score per km with tricks went from 176k to 248k.
+  - `tools/smooth.mjs` is unchanged.
 
 ## Next: proposals
 - **More fun:**

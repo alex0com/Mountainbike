@@ -611,6 +611,25 @@ The pedal power's chain sound screeched, and the wind was a loud hiss of static.
 - **Listening:** `tools/listen.mjs` renders the sound offline to a WAV file (`__mtb.audioPreview`): the tune, the loops at riding speed, and the jingles and thumps over them.
   - A check on the rendering: rendered with only the hook, its notes come out at the right pitches. Rendered a part at a time, the drums, bass and hook measure −24, −23 and −27 dB over the hook section.
 
+## Cel shaded look: done
+A second look for the game, cartoon style, picked on the menu with CEL ON / CEL OFF under the MUSIC button.
+- **Turning it on:**
+  - The choice is remembered (`bcr.cel`), and L on a keyboard toggles it.
+  - A link with `?look=cel` opens the game in it without changing what was saved.
+  - Off, the game looks exactly as before.
+- **The light in flat bands:** the 3D renderer's shader is patched before it is built (`render3DFragmentSource`), with a `celShade` uniform set on every use of a program (`render3DUseProgram`).
+  - **The sun:** shadow, half lit and fully lit, with a pixel-soft edge between them. Cast shadows come out as flat shapes.
+  - **The headlamp at night:** the same bands, so it throws a hard-edged pool of light.
+  - **The sky's light from above and the ground's from below:** two tones.
+  - **Highlights:** a hard edge.
+- **Ink** (`CEL_INK`, a post process):
+  - **The lines:** dark lines about 2 px wide wherever the scene's depth jumps or folds. That covers the rider and bike, rocks, trees, ridgelines and the trail's edges.
+  - **Fading:** the lines fade out between 150 m and 1.4 km, so the far mountains stay soft.
+  - **Colour:** a touch more saturation.
+  - Sprockets glow in this look, so the ink round their teeth doesn't dull them.
+- **Cost:** a depth pass of the scene and a full-screen pass, both only while it is on. In the software renderer used for testing, a frame took about 12% longer.
+- **Tried and dropped:** stepping the colours into a few flat tones. On the smooth hillsides it made blotches.
+
 ## Two players: built (core)
 Decisions: the server can run Node; online only; the match just keeps going; a crash costs time rather than the run; a breakaway wins and restarts. The slipstream is on, and each player keeps their own collectibles.
 

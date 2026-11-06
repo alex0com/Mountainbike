@@ -68,6 +68,57 @@ const BLUECOW_LOGO = 'data:image/webp;base64,UklGRpxJAQBXRUJQVlA4WAoAAAAQAAAA/wM
 // ============================================================================
 (()=>{
 const {abs, min, max, sin, cos, tan, atan, atan2, sqrt, floor, ceil, round, hypot, acos, asin, exp, sign, PI} = Math;
+
+// ---------- the cel shaded look, an option: the light falls in flat bands (lit, half lit and in shadow) with hard
+// edges to the shadows and highlights, and an ink line round everything from a pass over the depth of the scene.
+// The bands are patched into the 3D renderer's shader, turned on and off by a uniform; the ink is a post process.
+let celOn = false, celPost;
+try { celOn = localStorage.getItem('bcr.cel') == '1'; } catch(e) {}
+if (/[?&]look=cel\b/.test(location.search)) celOn = true;
+const CEL_GLSL = 'uniform float celShade;' +
+    // the sun and the other lights: shadow, a half lit band and fully lit, each edge a pixel soft
+    'float celD(float d){if(celShade<=0.)return d;float w=max(fwidth(d),.004);' +
+        'return mix(d,.65*smoothstep(.06-w,.06+w,d)+.35*smoothstep(.5-w,.5+w,d),celShade);}' +
+    // the sky's light from above and the ground's from below, in two tones, and a highlight with a hard edge
+    'float celH(float h){return celShade<=0.?h:mix(h,smoothstep(.42,.58,h),celShade);}' +
+    'float celS(float x){return celShade<=0.?x:mix(x,smoothstep(.45,.55,x),celShade);}';
+{
+    const source = render3DFragmentSource, use = render3DUseProgram;
+    render3DFragmentSource = code=>
+    {
+        let f = source(code);
+        for (const [a, b] of [['out vec4 o;', 'out vec4 o;' + CEL_GLSL],
+            ['mix(ambientGround.rgb,ambientFog.rgb,n.y*.5+.5)', 'mix(ambientGround.rgb,ambientFog.rgb,celH(n.y*.5+.5))'],
+            ['lightColor.rgb*max(nl,0.)*s', 'lightColor.rgb*celD(max(nl,0.)*s)'],
+            ['l+=lc*max(0.,ln);', 'l+=lc*celD(max(0.,ln));'],
+            ['pow(max(dot(r,eye),0.),materialParams.y)', 'celS(pow(max(dot(r,eye),0.),materialParams.y))']])
+            f = f.replace(a, b);
+        return f;
+    };
+    render3DUseProgram = p=> { use(p); glContext.uniform1f(render3DUniform('celShade'), celOn ? 1 : 0); };
+}
+// the ink: dark lines where the depth of the scene jumps or folds, fading out into the distance, and the colours a
+// touch richer
+const CEL_INK = `        // ink lines
+        vec2 _o = 2.2 / iResolution.xy;
+        if (LJS_HAS_DEPTH)
+        {
+            float _d = sceneDepth(uv);
+            float _dx = abs(sceneDepth(uv + vec2(_o.x, 0)) + sceneDepth(uv - vec2(_o.x, 0)) - 2. * _d);
+            float _dy = abs(sceneDepth(uv + vec2(0, _o.y)) + sceneDepth(uv - vec2(0, _o.y)) - 2. * _d);
+            float _e = smoothstep(.012, .03, max(_dx, _dy) / max(abs(_d), 1e-6));
+            c.rgb = mix(c.rgb, vec3(.07, .05, .1), .9 * _e * (1. - smoothstep(150., 1400., _d)));
+        }
+        c.rgb = clamp(mix(vec3(dot(c.rgb, vec3(.3, .59, .11))), c.rgb, 1.15), 0., 1.);`;
+function setCel(on, keep=true)
+{
+    celOn = on;
+    if (keep) try { localStorage.setItem('bcr.cel', on ? '1' : '0'); } catch(e) {}
+    if (typeof render3D == 'undefined' || !render3D) return;
+    render3D.depthTexture = on;
+    if (on && !celPost) celPost = new PostProcessPlugin(CEL_INK);
+    if (celPost) celPost.enabled = on;
+}
 const TAU = PI*2;
 const clamp01 = v=> v < 0 ? 0 : v > 1 ? 1 : v;
 const clampV = (v, a, b)=> v < a ? a : v > b ? b : v;
@@ -3701,6 +3752,8 @@ class SprocketView extends EngineObject3D
     render3D()
     {
         const m = new Matrix4, rz = riderZ(), eye = render3D.camera.pos;
+        // cel shaded, the ink round every tooth would dull them: they glow instead, so they still read as gold
+        this.emissive = celOn ? .55 : 0;
         for (const o of orbs)
         {
             if (o.cell || !orbSeen(o, rz)) continue;
@@ -4106,6 +4159,7 @@ addEventListener('keydown', e=>
     else if (e.code == 'KeyV') camNextZoom();
     else if (e.code == 'KeyM') toggleSound();
     else if (e.code == 'KeyN') toggleMusic();
+    else if (e.code == 'KeyL') setCel(!celOn);
 });
 addEventListener('keyup', e=>
 {
@@ -4488,6 +4542,8 @@ function drawTitle(W, H, top, bottom)
     }
     button(W - 12 - 58, top, 58, 38, soundOn ? 'SND' : 'MUTE', toggleSound, !soundOn);
     musicButton(W, top + 45);
+    // the cel shaded look, on or off
+    button(W - 12 - 76, top + 84, 76, 32, celOn ? 'CEL ON' : 'CEL OFF', ()=> setCel(!celOn), celOn, 11);
     camButtons(W, top, 58, 38);
 }
 // the garage: the bike, with how it rides, and the kit, each picked with arrows either side, the rider shown above
@@ -5248,6 +5304,7 @@ function gameInit()
     render3D.smoothShading = true;
     render3D.camera.far = 6000;
     render3D.camera.near = .3;
+    if (celOn) setCel(true, false);
     buildRiderMeshes();
     buildSceneMeshes();
     loadLogo();
@@ -5718,6 +5775,7 @@ window.__mtb = {
     zones: (n=5)=> ({seq: zoneSeq.slice(0, n), at: zoneB.slice(0, n).map(round), MT}),
     // a recording of the tune and the ride's sounds, as a WAV file in base64
     audioPreview: (sec, parts)=> audioPreview(sec, parts),
+    cel: on=> { if (on !== undefined) setCel(on); return celOn; },
     music: ()=> ({on: musicOn, bar: mus ? mus.bar : -1, level: mus ? mus.out.gain.value : -1}), toggleMusic: ()=> toggleMusic(),
 };
 

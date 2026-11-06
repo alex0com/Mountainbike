@@ -538,7 +538,7 @@ function addDeck(d)
 
 // where the trail asks the rider to slow down, and to what speed
 const paceAt = x=> paces.find(p=> x > p.x0 && x < p.x1 && onLine(p, x));
-const vFloor = x=> { const p = paceAt(x); return p ? p.v*.85 : VMIN; };
+const vFloor = x=> { const p = paceAt(x); return p ? p.v*.85 : VMIN + 1.5*flow; };
 
 // a little lip then a drop onto a steep landing
 function addCliff(d)
@@ -2097,7 +2097,25 @@ const brakeOn = ()=> brakeHeld && brakeFuel > 0 && state == 'ride' && grounded &
 const SUPER_LEN = 10, SEND_V = 30, LEG_LEN = 3;
 let superOn = false, superFlight = false, legT = 0, supers = 0, legBoosts = 0, sends = 0, cellsGot = 0, airMult = 1, setShown = null, setShownT = 0;
 // tricks score more on a boost
-const boostMult = ()=> turboT > 0 && superOn ? 2 : legT > 0 ? 1.5 : 1;
+// flow: riding clean fills it (landings, tricks, combos, lines, berms, sets), a sketchy or hard landing, the brakes
+// or a crash empty it, and it ebbs away slowly on its own, so it has to be earned the whole way. Each quarter of it
+// is a level; the more of it, the quicker the bike on the ground (by up to FLOW_SPEED) and the more tricks score
+const FLOW_SPEED = .15, FLOW_LEVELS = [.25, .5, .75, .97], FLOW_COLORS = ['#5fe3c8', '#ffd23a', '#ff9a3a', '#ff4fa0'];
+let flow = 0, flowLevel = 0, flowShown = 0;
+function addFlow(d)
+{
+    if (state != 'ride') return;
+    flow = clamp01(flow + d);
+    while (flowLevel < 4 && flow >= FLOW_LEVELS[flowLevel])
+    {
+        ++flowLevel;
+        showMessage(flowLevel == 4 ? 'FULL FLOW!' : 'FLOW x' + (1 + flowLevel*.125).toFixed(flowLevel % 2 ? 3 : 2).replace(/0+$/, ''),
+            flowLevel == 4 ? 'top speed, tricks x1.5' : 'quicker, and tricks score more', FLOW_COLORS[flowLevel - 1]);
+        sfx(flowLevel == 4 ? 'line' : 'ready');
+    }
+    while (flowLevel > 0 && flow < FLOW_LEVELS[flowLevel - 1] - .08) --flowLevel;
+}
+const boostMult = ()=> (turboT > 0 && superOn ? 2 : legT > 0 ? 1.5 : 1)*(1 + flowLevel*.125);
 function supercharge()
 {
     turboT = SUPER_LEN; superOn = true; battery = 1; ++supers;
@@ -2158,7 +2176,7 @@ function placeRider(x)
     airT = rot = 0; style = undefined; stylesDone = []; trickQueued = null; trickBuf = 0; boostT = 0; legT = 0; superOn = superFlight = false; airMult = 1;
     suspF = suspR = .03; suspFV = suspRV = 0; wheelOffF = wheelOffR = 0; visYWas = py; visVyWas = 0;
     combo = comboPts = comboT = 0; comboNames = []; comboKeys = [];
-    ride = null; laneWant = 0; forkAhead = null; turboT = turboGrace = 0; bermStage = 0; fly = null; sideOff = 0;
+    ride = null; laneWant = 0; forkAhead = null; turboT = turboGrace = 0; bermStage = 0; fly = null; sideOff = 0; flow = 0; flowLevel = 0;
 }
 
 // ---------- on the ground: gravity down the slope, drag, rolling resistance, never slower than a cruise
@@ -2176,8 +2194,9 @@ function stepGround(dt)
     // never slower than a cruise, unless the brakes are on: then nearly to a stop, and a slow bike gets going again
     // over a second or so rather than all at once
     const lo = state != 'ride' ? 0 : brakeOn() ? 3 : min(vFloor(px), max(3, sp) + 9*dt);
-    sp = clampV(sp + a*dt, lo, VMAX + bike.speed + (mp.draft ? 2 : 0) + (turboT > 0 ? TURBO_V : legT > 0 ? 6 : boostT > 0 ? 4 : 0));
-    if (brakeOn()) { sp = max(3, sp - 24*dt); slideT += dt; }
+    if (!pace) a += 2.5*flow;
+    sp = clampV(sp + a*dt, lo, (VMAX + bike.speed)*(1 + FLOW_SPEED*flow) + (mp.draft ? 2 : 0) + (turboT > 0 ? TURBO_V : legT > 0 ? 6 : boostT > 0 ? 4 : 0));
+    if (brakeOn()) { sp = max(3, sp - 24*dt); slideT += dt; addFlow(-.2*dt); }
     braking = !!pace && sp > pace.v;
     // a pace sets its speed evenly over the way in, so the rider has it a few metres before the end however fast
     // they came: a fast one brakes down to it, and on the run in to a gap a slow one pedals up to it
@@ -2364,7 +2383,9 @@ function land(gy)
     // the end of a super send is stomped, however hard it comes down: the landing is built for it
     const hard = impact > 22*bike.land && !superFlight;
     sp = max(vFloor(px), sp*(perfect ? 1 : 1 - abs(err)*.3)*(hard ? .8 : 1));
-    if (hard) { showMessage('HARD LANDING', '', hsl(.07,.9,.6)); ++hardLandings; }
+    if (hard) { showMessage('HARD LANDING', '', hsl(.07,.9,.6)); ++hardLandings; addFlow(-.1); }
+    else if (perfect && airT > .45) addFlow(.12);
+    else if (airT > .5) addFlow(.05);
     if (superFlight) { dustBurst(px, py, 160); camShake = max(camShake, .8); }
     py = gy; grounded = true; vyGround = sp*sin(th); trickQueued = null;
     landVis = err; ang = th; angVel = 0;
@@ -2390,7 +2411,7 @@ function finishTrick()
     if (p < .4 && airT < .4) { style = undefined; trickQueued = null; return true; }
     if (p < .4) { crash(style.fail || 'FEET OFF THE PEDALS'); return false; }
     if (p >= .8) stylesDone.push(style);
-    else { showMessage('SKETCHY!', 'finish the trick before landing', hsl(.08,.9,.6)); sfx('landHard'); ++sketchy; }
+    else { showMessage('SKETCHY!', 'finish the trick before landing', hsl(.08,.9,.6)); sfx('landHard'); ++sketchy; addFlow(-.25); }
     style = undefined; trickQueued = null;
     return true;
 }
@@ -2426,7 +2447,7 @@ function bankCombo()
     const total = comboPts*min(combo, 10);
     score += total; ++combosBanked; multSum += min(combo, 10);
     if (total > bestCombo) bestCombo = total, bestComboName = comboNames.slice(-3).join(' + ');
-    if (combo > 1) showBank('x' + min(combo, 10) + ' COMBO', total);
+    if (combo > 1) { showBank('x' + min(combo, 10) + ' COMBO', total); addFlow(.04*min(combo, 5)); }
     sfx(combo > 1 ? 'bank' : 'trick');
     combo = comboPts = 0; comboNames = []; comboKeys = []; comboT = 0;
 }
@@ -2457,8 +2478,9 @@ function scoreAir(perfect)
         }
         addTrick(name, round(pts/10)*10, t.name);
         countTrick(t.name); ++tricksTotal;
+        addFlow(.06);
     });
-    if (flipName) addTrick(flipName, flipPts);
+    if (flipName) { addTrick(flipName, flipPts); addFlow(.06); }
     if (takeoffKind == 'gap' && airT > .3) { addTrick('CHASM', 300); countTrick('CHASM'); }
     if (takeoffKind == 'canyon' && airT > .3 && px > takeoffFeat?.x2) { addTrick('CANYON GAP', 600); countTrick('CANYON GAP'); }
     if (takeoffKind == 'stepdown' && takeoffY - py > 3) { addTrick('STEP-DOWN', 200); countTrick('STEP-DOWN'); }
@@ -2572,6 +2594,7 @@ function crash(reason)
 {
     if (state != 'ride') return;
     state = 'crash'; crashT = 0; crashReason = reason;
+    flow = 0; flowLevel = 0;
     window.__lastCrash = {reason, px: +px.toFixed(1), ride: ride ? ride.lane : 0, z: +riderZ().toFixed(1), turbo: +turboT.toFixed(2), tk: takeoffKind, tkx: +takeoffX.toFixed(1), rot: +(rot*57).toFixed(0), ang: +(ang*57).toFixed(0), slope: +(atan(rideSlope(px))*57).toFixed(0), airT: +airT.toFixed(2), sp: +sp.toFixed(1), vx: +vx.toFixed(1), vy: +vy.toFixed(1), style: style?.name, styleT: +styleT.toFixed(2), flightT: window.__flightT, grounded, frame};
     combo = comboPts = 0; comboNames = []; comboKeys = []; grinding = null; style = undefined; trickQueued = null;
     startWreck();
@@ -3407,6 +3430,7 @@ function rideStep(dt)
         if (turboT <= 0) { battery = 0; turboGrace = 1.5; superOn = false; showMessage('BATTERY EMPTY', 'tricks and sprockets recharge it', hsl(.5,.6,.75)); }
     }
     if (legT > 0) legT -= dt;
+    if (flow > 0) addFlow(-.02*dt);
     if (setShownT > 0) setShownT -= dt;
     // a set ridden past with some of it left is lost
     if (setShown && !setShown.done && !setShown.lost && px > setShown.x1 + 3) { setShown.lost = true; setShownT = 1.2; }
@@ -3605,7 +3629,9 @@ function gameUpdatePost()
     camSpeed = spring(camSpeed, state == 'ride' ? hypot(vx, vy) : 8, CS.speed, 1.6, dt);
     const cam = render3D.camera, speed = camSpeed;
     const vfov = portrait ? 1.0 : .78;
-    cam.fov = vfov;
+    // (the view widens a touch with the flow, for the speed, around the framing worked out for the usual width)
+    flowShown += ((state == 'ride' ? flow : 0) - flowShown)*damp(1.5, dt);
+    cam.fov = vfov*(1 + .08*flowShown);
     // the chosen view's numbers, eased toward so a change of view glides
     // the summit is always framed three quarter on, and the camera glides into the chosen view on the drop in
     const v = state == 'title' ? CAM_VIEWS['3/4'] : CAM_VIEWS[camView[portrait ? 'p' : 'l']] || CAM_VIEWS['3/4'], o = portrait ? 0 : 1;
@@ -3949,7 +3975,7 @@ function collectOrbs()
         {
             set.done = true; setShownT = 1.6;
             if (o.cell) { supercharge(); addTrick('FULL CHARGE', 600, undefined, true); }
-            else { pedalPower(); addTrick('SPROCKET SET', set.n*40, undefined, true); }
+            else { pedalPower(); addTrick('SPROCKET SET', set.n*40, undefined, true); addFlow(.08); }
         }
     }
 }
@@ -4062,13 +4088,14 @@ function updateFork(pxWas)
         return;
     }
     const b = ride;
-    if (bermStage == 0 && px > b.x0 + b.T*.75) { bermStage = 1; if (grounded) addTrick('BERM', 120); }
+    if (bermStage == 0 && px > b.x0 + b.T*.75) { bermStage = 1; if (grounded) { addTrick('BERM', 120); addFlow(.03); } }
     if (bermStage == 1 && px > b.x1 - b.T) { bermStage = 2; sfx('berm'); }
-    if (bermStage == 2 && px > b.x1 - b.T*.25) { bermStage = 3; if (grounded) addTrick('BERM', 120); }
+    if (bermStage == 2 && px > b.x1 - b.T*.25) { bermStage = 3; if (grounded) { addTrick('BERM', 120); addFlow(.03); } }
     if (px >= b.x1)
     {
         const L = LINES[b.kind];
         addTrick(L.name, L.pts);
+        addFlow(.15);
         sfx('line');
         ++lines; if (b.kind == 'pro') ++proLines;
         linesRidden.add(b.kind);
@@ -4378,7 +4405,7 @@ function drawHUD()
     ctx.save();
     if (state == 'title') { drawTitle(W, H, top, bottom); ctx.restore(); return; }
 
-    if (state == 'ride' && (boostT > 0 || turboT > 0 || legT > 0)) drawSpeedLines(W, H, turboT > 0 ? 1 : max(clamp01(boostT*1.5), legT > 0 ? .7 : 0));
+    if (state == 'ride' && (boostT > 0 || turboT > 0 || legT > 0 || flowLevel >= 3)) drawSpeedLines(W, H, turboT > 0 ? 1 : max(clamp01(boostT*1.5), legT > 0 ? .7 : 0, flowLevel >= 3 ? .35 + .25*(flowLevel - 3) : 0));
 
     // distance down the mountain, and the score
     txt(fmt(floor(dist)) + ' m', 14, top + 20, 32, '#fff', 'left', 900);
@@ -4387,6 +4414,7 @@ function drawHUD()
     txt('' + orbsGot, 32, top + 74, 15, '#ffe9a0', 'left', 800);
 
     drawBattery(14, top + 92);
+    drawFlow(82, top + 92);
     drawBoosts(14, top + 116);
     if (state == 'ride' && battery >= 1 && turboT <= 0) drawTurboButton(W, H, bottom);
     if (state == 'ride' && brakeFuel > 0) drawBrakeButton(W, H, bottom);
@@ -4519,6 +4547,18 @@ function drawGear(x, y, r, color)
     ctx.fillStyle = color; ctx.fill('evenodd');
 }
 // the leg power running down, and the set being picked up: a pip for each, filling as they are got
+// the flow: four segments filling from the left, each its own colour, with the multiplier beside them
+function drawFlow(x, y)
+{
+    if (state != 'ride') return;
+    for (let k = 0; k < 4; ++k)
+    {
+        const f = clamp01(flow*4 - k), sx = x + k*15;
+        rrect(sx, y - 6, 12, 12, 3, 'rgba(10,14,24,.45)', 'rgba(255,255,255,.55)');
+        if (f > 0) rrect(sx + 2, y - 4 + 8*(1 - f), 8, 8*f, 2, FLOW_COLORS[k]);
+    }
+    if (flowLevel) txt('x' + (1 + flowLevel*.125), x + 64, y + 1, 12, FLOW_COLORS[flowLevel - 1], 'left', 900);
+}
 function drawBoosts(x, y)
 {
     if (state != 'ride') return;
@@ -5327,7 +5367,11 @@ function musicTick(m, until)
 }
 function musicUpdate(now)
 {
-    if (!mus || !musicOn || mus.src) return;
+    if (!mus || !musicOn) return;
+    // riding, the hook only plays from the second level of flow up; on the menu it always does
+    const hook = state != 'ride' || flowLevel >= 2 ? 1 : 0;
+    if (hook != mus.hookOn) { mus.hookOn = hook; for (const g of [mus.lead, mus.loopHook]) g.gain.setTargetAtTime(hook, now, .4); }
+    if (mus.src) return;
     // played live, a bar at a time, until the rendered loop is ready to take over at the start of a bar
     if (mus.loop) { musicPlayLoop(mus, mus.t, mus.bar); return; }
     musicTick(mus, now + .4);
@@ -5949,7 +5993,7 @@ window.__mtb = {
         OX, OY, night, dayT, boostT, grindDist, seed, ride: ride ? ride.lane : 0, riderZ: riderZ(), battery, turboT, turbos, lines, proLines,
         forkAhead: !!forkAhead, laneWant, view: camViewName(), zoom: camZoomName(), splits: splits.map(s=> [s.x0|0, s.x1|0, s.kinds.join('+')]),
         lineDetail: splits.map(s=> Object.values(s.lines).map(b=> b.kind + ':' + (b.what || 'plain')).join(' ')),
-        dropCam, braking, sentIt, camLift, baseY, wheelOffF, wheelOffR, musicBar: mus ? mus.bar : -1, drops: feats.filter(f=> f.type == 'dropin').map(f=> [f.x0|0, f.x1|0, f.landX|0, +f.F.toFixed(1)]),
+        dropCam, braking, sentIt, camLift, baseY, wheelOffF, wheelOffR, musicBar: mus ? mus.bar : -1, flow, flowLevel, drops: feats.filter(f=> f.type == 'dropin').map(f=> [f.x0|0, f.x1|0, f.landX|0, +f.F.toFixed(1)]),
         bike: bike.name, kit: KITS[kitI][0], menu, trickCounts, tricksTotal, legBoosts, supers, sends, cellsGot, legT, superOn, tyres, tyresGot, brakeFuel, slides, cased, sketchy, perfects, maxAir, topSpeed, style: style?.name, styleT, airHist, hardLandings, combosBanked, multSum, queued: trickQueued, swipeCount, mainHeld, secondHeld}),
     start: ()=> startRide(),
     // steps the game by hand, a 60th of a second at a time, with the engine paused

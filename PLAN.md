@@ -630,6 +630,93 @@ A second look for the game, cartoon style, picked on the menu with CEL ON / CEL 
 - **Cost:** a depth pass of the scene and a full-screen pass, both only while it is on. In the software renderer used for testing, a frame took about 12% longer.
 - **Tried and dropped:** stepping the colours into a few flat tones. On the smooth hillsides it made blotches.
 
+## Performance pass: done
+On an iPhone 17 Pro Max the game hiccupped now and then. All numbers below were measured headless, in Chromium with software GL, so only the ratios mean much.
+
+- **Perf meter (`?perf=1`):**
+  - Frame times as bars against 16.7 and 33 ms lines, with the game's logic and render time stacked inside each bar.
+  - The worst frame, p95, hitches over 25 ms, and the quality level.
+  - Marks where a chunk was finished, track was laid out, the music was rendered, or the quality changed.
+- **Terrain chunks without spikes:**
+  - **The ground mesh:** written straight into the renderer's packed vertex layout (`render3DWriteVertex`, 36 bytes a vertex, indices wound the way the renderer winds them), with no object for each point, normal or colour. It renders pixel for pixel the same as before.
+  - **Uploads:** the GPU upload and bounds are steps of their own (`preUpload`). Before, they happened at a mesh's first draw, in the middle of a frame.
+  - **The last step** is split: one step per tree set, each placed as it's made, and one per sign, deck, bridge or arch. A chunk given up part way takes down what it had made (`dropChunkJob`).
+  - **The scheduler** learns each step's usual cost and only starts one that fits what's left of a 2 ms slice.
+  - 3D text is built once per string (`text3D`), and `branchesNear` no longer allocates.
+- **Results:**
+  - Logic per frame: p99 3.1 → 2.0 ms, p99.9 about 6.5 → 3.2 ms, frames over 4 ms 25–36 → 3–9 per 10,000.
+  - A rare 6–13 ms garbage-collection outlier remains, in both versions.
+  - Laying out a block of lines still takes about 3.5 ms here, once every 25 s or so.
+- **Audio:**
+  - The noise loops only touch a parameter when its target has moved by more than 2%, every other frame: about 10× fewer `setTargetAtTime` calls.
+  - **The music** is rendered once (`renderMusicLoop`), off the main thread, at 32 kHz with the band on one channel and the hook on the other. It's the intro plus one time round, about 70 s.
+    - It's played as a loop, replacing about 100 nodes a bar.
+    - Until it's ready (a few seconds on a phone), the bars play live, and the loop takes over at the start of a bar.
+- **Glows on the GPU:**
+  - Sprocket, cell and tyre glows, the turbo glow, and the stars and moon are now instanced quads with the soft-dot texture (`drawGlows`), which has the same falloff.
+  - Before, each was a 100-vertex fan of new objects every frame.
+  - Streamed vertex data went from 44–101 KB a frame to 0, along with thousands of short-lived objects a frame.
+- **Render budget:**
+  - Phones use a 1024 shadow map.
+  - The sky dome is re-coloured when the day has moved on, not every 12 frames.
+  - Quality also steps down when one frame in twenty runs over 24 ms, and steps back up after 12 s with room to spare (not after three drops).
+  - Dust is capped lower, and HUD numbers come from one cached formatter (`fmt`).
+- **Not done:**
+  - Pooling the dust-burst emitters (small).
+  - A ring of stream buffers: nothing is streamed now.
+  - Render interpolation for 120 Hz: check `?perf=1` on the phone first.
+
+## Flow: done
+Speed as a reward: riding clean fills a FLOW meter beside the battery, and the more of it, the quicker the ride.
+
+- **What fills it:**
+  - a perfect landing, +0.12;
+  - a clean landing after more than 0.5 s of air, +0.05;
+  - each trick or flip landed, +0.06;
+  - a combo banked, +0.04 per trick in it, up to 5;
+  - a line finished, +0.15;
+  - a BERM, +0.03;
+  - a sprocket set, +0.08.
+- **What empties it:**
+  - a sketchy landing, −0.25;
+  - a hard landing, −0.1;
+  - braking, −0.2 a second;
+  - a crash empties it;
+  - and it ebbs away by itself, −0.02 a second.
+- **Four levels**, at 0.25, 0.5, 0.75 and 0.97, with a little give before dropping back.
+  - Each level shows a message ("FLOW x1.25" up to "FULL FLOW!").
+  - Each level is worth 1.125× more on tricks (`boostMult`), up to 1.5×.
+- **Speed:**
+  - The top speed on the ground is up to 15% higher at full flow, with a small push toward it and a higher cruise (`vFloor`).
+  - The air speed cap is unchanged, so jumps still land where the trail was built for them.
+- **Feel:**
+  - The view widens by up to 8% with the flow.
+  - Speed lines from level 3.
+  - With the music on, the hook only comes in from level 2 while riding.
+
+## Next: proposals
+- **More fun:**
+  - pumping (hold on a downslope for speed);
+  - missions with unlocks for bikes and kits;
+  - a ghost of your best run, and a daily mountain with a leaderboard on the relay;
+  - slow motion on a mega send or a perfect landing, and near-miss bonuses;
+  - a 2 km race mode.
+- **Architecture, still one HTML file to deploy:**
+  - Write in `src/` modules and build with esbuild or Vite plus `vite-plugin-singlefile`.
+  - Separate the simulation from the view.
+  - Generate the world in an inline Web Worker.
+  - Fixed-step simulation with interpolated rendering.
+- **If the single file goes:**
+  - **Three.js + TypeScript + Vite as an installable PWA (recommended for the web):**
+    - WebGPU, with WebGL2 as the fallback;
+    - instancing and level of detail;
+    - `MeshToonMaterial` and an outline pass for the cel look;
+    - keeps the link sharing and the relay.
+  - **Godot 4 for a native iPhone app:**
+    - Metal and 120 Hz;
+    - GPU particles and toon shaders;
+    - a full rewrite.
+
 ## Two players: built (core)
 Decisions: the server can run Node; online only; the match just keeps going; a crash costs time rather than the run; a breakaway wins and restarts. The slipstream is on, and each player keeps their own collectibles.
 
@@ -786,5 +873,7 @@ Two kinds, so the players have different powers and different choices:
     node tools/shot.mjs --seed 3 --at 800 --view SIDE --zoom 1 --day .3 --out shot.png [--size 390x844] [--js "code"] [--game other.html]
     node tools/smooth.mjs [--view 3/4] [--size 900x600] [--seeds 3] [--km 2] [--lanes main] [--game other.html]
     node tools/listen.mjs [--out sound.wav] [--seconds 44] [--parts "music loops jingles thumps"] [--game other.html]
+
+Open the game with `?perf=1` for the frame meter, `?look=cel` for the cel shaded look.
 
 `--lanes` takes rand, up, down, main, pro, high or none.

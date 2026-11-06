@@ -69,12 +69,14 @@ const BLUECOW_LOGO = 'data:image/webp;base64,UklGRpxJAQBXRUJQVlA4WAoAAAAQAAAA/wM
 (()=>{
 const {abs, min, max, sin, cos, tan, atan, atan2, sqrt, floor, ceil, round, hypot, acos, asin, exp, sign, PI} = Math;
 
-// ---------- the cel shaded look, an option: the light falls in flat bands (lit, half lit and in shadow) with hard
-// edges to the shadows and highlights, and an ink line round everything from a pass over the depth of the scene.
-// The bands are patched into the 3D renderer's shader, turned on and off by a uniform; the ink is a post process.
-let celOn = false, celPost;
-try { celOn = localStorage.getItem('bcr.cel') == '1'; } catch(e) {}
+// ---------- the cel shaded look, on unless turned off: the light falls in flat bands (lit, half lit and in shadow)
+// with hard edges to the shadows and highlights, and an ink line round everything from a pass over the depth of the
+// scene. The bands are patched into the 3D renderer's shader, turned on and off by a uniform; the ink is a post
+// process. ?look=cel or ?look=smooth in a link picks one without changing what was saved
+let celOn = true, celPost;
+try { celOn = localStorage.getItem('bcr.cel') != '0'; } catch(e) {}
 if (/[?&]look=cel\b/.test(location.search)) celOn = true;
+if (/[?&]look=smooth\b/.test(location.search)) celOn = false;
 const CEL_GLSL = 'uniform float celShade;' +
     // the sun and the other lights: shadow, a half lit band and fully lit, each edge a pixel soft
     'float celD(float d){if(celShade<=0.)return d;float w=max(fwidth(d),.004);' +

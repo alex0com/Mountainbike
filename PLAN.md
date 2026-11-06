@@ -612,10 +612,10 @@ The pedal power's chain sound screeched, and the wind was a loud hiss of static.
   - A check on the rendering: rendered with only the hook, its notes come out at the right pitches. Rendered a part at a time, the drums, bass and hook measure −24, −23 and −27 dB over the hook section.
 
 ## Cel shaded look: done
-A second look for the game, cartoon style, picked on the menu with CEL ON / CEL OFF under the MUSIC button.
+A second look for the game, cartoon style, and the default since it was added. It's picked on the menu with CEL ON / CEL OFF under the MUSIC button.
 - **Turning it on:**
   - The choice is remembered (`bcr.cel`), and L on a keyboard toggles it.
-  - A link with `?look=cel` opens the game in it without changing what was saved.
+  - A link with `?look=cel` or `?look=smooth` opens the game in that look without changing what was saved.
   - Off, the game looks exactly as before.
 - **The light in flat bands:** the 3D renderer's shader is patched before it is built (`render3DFragmentSource`), with a `celShade` uniform set on every use of a program (`render3DUseProgram`).
   - **The sun:** shadow, half lit and fully lit, with a pixel-soft edge between them. Cast shadows come out as flat shapes.
@@ -880,6 +880,6 @@ Two kinds, so the players have different powers and different choices:
     node tools/smooth.mjs [--view 3/4] [--size 900x600] [--seeds 3] [--km 2] [--lanes main] [--game other.html]
     node tools/listen.mjs [--out sound.wav] [--seconds 44] [--parts "music loops jingles thumps"] [--game other.html]
 
-Open the game with `?perf=1` for the frame meter, `?look=cel` for the cel shaded look.
+Open the game with `?perf=1` for the frame meter, and `?look=smooth` or `?look=cel` to pick the look (cel is the default).
 
 `--lanes` takes rand, up, down, main, pro, high or none.

@@ -4304,7 +4304,8 @@ class Vector3
     normalize(l=1) { const d = this.length(); return d ? this.scale(l/d) : new Vector3; }
     dot(v) { return this.x*v.x + this.y*v.y + this.z*v.z; }
     cross(v) { return new Vector3(this.y*v.z - this.z*v.y, this.z*v.x - this.x*v.z, this.x*v.y - this.y*v.x); }
-    lerp(v, t) { return this.add(v.subtract(this).scale(clamp(t))); }
+    plus(x, y, z) { return new Vector3(this.x + x, this.y + y, this.z + z); }
+    lerp(v, t) { t = clamp(t); return new Vector3(this.x + (v.x - this.x)*t, this.y + (v.y - this.y)*t, this.z + (v.z - this.z)*t); }
     rotateX(a) { const c = cos(a), s = sin(a); return new Vector3(this.x, this.y*c - this.z*s, this.y*s + this.z*c); }
     rotateY(a) { const c = cos(a), s = sin(a); return new Vector3(this.x*c + this.z*s, this.y, this.z*c - this.x*s); }
     rotateZ(a) { const c = cos(a), s = sin(a); return new Vector3(this.x*c - this.y*s, this.x*s + this.y*c, this.z); }
@@ -5771,9 +5772,9 @@ function drawCows()
         // legs swinging in pairs, hooves at the ends
         for (const [lx, lz, ph] of [[-.3, -.62, 1], [.3, -.62, -1], [-.3, .62, -1], [.3, .62, 1]])
         {
-            const hip = vec3(lx, .78, lz), a = sw*ph, foot = hip.add(vec3(0, -cos(a)*.74, -sin(a)*.74));
+            const hip = vec3(lx, .78, lz), a = sw*ph, foot = hip.plus(0, -cos(a)*.74, -sin(a)*.74);
             tube(hip, foot, .17, COW_BLUE);
-            box(foot.add(vec3(0, .05, 0)), vec3(.18, .1, .2), COW_HOOF);
+            box(foot.plus(0, .05, 0), vec3(.18, .1, .2), COW_HOOF);
         }
         tube(vec3(0, 1.3, .86), vec3(0, .78, 1.02 + sin(time*3 + c.x)*.1), .06, COW_BLUE);
     }
@@ -7200,7 +7201,8 @@ function startLogoFall() { logoFallTo = logoRest(); logoFall = .001; logoFallV =
 function updateLogo()
 {
     if (!logo) return;
-    logo.group.visible = state == 'title' || logoFall > 0;
+    // (once it has fallen and the camera has gone on past it, it is out of the scene: it is heavy to draw)
+    logo.group.visible = state == 'title' || logoFall > 0 && cam.pos.x < LOGO_X + 40;
     if (!logo.group.visible) return;
     logo.group.matrix.fromArray(logoMatrix().m);
     // two posts down into the ground, far enough for the slope under either end
@@ -8310,14 +8312,18 @@ function drawPart(parts, local, color)
     PART.m.set(MC.m);
     parts.add(PART.multiply(local), color);
 }
+// (these run hundreds of times a frame: plain scratch triples, so no garbage is made)
+const TP = {x: 0, y: 0, z: 0}, TR = {x: 0, y: 0, z: 0}, TS = {x: 0, y: 0, z: 0};
 function tube(a, b, dia, color)
 {
     const dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z, len = hypot(dx, dy, dz);
     if (len < 1e-4) return;
-    const rot = vec3(acos(clampV(dy/len, -1, 1)), atan2(dx, dz), 0);
-    drawPart(meshTube, buildMatrix(vec3((a.x + b.x)/2, (a.y + b.y)/2, (a.z + b.z)/2), rot, vec3(dia, len, dia), scratch), color);
+    TR.x = acos(clampV(dy/len, -1, 1)); TR.y = atan2(dx, dz); TR.z = 0;
+    TP.x = (a.x + b.x)/2; TP.y = (a.y + b.y)/2; TP.z = (a.z + b.z)/2;
+    TS.x = TS.z = dia; TS.y = len;
+    drawPart(meshTube, buildMatrix(TP, TR, TS, scratch), color);
 }
-function ball(p, dia, color) { drawPart(meshBall, buildMatrix(p, undefined, vec3(dia), scratch), color); }
+function ball(p, dia, color) { TS.x = TS.y = TS.z = dia; drawPart(meshBall, buildMatrix(p, undefined, TS, scratch), color); }
 
 function box(p, size, color, rot) { drawPart(meshBox, buildMatrix(p, rot, size, scratch), color); }
 
@@ -8326,31 +8332,54 @@ function box(p, size, color, rot) { drawPart(meshBox, buildMatrix(p, rot, size, 
 // a hose; black pants with knee and elbow pads, chunky gloves and shoes; a full-face lid with goggles. One routine
 // draws it riding (joints from the pose, in the bike's own space) and wrecked (joints from the ragdoll, in the world)
 // a part placed in a frame: centre p, axes x y z (unit vectors), sizes along them
+const FRAMED = new Matrix4;
 function framed(parts, p, B, sx, sy, sz, color)
 {
-    const {x, y, z} = B;
-    drawPart(parts, new Matrix4([x.x*sx, x.y*sx, x.z*sx, 0, y.x*sy, y.y*sy, y.z*sy, 0, z.x*sz, z.y*sz, z.z*sz, 0, p.x, p.y, p.z, 1]), color);
+    const {x, y, z} = B, m = FRAMED.m;
+    m[0] = x.x*sx; m[1] = x.y*sx; m[2] = x.z*sx; m[4] = y.x*sy; m[5] = y.y*sy; m[6] = y.z*sy;
+    m[8] = z.x*sz; m[9] = z.y*sz; m[10] = z.z*sz; m[12] = p.x; m[13] = p.y; m[14] = p.z;
+    drawPart(parts, FRAMED, color);
 }
-// a frame with y along a to b, x as near side as it can be across it
+// a frame with y along a to b, x as near side as it can be across it, worked out into F (plain numbers, no garbage)
+function boneFrameInto(a, b, side, F)
+{
+    let yx = b.x - a.x, yy = b.y - a.y, yz = b.z - a.z;
+    const len = hypot(yx, yy, yz);
+    if (len > 1e-6) { yx /= len; yy /= len; yz /= len; } else { yx = yz = 0; yy = 1; }
+    const sd = side.x*yx + side.y*yy + side.z*yz;
+    let xx = side.x - yx*sd, xy = side.y - yy*sd, xz = side.z - yz*sd, l2 = xx*xx + xy*xy + xz*xz;
+    if (l2 <= 1e-8)
+    {
+        // across it some other way: a fixed axis crossed with it
+        const [ax, az] = abs(yx) < .9 ? [1, 0] : [0, 1];
+        xx = -az*yy; xy = az*yx - ax*yz; xz = ax*yy; l2 = xx*xx + xy*xy + xz*xz;
+    }
+    const k = 1/sqrt(l2);
+    xx *= k; xy *= k; xz *= k;
+    F.x.x = xx; F.x.y = xy; F.x.z = xz; F.y.x = yx; F.y.y = yy; F.y.z = yz;
+    F.z.x = xy*yz - xz*yy; F.z.y = xz*yx - xx*yz; F.z.z = xx*yy - xy*yx;
+    F.len = len;
+    return F;
+}
+const BONE_F = {x: {x: 0, y: 0, z: 0}, y: {x: 0, y: 0, z: 0}, z: {x: 0, y: 0, z: 0}, len: 0}, BONE_P = {x: 0, y: 0, z: 0};
 function boneFrame(a, b, side)
 {
-    const yv = b.subtract(a), len = yv.length(), y = len > 1e-6 ? yv.scale(1/len) : vec3(0, 1, 0);
-    let x = side.subtract(y.scale(side.dot(y)));
-    x = x.lengthSquared() > 1e-8 ? x.normalize() : (abs(y.x) < .9 ? vec3(1, 0, 0) : vec3(0, 0, 1)).cross(y).normalize();
-    return {x, y, z: x.cross(y), len};
+    const F = boneFrameInto(a, b, side, BONE_F);
+    return {x: vec3(F.x.x, F.x.y, F.x.z), y: vec3(F.y.x, F.y.y, F.y.z), z: vec3(F.z.x, F.z.y, F.z.z), len: F.len};
 }
 // a limb or a muscle along a bone, from a (its thick end) to b: w across it sideways, d front to back
 function bone(parts, a, b, w, d, side, color, over=0)
 {
-    const F = boneFrame(a, b, side);
+    const F = boneFrameInto(a, b, side, BONE_F);
     if (F.len < 1e-4) return;
-    framed(parts, a.add(b).scale(.5), F, w, F.len*(1 + over), d, color);
+    BONE_P.x = (a.x + b.x)/2; BONE_P.y = (a.y + b.y)/2; BONE_P.z = (a.z + b.z)/2;
+    framed(parts, BONE_P, F, w, F.len*(1 + over), d, color);
 }
 // the body, from its joints J (head, chest, hip, and pairs: shoulders, elbows, hands, hips, knees, feet: [left, right])
 // and its frame B (x to the rider's left, y up the back, z back toward the pack), k its scale
 function drawBody(J, B, k=1)
 {
-    const {x: X, y: Y, z: Z} = B, at = (p, dx, dy, dz)=> p.add(X.scale(dx*k)).add(Y.scale(dy*k)).add(Z.scale(dz*k));
+    const {x: X, y: Y, z: Z} = B, at = (p, dx, dy, dz)=> p.plus((X.x*dx + Y.x*dy + Z.x*dz)*k, (X.y*dx + Y.y*dy + Z.y*dz)*k, (X.z*dx + Y.z*dy + Z.z*dz)*k);
     const g = (p, sx, sy, sz, c)=> framed(meshBall, p, B, sx*k, sy*k, sz*k, c), bx = (p, sx, sy, sz, c, F=B)=> framed(meshBox, p, F, sx*k, sy*k, sz*k, c);
     const {chest, hip, head} = J;
     // the torso: a broad chest over a narrower middle, lighter facets across the chest and the shoulders
@@ -8433,8 +8462,8 @@ function helmetHead(H)
     // the star on the brow: a diamond and its points, lying on the shell
     const brow = vec3(0, .145, -.13), tilt = vec3(-.75, 0, 0);
     box(brow, vec3(.05, .012, .05), PAL.decal, vec3(-.75, PI/4, 0));
-    box(brow.add(vec3(0, .02, .03)), vec3(.022, .012, .11), PAL.decal, tilt);
-    for (const s of [-1, 1]) box(brow.add(vec3(s*.045, -.004, -.01)), vec3(.08, .012, .02), PAL.decal, vec3(-.75, 0, s*.25));
+    box(brow.plus(0, .02, .03), vec3(.022, .012, .11), PAL.decal, tilt);
+    for (const s of [-1, 1]) box(brow.plus(s*.045, -.004, -.01), vec3(.08, .012, .02), PAL.decal, vec3(-.75, 0, s*.25));
     // the peak
     box(vec3(0, .17, -.17), vec3(.31, .025, .17), PAL.helmet, vec3(.3, 0, 0));
     box(vec3(0, .157, -.17), vec3(.29, .012, .15), PAL.black, vec3(.3, 0, 0));
@@ -8476,7 +8505,7 @@ function drawBike(M, cF, cR, wheelSpin, crankA, whip=0, barA=0, offF=0, offR=0, 
     const bb = sag(vec3(0, .34, .05)), headTop = sag(vec3(0, 1.0, -.41)), headBot = sag(vec3(0, .8, -.46));
     const seatTop = sag(vec3(0, .93 - (bike.seatDrop || 0), .17)), stayTop = sag(vec3(0, .8, .13)), ttRear = sag(vec3(0, .86, .14));
     // the axles ride up and down over the bumps, the fork and the swingarm with them
-    const rA = AXLE_R.add(vec3(0, offR/RS, 0)), fA = AXLE_F.add(vec3(0, offF/RS, 0));
+    const rA = AXLE_R.plus(0, offR/RS, 0), fA = AXLE_F.plus(0, offF/RS, 0);
     // wheels
     for (const [axle, disc] of [[rA, .07], [fA, -.07]])
     {
@@ -8492,32 +8521,32 @@ function drawBike(M, cF, cR, wheelSpin, crankA, whip=0, barA=0, offF=0, offR=0, 
     // main frame, chunky downhill tubes (thinner on a dirt jumper, fatter on the sled)
     const tk = bike.tube;
     tube(bb, headBot, .11*tk, PAL.frame);
-    tube(ttRear, headTop.add(vec3(0, -.05, .02)), .08*tk, PAL.frame);
+    tube(ttRear, headTop.plus(0, -.05, .02), .08*tk, PAL.frame);
     tube(bb, seatTop, .07*tk, PAL.frame);
     ball(headBot.lerp(bb, .1), .14*tk, PAL.frame); ball(ttRear, .1*tk, PAL.frame);
     // the brace from the top tube down to the down tube, and a decal along the top tube
     if (bike.brace) tube(headTop.lerp(ttRear, .45), bb.lerp(headBot, .56), .06*tk, PAL.frame);
-    if (bike.skid) box(bb.add(vec3(0, -.13, -.06)), vec3(.1, .03, .22), PAL.black);
-    for (const x of [-.033, .033]) tube(ttRear.lerp(headTop, .3).add(vec3(x, -.005, 0)), ttRear.lerp(headTop, .72).add(vec3(x, -.025, 0)), .016, PAL.decal);
-    tube(headBot.add(vec3(0, -.05, -.02)), headTop.add(vec3(0, .03, .01)), .075, PAL.frameDark);
+    if (bike.skid) box(bb.plus(0, -.13, -.06), vec3(.1, .03, .22), PAL.black);
+    for (const x of [-.033, .033]) tube(ttRear.lerp(headTop, .3).plus(x, -.005, 0), ttRear.lerp(headTop, .72).plus(x, -.025, 0), .016, PAL.decal);
+    tube(headBot.plus(0, -.05, -.02), headTop.plus(0, .03, .01), .075, PAL.frameDark);
     for (const x of [-.055, .055])
     {
-        tube(bb.add(vec3(x, 0, 0)), rA.add(vec3(x*1.3, 0, 0)), .055, PAL.frame);
-        tube(stayTop.add(vec3(x*.7, 0, 0)), rA.add(vec3(x*1.3, 0, 0)), .045, PAL.frame);
+        tube(bb.plus(x, 0, 0), rA.plus(x*1.3, 0, 0), .055, PAL.frame);
+        tube(stayTop.plus(x*.7, 0, 0), rA.plus(x*1.3, 0, 0), .045, PAL.frame);
     }
     // eBike: a battery along the down tube, the motor round the cranks, a display on the bars
     const bA = bb.lerp(headBot, .16), bB = bb.lerp(headBot, .8);
     tube(bA, bB, bike.batt, PAL.frame);
     const lit = turboT > 0 ? hsl(.5, 1, .6 + .15*sin(time*40)) : battery >= 1 ? hsl(.5, 1, .55 + .15*sin(time*8)) : hsl(.5, .8, .18 + battery*.3);
-    for (const x of [-1, 1]) tube(bA.lerp(bB, .1).add(vec3(x*(bike.batt/2 - .003), .005, 0)), bA.lerp(bB, .1 + .8*max(.06, battery)).add(vec3(x*(bike.batt/2 - .003), .005, 0)), .028, lit);
-    ball(bb.add(vec3(0, -.01, .03)), bike.motor, PAL.motor);
+    for (const x of [-1, 1]) tube(bA.lerp(bB, .1).plus(x*(bike.batt/2 - .003), .005, 0), bA.lerp(bB, .1 + .8*max(.06, battery)).plus(x*(bike.batt/2 - .003), .005, 0), .028, lit);
+    ball(bb.plus(0, -.01, .03), bike.motor, PAL.motor);
     // rear shock: a coil with its piggyback reservoir, or an air can; none on a hardtail
-    const shA = sag(vec3(0, .5, -.1)), shB = stayTop.add(vec3(0, -.02, -.04));
+    const shA = sag(vec3(0, .5, -.1)), shB = stayTop.plus(0, -.02, -.04);
     if (bike.shock) tube(shA, shB, .045, PAL.frameDark);
     if (bike.shock == 'coil')
     {
         tube(shA.lerp(shB, .2), shA.lerp(shB, .75), .085, PAL.spring);
-        tube(shA.lerp(shB, .55).add(vec3(.055, 0, .02)), shA.lerp(shB, .95).add(vec3(.055, 0, .02)), .04, PAL.gold);
+        tube(shA.lerp(shB, .55).plus(.055, 0, .02), shA.lerp(shB, .95).plus(.055, 0, .02), .04, PAL.gold);
     }
     else if (bike.shock == 'air')
     {
@@ -8526,52 +8555,52 @@ function drawBike(M, cF, cR, wheelSpin, crankA, whip=0, barA=0, offF=0, offR=0, 
     }
     // the drivetrain: chain from the ring to the cassette and back under through the mech, a guide over the ring,
     // and the calliper on the back rotor
-    const ring = bb.add(vec3(.075, 0, 0)), cog = rA.add(vec3(.075, 0, 0)), mech = rA.add(vec3(.08, -.12, .02));
-    tube(ring.add(vec3(0, .105, 0)), cog.add(vec3(0, .05, 0)), .012, PAL.chain);
-    tube(ring.add(vec3(0, -.105, 0)), mech.add(vec3(0, -.02, -.02)), .012, PAL.chain);
-    tube(mech, cog.add(vec3(0, -.04, 0)), .012, PAL.chain);
+    const ring = bb.plus(.075, 0, 0), cog = rA.plus(.075, 0, 0), mech = rA.plus(.08, -.12, .02);
+    tube(ring.plus(0, .105, 0), cog.plus(0, .05, 0), .012, PAL.chain);
+    tube(ring.plus(0, -.105, 0), mech.plus(0, -.02, -.02), .012, PAL.chain);
+    tube(mech, cog.plus(0, -.04, 0), .012, PAL.chain);
     drawPart(meshDisc, buildMatrix(cog, vec3(0, 0, PI/2), vec3(.55, 3, .55), scratch), PAL.chain);
     box(mech, vec3(.03, .1, .05), PAL.black);
-    box(ring.add(vec3(0, .12, -.03)), vec3(.03, .05, .08), PAL.black);
-    box(rA.add(vec3(.08, .1, -.06)), vec3(.03, .05, .07), PAL.black);
+    box(ring.plus(0, .12, -.03), vec3(.03, .05, .08), PAL.black);
+    box(rA.plus(.08, .1, -.06), vec3(.03, .05, .07), PAL.black);
     // seat
     MC = G?.seat ?? MF;
-    tube(seatTop, seatTop.add(vec3(0, .07, .03)), .035, PAL.silver);
-    box(seatTop.add(vec3(0, .09, .05)), vec3(.13, .05, .27), PAL.black);
-    box(seatTop.add(vec3(0, .116, .05)), vec3(.03, .006, .24), PAL.jersey2);
+    tube(seatTop, seatTop.plus(0, .07, .03), .035, PAL.silver);
+    box(seatTop.plus(0, .09, .05), vec3(.13, .05, .27), PAL.black);
+    box(seatTop.plus(0, .116, .05), vec3(.03, .006, .24), PAL.jersey2);
     // the fork: a dual crown up past the head tube, or a single crown under it; the stanchions slide into the lowers
     MC = G?.fork ?? M;
     const forkDir = fA.subtract(vec3(0, .8, -.46)).normalize();
     for (const x of [-.075, .075])
     {
-        const top = (bike.crowns == 2 ? headTop.add(vec3(0, .02, 0)) : headBot.add(vec3(0, -.02, 0))).add(vec3(x, 0, 0)), stanEnd = headBot.add(forkDir.scale(.34)).add(vec3(x, 0, 0));
+        const top = (bike.crowns == 2 ? headTop.plus(0, .02, 0) : headBot.plus(0, -.02, 0)).plus(x, 0, 0), stanEnd = headBot.add(forkDir.scale(.34)).plus(x, 0, 0);
         tube(top, stanEnd, .052, PAL.gold);
-        tube(fA.add(vec3(x, 0, 0)), fA.add(vec3(x, 0, 0)).subtract(forkDir.scale(.4)), .075, PAL.black);
+        tube(fA.plus(x, 0, 0), fA.plus(x, 0, 0).subtract(forkDir.scale(.4)), .075, PAL.black);
     }
-    if (bike.crowns == 2) box(headTop.add(vec3(0, .02, 0)), vec3(.23, .045, .07), PAL.black);
-    box(headBot.add(vec3(0, -.02, 0)), vec3(.23, .045, .07), PAL.black);
-    box(fA.add(vec3(-.08, .1, .05)), vec3(.03, .05, .07), PAL.black);
+    if (bike.crowns == 2) box(headTop.plus(0, .02, 0), vec3(.23, .045, .07), PAL.black);
+    box(headBot.plus(0, -.02, 0), vec3(.23, .045, .07), PAL.black);
+    box(fA.plus(-.08, .1, .05), vec3(.03, .05, .07), PAL.black);
     // stem and wide bars
     MC = G?.bars ?? MB;
-    const stem = headTop.add(vec3(0, .04, -.05)), bar = stem.add(vec3(0, .04, 0));
+    const stem = headTop.plus(0, .04, -.05), bar = stem.plus(0, .04, 0);
     tube(headTop, stem, .045, PAL.black);
-    box(stem.add(vec3(0, .07, .02)), vec3(.09, .05, .07), lit);
-    tube(bar.add(vec3(-.4, .03, 0)), bar.add(vec3(.4, .03, 0)), .032, PAL.black);
-    for (const x of [-.36, .36]) tube(bar.add(vec3(x - .04, .03, 0)), bar.add(vec3(x + .04, .03, 0)), .045, PAL.glove);
+    box(stem.plus(0, .07, .02), vec3(.09, .05, .07), lit);
+    tube(bar.plus(-.4, .03, 0), bar.plus(.4, .03, 0), .032, PAL.black);
+    for (const x of [-.36, .36]) tube(bar.plus(x - .04, .03, 0), bar.plus(x + .04, .03, 0), .045, PAL.glove);
     // the number plate, on the front of the bars
-    drawPart(meshPlate, buildMatrix(headTop.add(vec3(0, .1, -.11)), vec3(-.25, 0, 0), undefined, scratch));
+    drawPart(meshPlate, buildMatrix(headTop.plus(0, .1, -.11), vec3(-.25, 0, 0), undefined, scratch));
     // cranks, chainring and pedals
     MC = G?.crank ?? MF;
-    drawPart(meshRing, buildMatrix(bb.add(vec3(.07, 0, 0)), vec3(crankA, 0, PI/2), undefined, scratch));
+    drawPart(meshRing, buildMatrix(bb.plus(.07, 0, 0), vec3(crankA, 0, PI/2), undefined, scratch));
     const pedals = [];
     for (const [x, a] of [[.17, crankA], [-.17, crankA + PI]])
     {
-        const p = bb.add(vec3(x, .17*cos(a), -.17*sin(a)));
-        tube(bb.add(vec3(x*.5, 0, 0)), p, .03, PAL.silver);
-        box(p.add(vec3(x*.15, 0, 0)), vec3(.1, .025, .1), PAL.black);
-        pedals.push(p.add(vec3(x*.12, .04, 0)));
+        const p = bb.plus(x, .17*cos(a), -.17*sin(a));
+        tube(bb.plus(x*.5, 0, 0), p, .03, PAL.silver);
+        box(p.plus(x*.15, 0, 0), vec3(.1, .025, .1), PAL.black);
+        pedals.push(p.plus(x*.12, .04, 0));
     }
-    return {pedals, grips: [bar.add(vec3(.37, .03, 0)), bar.add(vec3(-.37, .03, 0))], bb, seatTop};
+    return {pedals, grips: [bar.plus(.37, .03, 0), bar.plus(-.37, .03, 0)], bb, seatTop};
 }
 
 // the feet lie along the bike
@@ -8612,8 +8641,8 @@ function drawRider(M, bikePts, comp, styleName, styleAmt, pull=0)
     // the hands let go above the bars while they spin, and catch them again
     else if (styleName == 'BARSPIN')
         hands = hands.map((h, i)=> h.lerp(vec3(i ? -.3 : .3, 1.3, -.32), s));
-    const shoulders = [chest.add(vec3(.24, .05, -.02)), chest.add(vec3(-.24, .05, -.02))];
-    const hips = [hip.add(vec3(.12, 0, 0)), hip.add(vec3(-.12, 0, 0))], knees = [], elbows = [];
+    const shoulders = [chest.plus(.24, .05, -.02), chest.plus(-.24, .05, -.02)];
+    const hips = [hip.plus(.12, 0, 0), hip.plus(-.12, 0, 0)], knees = [], elbows = [];
     for (let i = 0; i < 2; ++i)
     {
         const side = i ? -1 : 1;
@@ -9489,8 +9518,12 @@ function dustBurst(x, y, count)
 // with smoothed edges and sharp shadows), 2 at 1.3 and 1 at 1 with softer shadows and no smoothing, 0 no shadows.
 // It starts at 4 and climbs to 5 when there is room, unless ?dev fixes the resolution (RES_FIX).
 // Stepped down when the frames run slow on average, or when one in twenty runs long (a hiccup that keeps coming
-// back); stepped back up after a good while with room to spare, though not after it has had to come down a few times
+// back); stepped up only while it has never had to come down, after a good while with plenty of room to spare, so
+// it settles instead of going up and down (each step resizes the picture, its shadows and outlines: a hitch). The
+// level it settles on is kept on the device, and the next visit starts there
 let quality = 4, RES_FIX = 0, qualityT = 0, qualityLooks = 0, qualityGood = 0, qualityDrops = 0;
+try { const q = localStorage.getItem('bcr.q'); if (q !== null && +q >= 0 && +q <= 5) quality = +q; } catch(e) {}
+const keepQuality = ()=> { try { localStorage.setItem('bcr.q', quality); } catch(e) {} };
 const frameGaps = new Float32Array(120);
 let frameGapI = 0, frameLast = 0;
 function noteFrame()
@@ -9510,6 +9543,7 @@ function applyQuality()
     const samples = quality >= 3 ? 4 : 0;
     if (ink && ink.samples != samples) { ink.target.dispose(); ink = makeInk(samples); sizeKey = ''; }
 }
+if (quality != 4) applyQuality();
 function adaptQuality(dt)
 {
     if ((qualityT += dt) < (qualityLooks < 4 ? 1.2 : 3) || state != 'ride' && state != 'title') return;
@@ -9519,12 +9553,12 @@ function adaptQuality(dt)
     {
         quality = max(0, quality - (averageFPS > 0 && averageFPS < 28 ? 2 : 1));
         qualityGood = 0; ++qualityDrops;
-        perfMark(8); applyQuality();
+        perfMark(8); applyQuality(); keepQuality();
     }
-    else if (quality < 5 && qualityDrops < 3 && averageFPS > 57 && p95 > 0 && p95 < 18.5 && ++qualityGood >= 4)
+    else if (quality < 5 && !qualityDrops && averageFPS > 58 && p95 > 0 && p95 < 17.5 && ++qualityGood >= 5)
     {
         ++quality; qualityGood = 0;
-        perfMark(8); applyQuality();
+        perfMark(8); applyQuality(); keepQuality();
     }
 }
 
@@ -10769,7 +10803,7 @@ function autopilotInput()
 function gameInit()
 {
     setSky(hsl(.6,.55,.42), hsl(.57,.35,.8), hsl(.3,.2,.4));
-    SHADOW.size = 2048;
+    SHADOW.size = quality >= 3 ? 2048 : 1024; SHADOW.on = quality > 0;
     if (celOn) setCel(true, false);
     buildRiderMeshes();
     buildSceneMeshes();
@@ -11230,6 +11264,8 @@ window.__mtb = {
         dropCam, braking, sentIt, camLift, baseY, wheelOffF, wheelOffR, flow, flowLevel, drops: feats.filter(f=> f.type == 'dropin').map(f=> [f.x0|0, f.x1|0, f.landX|0, +f.F.toFixed(1)]),
         bike: bike.name, kit: KITS[kitI][0], menu, trickCounts, tricksTotal, legBoosts, supers, sends, cellsGot, legT, superOn, tyres, tyresGot, brakeFuel, slides, cased, sketchy, perfects, maxAir, topSpeed, style: style?.name, styleT, airHist, hardLandings, combosBanked, multSum, queued: trickQueued, swipeCount, mainHeld, secondHeld}),
     start: ()=> startRide(),
+    // a frame drawn by hand, and a look inside, for the performance checks
+    draw: ()=> drawFrame(), ev: s=> eval(s),
     // steps the game by hand, a 60th of a second at a time, with the engine paused
     // (or by frames of another length, a number or a function giving one, as a screen at another rate would)
     sim: (n, until, dt)=> { for (let k = 0; k < n; ++k) { timeDelta = typeof dt == 'function' ? dt() : dt || 1/frameRate; time += timeDelta; ++frame; gameUpdate(); gameUpdatePost(); if (until && until()) break; } return window.__mtb.info(); },

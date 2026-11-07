@@ -857,12 +857,22 @@ The rider is reworked after `art/bluecow-rider-concept.png`, at its level of det
 - **Faceted parts:** six-sided tubes, tapered six-sided limbs (`meshLimb`), gem-cut balls and a faceted helmet shell, all flat shaded for the low-poly look. The sheen is soft so big facets don't wash out.
 - **One body routine** (`drawBody`) draws the rider riding (joints from the pose, `drawRider`) and wrecked (joints from the ragdoll, `drawRagdoll`). It has:
   - a broad two-tone blue chest and middle, with lighter facets over the chest and shoulders;
-  - a big black pack with a lid, pockets and a strap, shoulder straps down the chest, a buckle and a hose;
+  - no pack by default; the garage's PACK button gives a small black hydration pack with a lid, a pocket, shoulder straps down the chest, a buckle and a hose (kept on the device, `bcr.pack`);
   - big shoulders, upper arms with biceps, elbow pads, forearms, cuffs and chunky gloves;
   - black pants over thick thighs, knee pads with straps, shins, and chunky shoes with grey soles;
   - a full-face lid (`helmetHead`): a faceted blue shell with a lighter crown, a white star on the brow, a peak, a chin bar with vents, ear vents, and goggles with an orange mirror lens, a glint and a strap.
 - **The bike:** a royal blue frame with chunkier faceted tubes and gussets, a thicker gold fork with black lowers, and a number 7 plate on the bars.
 - **The kits:** BLUECOW (the sheet's colours) is the base and the first. The old black and red look is STEALTH. The others recolour the new rider the same way.
+
+## Pack, wall tyre, logo and smoothness: done (Three.js version)
+- **The pack:** the big backpack is gone. By default the rider has none, and the garage's **PACK: NONE / SMALL** button gives a small hydration pack instead.
+- **The back tyre on a wall ride:** it no longer sinks into the rock. The face has a ledge for the wheels where the line runs, with the rock rising behind it, and the bike leans in less (`WALL_LEAN` -.4).
+- **The title logo:** the colours are deeper (the picture is more saturated, with darker mid tones). It carries more of its own colour, with no sheen or fog to wash it out.
+- **Random slowdowns:** measured on autopilot rides (logic, drawing, heap growth, shader programs, triangles), and fixed where it counted:
+  - **The fallen logo** (about 60k triangles, casting shadows) used to stay in the scene for the whole ride. It is now out of the scene once the camera has gone past it.
+  - **The quality ladder** could climb a step, run slow, drop back and climb again, and each step resizes the picture, its shadows and its outlines. It now climbs only while it has never had to drop, and only with plenty of room (58+ fps, the 95th-percentile frame under 17.5 ms, five looks in a row). The level it settles on is kept on the device (`bcr.q`), and the next visit starts there.
+  - **Less garbage per frame:** the rider's and bike's parts are placed with scratch matrices and plain numbers (`framed`, `bone`, `tube`, `ball`), `plus(x, y, z)` replaces `add(vec3(...))`, and `lerp` makes one vector, not three. This means fewer garbage collections, which are the hitches on a phone. The picture is pixel-identical.
+  - **Checked and fine:** no shader is compiled mid-ride (7 programs at the title, the same after 3 km), and chunk building stays within its 2 ms slice.
 
 ## Next: proposals
 - **More fun:**

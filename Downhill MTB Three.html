@@ -5490,8 +5490,10 @@ function addWallRide(d)
     lastLaunch = {x1: last.x1, lipY: last.y1, lipSlope: last.slope};
     return group;
 }
-// the wall ride whose start the rider is beside: from a little before its first rock to just onto it
-const wallStartAt = x=> onBranch(x) ? null : walls.find(g=> x > g.segs[0].x0 - 9 && x < g.segs[0].x0 + 1);
+// the wall ride the rider is beside, anywhere from a good way before its first rock to near the end of its last
+const wallStartAt = x=> onBranch(x) ? null : walls.find(g=> x > g.segs[0].x0 - 14 && x < g.segs[g.segs.length - 1].x1 - 12);
+// the rock a pop from here lands on: the one alongside if there is room left on it, or the next one
+const wallAimAt = (g, x)=> g.segs.find(r=> r.x1 - 4 > max(x + 6, r.x0 + 3.5));
 
 // where a flight from here comes down onto surf (a height for each x, or below everything where there is none),
 // worked out the way the ride flies: gravity with its hang time, the air's drag and the top speed in the air
@@ -5506,18 +5508,19 @@ function flyTo(x, y, wx, wy, surf)
         if (wx > cap) wx += (cap - wx)*damp(4, 1/60);
         x += wx/60; y += wy/60;
         const s = surf(x);
-        // coming down onto it, or onto its start from just above where it begins
-        if (wy < 0 && y <= s && (surf(lx) < -1e8 ? y > s - .5 : ly >= surf(lx) - .05)) return x;
-        if (y < s - 4) return -1e9;
+        // coming down onto it from above, the way the ride lands on a rock (its line carried back before its start)
+        if (wy < 0 && y <= s && ly >= (surf.line ? surf.line(lx) : surf(lx)) - .05) return x;
+        // falling, and below the rock without having come down onto it: short of it
+        if (wy < 0 && y < s - .6) return -1e9;
         lx = x; ly = y;
     }
     return 1e9;
 }
 // the pop (upward speed added) that carries a flight from here to come down at about tx on surf: the more speed,
 // the less pop it takes. Narrowed down by halving
-function popFor(wx, wy, tx, surf)
+function popFor(wx, wy, tx, surf, most=11)
 {
-    let lo = 0, hi = 11;
+    let lo = 0, hi = most;
     for (let k = 0; k < 16; ++k)
     {
         const P = (lo + hi)/2, lx = flyTo(px, py, wx, wy + P, surf);
@@ -5525,15 +5528,26 @@ function popFor(wx, wy, tx, surf)
     }
     return hi;
 }
-const onSeg = s=> x=> x >= s.x0 && x <= s.x1 ? railY(s, x) : -1e9;
+const onSeg = s=> { const f = x=> x >= s.x0 && x <= s.x1 ? railY(s, x) : -1e9; f.line = x=> railY(s, x); return f; };
 let wallGroup = null, wallSeg = null, wallChain = 0, wallChainI = -1, wallExit = false;
 // up onto the rock from the trail beside it
 function enterWall(g)
 {
-    const first = g.segs[0], th = atan(rideSlope(px));
-    wallGroup = g; wallSeg = null; wallChain = 0; wallChainI = -1; wallExit = false;
+    // the first rock ahead that a pop from here comes down on with room to spare, tried in turn
+    const th = atan(rideSlope(px)), wx = sp*cos(th), wy = sp*sin(th);
+    let first = null, pop = 0;
+    for (const r of g.segs)
+    {
+        if (r.x1 - 4 < max(px + 6, r.x0 + 3.5)) continue;
+        pop = min(14, popFor(wx, wy, max(px + 6, r.x0 + 3.5), onSeg(r), 14));
+        const lx = flyTo(px, py, wx, wy + pop, onSeg(r));
+        if (lx >= r.x0 && lx <= r.x1 - 2) { first = r; break; }
+    }
+    if (!first) return false;
+    wallGroup = g; wallSeg = null; wallChain = 0; wallChainI = first.i - 1; wallExit = false;
     for (const s of g.segs) s.tapped = s.popped = s.slipped = false;
-    vx = sp*cos(th); vy = sp*sin(th) + popFor(vx, sp*sin(th), max(px + 6, first.x0 + 3.5), onSeg(first));
+    // (a big pop if it has to be: the rocks further along stand higher)
+    vx = wx; vy = wy + pop;
     py += .05;
     jumpBuf = 0; offGroundT = 1;
     hopX0 = px; hopY0 = py; hopS = rideSlope(px);
@@ -5542,6 +5556,7 @@ function enterWall(g)
     ++wallRides;
     showMessage('WALL RIDE!', 'tap at each lip to pop to the next rock', hsl(.08,.85,.62));
     sfx('jump');
+    return true;
 }
 // off a lip: the tapped pop, aimed onto the next rock (or out onto the trail after the last), or just the lip's kick
 function wallPop(seg)
@@ -5561,7 +5576,7 @@ function wallPop(seg)
     sfx('jump');
 }
 // a tap on the rock: near the lip it times the pop, which comes as the bike leaves it; a moment after leaving an
-// untapped lip it still pops, a little late. A tap beside the start of a wall ride goes up onto it
+// untapped lip it still pops, a little late. A tap anywhere beside a wall ride goes up onto it
 function wallJump()
 {
     if (grinding?.wall)
@@ -5571,10 +5586,9 @@ function wallJump()
         return true;
     }
     if (!grounded && !grinding && wallSeg && !wallSeg.popped && airT < .2) { wallPop(wallSeg); jumpBuf = 0; return true; }
-    const g = grounded && !wallGroup && state == 'ride' ? wallStartAt(px) : null;
-    if (!g) return false;
-    enterWall(g);
-    return true;
+    // beside a wall ride, on the ground or just off it, a jump goes up onto the rock
+    const g = (grounded || offGroundT < .14) && !grinding && !wallGroup && state == 'ride' ? wallStartAt(px) : null;
+    return !!g && enterWall(g);
 }
 // down onto a rock section from the air: ridden on if square enough to it, slid off otherwise (down to the trail)
 function startWall(r)
@@ -5589,6 +5603,8 @@ function startWall(r)
     if (abs(err) < .14) surge(.8);
     py = railY(r, px); ang = th; angVel = 0; landVis = err;
     wallSeg = null;
+    // come down right by the lip, there is no time to tap: it pops on its own
+    if (r.x1 - px < 3.5) r.tapped = true;
     if (r.i > wallChainI)
     {
         wallChainI = r.i; ++wallChain; bestWall = max(bestWall, wallChain);
@@ -10315,7 +10331,7 @@ function autopilotInput()
         // most wall rides it takes, jumping up a few metres before the rock; on the rock it pops most lips
         const wg = grounded && !wallGroup ? wallStartAt(px) : null;
         if (wg && wg.ap === undefined) wg.ap = Math.random() < (window.__wallPilot ?? .7);
-        if (wg?.ap && px > wg.segs[0].x0 - 6) jumpQueued = true;
+        if (wg?.ap && px > wg.segs[0].x0 - 6 && wallAimAt(wg, px)) jumpQueued = true;
         if (grinding?.wall && !grinding.apDone && px > grinding.x1 - 3) { grinding.apDone = true; if (Math.random() < (window.__lipPilot ?? .9)) jumpQueued = true; }
         // it brakes for half the drop-ins, as a rider checking their speed would, and sends the rest
         const bz = brakeZones.find(z=> px > z.x0 && px < z.x1 && onLine(z, px));

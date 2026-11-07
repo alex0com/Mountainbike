@@ -783,7 +783,12 @@ The rider physics is rewritten so speed is earned and felt, instead of set by cl
   - It has 3–5 rock sections, each 14–22 m long, with gaps of 5.5–9 m between them.
   - Each section rises along its length to a lip, and starts a step higher than the last lip.
   - A WALL RIDE sign stands before it, and sprockets run along every section.
-- **Getting on:** jump on the trail from 9 m before the first rock to 1 m onto it. The pop is aimed (`popFor`, flying the flight the way the ride does) to land the rider a few metres onto the rock, which moves across to the wall and leans into it.
+- **Getting on:** jump anywhere beside the outcrop, from 14 m before the first rock to 12 m before the end of the last, on the ground or just off it.
+  - The pop is aimed (`popFor`, flying the flight the way the ride does, with landings tested the same way) at the rock alongside if there's room left on it, otherwise the next one.
+  - Each candidate is flown before it is chosen. Rocks further along stand higher, so the pop can be big.
+  - The rider moves across to the wall and leans into it.
+  - Coming down within 3.5 m of a lip pops on its own, since there's no time to tap.
+  - Test (`wallenter` in the scratchpad), jumping every 4 m beside the outcrops on 5 seeds: every jump inside the window lands on a rock.
 - **Riding:** the sections are rails flagged `wall`. They are ridden like a grind (`stepWall`), with rock surface and dust.
 - **Lips:**
   - **Tapped** in the last 4.5 m of a section, or within 0.2 s after leaving it: a ROCK POP aimed onto the next rock, with a surge and a link.

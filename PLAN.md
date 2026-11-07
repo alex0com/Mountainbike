@@ -737,6 +737,70 @@ The pop lifted the whole bike at once, flat, so it didn't look like a real bunny
 - **Two players:** the other rider's hop is drawn the same way (`hp` and `pu` in the pose).
 - **Test hook:** `__mtb.wheels()` gives where each tyre meets the ground as drawn.
 
+## Three.js version: built (next to the LittleJS one)
+`Downhill MTB Three.html` is the game rewritten on three.js 0.187. It is still one self-contained file: `tools/vendor-three.mjs` bundles the parts of three it uses and pastes them in.
+- **New:**
+  - the renderer, camera, sky dome, sun with shadows, hemisphere light and fog;
+  - the cel bands patched into three's Phong material, and the ink as a pass over the depth;
+  - meshes built from parts into BufferGeometry, ground chunks as buffers built in slices, trees and rocks as instanced meshes;
+  - riders, bikes and pickups as instanced parts drawn each frame, and particles and glows as instanced soft dots;
+  - ZzFX sound and the frame loop.
+- **Carried over:** the track generator, the tricks, the HUD, input and two players.
+- **No floating origin:** three works out where things are on screen in doubles.
+- **Tests:** the tools take `--game "Downhill MTB Three.html"`. The ride sim, smoothness and the two-player relay test all pass, and screenshots match the LittleJS version.
+- The LittleJS file stays as it is until the switch.
+
+## Momentum physics: done (Three.js version)
+The rider physics is rewritten so speed is earned and felt, instead of set by clamps.
+- **Forces, not clamps:**
+  - **Under the cruise speed** the rider pedals, harder the slower they are. This replaces the floor.
+  - **Over the top speed** the drag grows with the square of the overshoot (`softCap`), easing the bike down. This replaces the cap.
+  - **Grinds and wall rides** use the same soft cap.
+- **The chain** (`link`, `breakChain`, `CHAIN_WINDOW` 2.6 s): every clean thing done within the window of the last one is a link, worth more than the one before.
+  - Clean things are nailed and clean landings, tricks, grinds, berms, lines, sets and wall-ride hops.
+  - The flow climbs toward what the chain has earned and holds while the chain lasts. Once it lapses, the flow ebbs at 0.035 a second.
+  - Sketchy and hard landings, the brakes and crashes break it.
+  - The HUD shows CHAIN n with its timer, under the FLOW bar.
+- **Surges** (`surge`): a reward never sets the speed. It adds a push that comes on and fades over about half a second.
+- **Landings** are graded by the bike's angle to the slope and by how well the flight meets the slope:
+  - **NAILED:** square, coming down along the slope, not hard. Keeps all the speed, and gives a surge of 1.4 m/s plus 0.22 per link (up to 8 links), the NAILED x n trick, a dust burst and a camera dip on a spring.
+  - **CLEAN:** keeps most of the speed, with a small surge if it is near square.
+  - **SKETCHY:** loses speed and breaks the chain.
+  - Flights that come down across the slope lose more.
+- **Compressions** pump a little speed out of the foot of a slope (`pumpAt`).
+- **Hang time:** gravity eases by up to 20% near the top of a flight (`airG`). Every flight the generator lays out uses it too, so landings still fit.
+- **The feel:**
+  - The view widens with speed as well as flow.
+  - Speed lines start at 25 m/s.
+  - The camera dips and recovers on nailed landings.
+- **Tests:** `tools/sim.mjs` now reports the share of nailed, clean and sketchy landings, the longest chain, and wall rides.
+  - Every bike, flips, tricks, and the up lines with turbo: 0 crashes.
+  - Average speed is 28.5–32 m/s, up from 27.5.
+  - 55–79% of the autopilot's landings are nailed. The longest chains are 18–25 links.
+
+## Wall rides: done (Three.js version)
+- **Where:** a rocky outcrop along the hill side of the main trail, every 380–800 m (`addWallRide`).
+  - It has 3–5 rock sections, each 14–22 m long, with gaps of 5.5–9 m between them.
+  - Each section rises along its length to a lip, and starts a step higher than the last lip.
+  - A WALL RIDE sign stands before it, and sprockets run along every section.
+- **Getting on:** jump on the trail from 9 m before the first rock to 1 m onto it. The pop is aimed (`popFor`, flying the flight the way the ride does) to land the rider a few metres onto the rock, which moves across to the wall and leans into it.
+- **Riding:** the sections are rails flagged `wall`. They are ridden like a grind (`stepWall`), with rock surface and dust.
+- **Lips:**
+  - **Tapped** in the last 4.5 m of a section, or within 0.2 s after leaving it: a ROCK POP aimed onto the next rock, with a surge and a link.
+  - **Not tapped:** only the lip's small kick, which doesn't reach the next, higher rock. The rider drops to the trail ("OFF THE WALL"), with no crash.
+  - Landing badly on a rock slides the rider off the same way.
+- **Scoring:** WALL RIDE 150 for the first rock, then WALL x n worth 150 × n for each rock after. Popping off the last lip after riding every rock scores ROCK RUN, 250 per rock. All of it joins the combo, and each hop is a link in the chain.
+- **The look:** each section is its own jagged rock face (`makeWallRock`), lofted along its line from the trail edge up the hill side. It is flat shaded in the land's face and rock colours, ends in a face down to the trail, and has boulders on its lip.
+- **The test rider** takes 70% of wall rides (`__wallPilot`) and pops 90% of lips (`__lipPilot`). Its swipe tricks and flips stay off the short hops between rocks.
+- **Hooks:**
+  - `__mtb.walls()` lists the wall rides laid out.
+  - `__mtb.wallState()` gives on the wall or not, the section, the chain, the best chain and the ride count.
+  - `info()` carries `onWall`, `wallChain`, `chain`, `bestChain` and the landing counts.
+- **Test** (popping every lip, popping none, riding past):
+  - All 4 rocks are chained, with ROCK RUN.
+  - With no taps, the rider is off after the first rock and back on the trail, with no crash.
+  - Riding past, nothing happens.
+
 ## Next: proposals
 - **More fun:**
   - pumping (hold on a downslope for speed);

@@ -61,6 +61,9 @@ for (let seed = FROM; seed < FROM + SEEDS; ++seed)
             for (const [k, v] of Object.entries(i.trickCounts || {})) stats.tricks[k] = (stats.tricks[k] || 0) + v;
             (i.airHist || []).forEach((v, k)=> stats.airs[k] += v);
             stats.hard = (stats.hard || 0) + (i.hardLandings || 0);
+            // how the landings went, the longest chain of clean riding, and the wall rides (where the game has them)
+            for (const k of ['landsNailed', 'landsClean', 'landsSketchy', 'wallRides']) stats[k] = (stats[k] || 0) + (i[k] || 0);
+            stats.bestChain = max(stats.bestChain || 0, i.bestChain || 0); stats.bestWall = max(stats.bestWall || 0, i.bestWall || 0);
         };
         while (ridden < goal && frames < 400000)
         {
@@ -106,6 +109,11 @@ for (const r of all) r.stats.airs.forEach((v, k)=> airs[k] += v);
         ', combos per km ' + (sum('combos')/km).toFixed(1) + ' at x' + (sum('mult')/max1(sum('combos'))).toFixed(1) + ' on average, best combo ' + Math.max(...all.map(r=> r.stats.bestCombo || 0)));
 }
 console.log('hard landings per km: ' + (all.reduce((s, r)=> s + (r.stats.hard || 0), 0)/km).toFixed(2));
+{
+    const t = k=> all.reduce((s, r)=> s + (r.stats[k] || 0), 0), lands = t('landsNailed') + t('landsClean') + t('landsSketchy');
+    if (lands) console.log(`landings: ${(100*t('landsNailed')/lands).toFixed(0)}% nailed, ${(100*t('landsClean')/lands).toFixed(0)}% clean, ${(100*t('landsSketchy')/lands).toFixed(0)}% sketchy;` +
+        ` longest chain ${Math.max(...all.map(r=> r.stats.bestChain || 0))}; wall rides per km ${(t('wallRides')/km).toFixed(2)}, longest wall chain ${Math.max(...all.map(r=> r.stats.bestWall || 0))}`);
+}
 console.log('air time per km:  ' + ['<.5s', '.5-1s', '1-1.5s', '1.5-2s', '2-2.5s', '2.5s+'].map((l, k)=> l + ' ' + (airs[k]/km).toFixed(1)).join('   '));
 if (Object.keys(tricks).length)
 {

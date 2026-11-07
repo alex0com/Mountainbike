@@ -22,7 +22,7 @@ const FLIPS = opt('flips', false), TRICKS = has('tricks'), LANES = opt('lanes', 
 const SALT = +opt('salt', 0), BIKE = +opt('bike', 0);
 const here = path.dirname(fileURLToPath(import.meta.url));
 // --game rides another copy of the page, for comparing against an older version
-const game = pathToFileURL(opt('game', false) || path.join(here, '..', 'Downhill MTB 3D.html')).href;
+const game = pathToFileURL(opt('game', false) || path.join(here, '..', 'Downhill MTB Three.html')).href;
 
 const browser = await playwright.chromium.launch({
     args: ['--use-gl=swiftshader', '--enable-unsafe-swiftshader', '--mute-audio']});

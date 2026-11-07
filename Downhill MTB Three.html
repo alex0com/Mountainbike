@@ -4320,9 +4320,9 @@ class Matrix4
 {
     constructor(m) { this.m = new Float64Array(16); if (m) this.m.set(m); else this.m[0] = this.m[5] = this.m[10] = this.m[15] = 1; }
     static identity() { return new Matrix4; }
-    static translation(v) { const r = new Matrix4; r.m[12] = v.x; r.m[13] = v.y; r.m[14] = v.z; return r; }
+    static translation(v, r) { if (r) { r.m.fill(0); r.m[0] = r.m[5] = r.m[10] = r.m[15] = 1; } else r = new Matrix4; r.m[12] = v.x; r.m[13] = v.y; r.m[14] = v.z; return r; }
     static rotation(v, r=new Matrix4) { matrix4RotationAt(r.m, v); return r; }
-    static scaling(v) { const r = new Matrix4; r.m[0] = v.x; r.m[5] = v.y; r.m[10] = v.z; return r; }
+    static scaling(v, r) { if (r) { r.m.fill(0); r.m[15] = 1; } else r = new Matrix4; r.m[0] = v.x; r.m[5] = v.y; r.m[10] = v.z; return r; }
     copy() { return new Matrix4(this.m); }
     multiply(o)
     {
@@ -4741,6 +4741,12 @@ void main()
     if (gl_FragColor.a < .003) discard;
     #include <fog_fragment>
 }`;
+// a buffer's one range to upload this frame, from its start: the same object every frame
+function setRange(at, count)
+{
+    const r = at.updateRanges, k = at.keptRange ||= {start: 0, count: 0};
+    r.length = 0; k.start = 0; k.count = count; r.push(k);
+}
 class Dots
 {
     constructor(additive, fog=true)
@@ -4778,7 +4784,8 @@ class Dots
     {
         this.mesh.position.set(ORIGIN.x, ORIGIN.y, ORIGIN.z);
         this.geo.instanceCount = this.n;
-        for (const k of ['center', 'tint', 'size']) { const at = this.geo.attributes[k]; at.needsUpdate = true; at.clearUpdateRanges(); at.addUpdateRange(0, this.n*at.itemSize); }
+        const A = this.geo.attributes;
+        for (const at of [A.center, A.tint, A.size]) { at.needsUpdate = true; setRange(at, this.n*at.itemSize); }
         this.mesh.visible = this.n > 0;
     }
 }
@@ -4793,6 +4800,8 @@ const ORIGIN = new THREE.Vector3;
 // long each lives, its start and end size, speed, damping, gravity, the share of its life it fades in and out over,
 // how much each varies, and additive (glowing) or not
 const EMITTERS = new Set, DUST_DOTS = new Dots(false), GLOW_DOTS = new Dots(true), SKY_DOTS = new Dots(true, false);
+// particles done with, kept to be used again
+const PARTICLES = [];
 class ParticleEmitter3D
 {
     constructor(pos=vec3(), emitSize=0, emitTime=0, emitRate=100, emitConeAngle=PI, tile, colorStartA=WHITE, colorStartB=WHITE,
@@ -4804,12 +4813,13 @@ class ParticleEmitter3D
         this.data = []; this.emitBuffer = 1; this.elapsed = 0; this.from = null;
         EMITTERS.add(this);
     }
-    matrix() { return buildMatrix(this.pos3D, this.rotation3D, this.scale3D); }
+    matrix() { return buildMatrix(this.pos3D, this.rotation3D, this.scale3D, this.M ||= new Matrix4); }
     update()
     {
-        const M = this.matrix(), at = M.getTranslation(), s = max(abs(this.scale3D.x), abs(this.scale3D.y), abs(this.scale3D.z));
-        const from = this.from;
-        this.from = at;
+        // (its frame's transform in a matrix of its own, where it was last frame kept as numbers: nothing made new)
+        const M = this.matrix(), m = M.m, s = max(abs(this.scale3D.x), abs(this.scale3D.y), abs(this.scale3D.z));
+        const had = this.had, fx = this.fx, fy = this.fy, fz = this.fz, ax = m[12], ay = m[13], az = m[14];
+        this.had = true; this.fx = ax; this.fy = ay; this.fz = az;
         if (!this.emitTime || this.elapsed < this.emitTime)
         {
             const rate = this.emitRate, dt = this.emitTime ? min(timeDelta, this.emitTime - this.elapsed) : timeDelta;
@@ -4817,38 +4827,56 @@ class ParticleEmitter3D
             if (rate > 0 && rate < Infinity)
             {
                 this.emitBuffer += rate*dt + (this.emitTime && this.elapsed >= this.emitTime ? 1e-6 : 0);
-                const n = floor(this.emitBuffer), trail = from && at.distance(from) < 4;
-                for (let k = n; k--; --this.emitBuffer) this.emit(M, s, trail ? k/n : 0, from, at);
+                const n = floor(this.emitBuffer), trail = had && sqrt((ax - fx)**2 + (ay - fy)**2 + (az - fz)**2) < 4;
+                for (let k = n; k--; --this.emitBuffer) this.emit(m, s, trail ? k/n : 0, had, fx - ax, fy - ay, fz - az);
             }
         }
         else if (!this.data.length) { EMITTERS.delete(this); return; }
-        const g = this.gravity*s, d = this.damping;
-        for (let k = this.data.length; k--;)
+        const g = this.gravity*s, d = this.damping, D = this.data;
+        for (let k = D.length; k--;)
         {
-            const p = this.data[k];
+            const p = D[k];
             p.vx *= d; p.vy = p.vy*d + g; p.vz *= d;
             p.x += p.vx; p.y += p.vy; p.z += p.vz;
-            if ((p.age += timeDelta) >= p.life) { this.data[k] = this.data[this.data.length - 1]; this.data.pop(); }
+            if ((p.age += timeDelta) >= p.life) { D[k] = D[D.length - 1]; D.pop(); if (PARTICLES.length < 4000) PARTICLES.push(p); }
         }
     }
-    emit(M, s, behind, from, at)
+    // one particle out: from a random point in the ball (or box) it comes from, off in a random direction within the
+    // cone, its colours picked between the start pair and the end pair (the random numbers drawn in the same order
+    // as ever, so a seeded run is the same run)
+    emit(m, s, behind, had, bx, by, bz)
     {
-        const r = ()=> rand(1 - this.randomness, 1 + this.randomness), e = this.emitSize;
-        let o;
-        if (e instanceof Vector3) o = vec3(rand(-.5, .5)*e.x, rand(-.5, .5)*e.y, rand(-.5, .5)*e.z);
-        else { const u = randDir(1, PI); o = u.scale(e/2*Math.random()**(1/3)); }
-        const dir = M.transformDirection(randDir(1, this.emitConeAngle)).normalize(), p = M.transformPoint(o), v = this.speed*r()*s;
-        if (from && behind) { p.x += (from.x - at.x)*behind; p.y += (from.y - at.y)*behind; p.z += (from.z - at.z)*behind; }
-        const c0 = this.colorStartA.lerp(this.colorStartB, Math.random()), c1 = this.colorEndA.lerp(this.colorEndB, Math.random());
-        this.data.push({x: p.x, y: p.y, z: p.z, vx: dir.x*v, vy: dir.y*v, vz: dir.z*v, c0, c1, s0: this.sizeStart*r()*s, s1: this.sizeEnd*r()*s, life: this.particleTime*r(), age: 0});
+        const rr = this.randomness, lo = 1 - rr, hi = 1 + rr, e = this.emitSize;
+        let ox, oy, oz;
+        if (e instanceof Vector3) { ox = rand(-.5, .5)*e.x; oy = rand(-.5, .5)*e.y; oz = rand(-.5, .5)*e.z; }
+        else
+        {
+            const y = rand(cos(PI), 1), r = sqrt(max(0, 1 - y*y)), a = rand(TAU), k = e/2*Math.random()**(1/3);
+            ox = r*cos(a)*k; oy = y*k; oz = r*sin(a)*k;
+        }
+        const cy = rand(cos(this.emitConeAngle), 1), cr = sqrt(max(0, 1 - cy*cy)), ca = rand(TAU), cx = cr*cos(ca), cz = cr*sin(ca);
+        let dx = m[0]*cx + m[4]*cy + m[8]*cz, dy = m[1]*cx + m[5]*cy + m[9]*cz, dz = m[2]*cx + m[6]*cy + m[10]*cz;
+        const dl = sqrt(dx*dx + dy*dy + dz*dz);
+        if (dl) { dx *= 1/dl; dy *= 1/dl; dz *= 1/dl; } else dx = dy = dz = 0;
+        let px = m[0]*ox + m[4]*oy + m[8]*oz + m[12], py = m[1]*ox + m[5]*oy + m[9]*oz + m[13], pz = m[2]*ox + m[6]*oy + m[10]*oz + m[14];
+        const v = this.speed*rand(lo, hi)*s;
+        if (had && behind) { px += bx*behind; py += by*behind; pz += bz*behind; }
+        const p = PARTICLES.pop() || {};
+        let t = clamp(Math.random()), A = this.colorStartA, B = this.colorStartB;
+        p.r0 = B.r*t + A.r*(1 - t); p.g0 = B.g*t + A.g*(1 - t); p.b0 = B.b*t + A.b*(1 - t); p.a0 = B.a*t + A.a*(1 - t);
+        t = clamp(Math.random()); A = this.colorEndA; B = this.colorEndB;
+        p.r1 = B.r*t + A.r*(1 - t); p.g1 = B.g*t + A.g*(1 - t); p.b1 = B.b*t + A.b*(1 - t); p.a1 = B.a*t + A.a*(1 - t);
+        p.x = px; p.y = py; p.z = pz; p.vx = dx*v; p.vy = dy*v; p.vz = dz*v;
+        p.s0 = this.sizeStart*rand(lo, hi)*s; p.s1 = this.sizeEnd*rand(lo, hi)*s; p.life = this.particleTime*rand(lo, hi); p.age = 0;
+        this.data.push(p);
     }
     draw()
     {
-        const dots = this.additive ? GLOW_DOTS : DUST_DOTS, f = this.fadeRate/2;
-        for (const p of this.data)
+        const dots = this.additive ? GLOW_DOTS : DUST_DOTS, f = this.fadeRate/2, D = this.data;
+        for (let i = 0; i < D.length; ++i)
         {
-            const t = p.age/p.life, fade = t < f ? t/f : t > 1 - f ? (1 - t)/f : 1, a = p.c0, b = p.c1;
-            dots.add(p.x, p.y, p.z, p.s0 + (p.s1 - p.s0)*t, a.r + (b.r - a.r)*t, a.g + (b.g - a.g)*t, a.b + (b.b - a.b)*t, (a.a + (b.a - a.a)*t)*fade);
+            const p = D[i], t = p.age/p.life, fade = t < f ? t/f : t > 1 - f ? (1 - t)/f : 1;
+            dots.add(p.x, p.y, p.z, p.s0 + (p.s1 - p.s0)*t, p.r0 + (p.r1 - p.r0)*t, p.g0 + (p.g1 - p.g0)*t, p.b0 + (p.b1 - p.b0)*t, (p.a0 + (p.a1 - p.a0)*t)*fade);
         }
     }
     destroy() { EMITTERS.delete(this); }
@@ -4903,8 +4931,7 @@ class Batch
         const m = this.mesh;
         m.position.copy(ORIGIN); m.count = this.n; m.visible = this.n > 0;
         m.instanceMatrix.needsUpdate = true; m.instanceColor.needsUpdate = true;
-        m.instanceMatrix.clearUpdateRanges(); m.instanceMatrix.addUpdateRange(0, this.n*16);
-        m.instanceColor.clearUpdateRanges(); m.instanceColor.addUpdateRange(0, this.n*3);
+        setRange(m.instanceMatrix, this.n*16); setRange(m.instanceColor, this.n*3);
     }
 }
 const BATCHES = [];
@@ -5754,13 +5781,14 @@ function checkCows()
     }
 }
 // a cow, drawn from blocks and tubes: blue with white patches, a white face, horns, a pink nose, legs that trot
+const COW_M = new Matrix4, COW_P = {x: 0, y: 0, z: 0}, COW_R = {x: 0, y: 0, z: 0}, COW_SV = {x: COW_S, y: COW_S, z: COW_S};
 function drawCows()
 {
     for (const c of cows)
     {
         if (c.state == 'gone' || abs(c.x - camX) > 120) continue;
         const run = c.state == 'walk' || c.state == 'flee', sw = run ? sin(c.phase)*.6 : 0, bob = run ? abs(sin(c.phase))*.06 : 0;
-        MC = buildMatrix(vec3(c.x, c.y + bob, wz(c.x, c.z)), vec3(0, c.yaw - atan(wzD(c.x, c.z)), 0), vec3(COW_S));
+        MC = buildMatrix(setV(COW_P, c.x, c.y + bob, wz(c.x, c.z)), setV(COW_R, 0, c.yaw - atan(wzD(c.x, c.z)), 0), COW_SV, COW_M);
         box(vec3(0, 1.02, 0), vec3(.9, .72, 1.75), COW_BLUE);
         box(vec3(.46, 1.08, -.2), vec3(.02, .38, .55), COW_WHITE); box(vec3(-.46, .98, .35), vec3(.02, .34, .5), COW_WHITE);
         box(vec3(0, .7, .05), vec3(.72, .1, 1.1), COW_WHITE);
@@ -6393,7 +6421,14 @@ const BRANCHES = [];
 function branchesNear(x0, x1, out=BRANCHES)
 {
     out.length = 0;
-    for (const s of splits) if (s.x1 > x0 && s.x0 < x1) for (const k in s.lines) out.push(s.lines[k]);
+    for (let i = 0; i < splits.length; ++i)
+    {
+        const s = splits[i];
+        if (!(s.x1 > x0 && s.x0 < x1)) continue;
+        // (the lines as a list, made once: the same order as going through them by key)
+        const L = s.list ||= Object.values(s.lines);
+        for (let j = 0; j < L.length; ++j) out.push(L[j]);
+    }
     return out;
 }
 // how much a point of ground belongs to a branch cut through it: the height there, and how much it is trail
@@ -6476,11 +6511,17 @@ function terrainAt(x, zw)
     let zr = zw - w;
     for (let k = 0; k < 3; ++k) zr = zw - w*weaveK(zr);
     const p = groundY(x), s = smoothY(x), g = gapAt(x), bs = branchesNear(x - 1, x + 1);
-    const at = r=> { const [z, kind] = ROWS[r]; return carve(bs, x, z, rowY(kind, z, x, p, s, g) - gullyCut(x, z, kind), TCV).y; };
-    if (zr >= ROWS[0][0]) return at(0);
+    if (zr >= ROWS[0][0]) return terrainRow(0, x, p, s, g, bs);
     for (let r = 0; r < ROWS.length - 1; ++r)
-        if (zr <= ROWS[r][0] && zr >= ROWS[r + 1][0]) return mix(at(r), at(r + 1), (ROWS[r][0] - zr)/(ROWS[r][0] - ROWS[r + 1][0]));
-    return at(ROWS.length - 1);
+        if (zr <= ROWS[r][0] && zr >= ROWS[r + 1][0])
+            return mix(terrainRow(r, x, p, s, g, bs), terrainRow(r + 1, x, p, s, g, bs), (ROWS[r][0] - zr)/(ROWS[r][0] - ROWS[r + 1][0]));
+    return terrainRow(ROWS.length - 1, x, p, s, g, bs);
+}
+// one row of the ground at x, cut where the lines run
+function terrainRow(r, x, p, s, g, bs)
+{
+    const row = ROWS[r], z = row[0], kind = row[1];
+    return carve(bs, x, z, rowY(kind, z, x, p, s, g) - gullyCut(x, z, kind), TCV).y;
 }
 // how far the camera has to rise to see the rider over the ground between them, looked at a few points along the way
 function sightLift(rx, ry, rz, cx, cy, cz)
@@ -6774,7 +6815,8 @@ function updateChunks(camX, force, more=0)
         ++chunkJob.step; ++ran;
         if (done) chunkJob = null;
     }
-    for (const ch of [...chunks.values()])
+    // (a Map can lose the entry it is at while it is gone through)
+    for (const ch of chunks.values())
         if (ch.i < a - 1 || ch.i > b + 2) destroyChunk(ch);
 }
 
@@ -8076,7 +8118,7 @@ function startWreck(hit={})
     {
         const [k, side] = POSE_KEYS[i], q = J ? (side === undefined ? J[k] : J[k]?.[side]) : null;
         const p = M.transformPoint(q || vec3(x, y, z));
-        return {x: p.x, y: p.y, z: p.z, r: rad*RS, limb: RAG_LIMB.has(i)};
+        return wreckBody({x: p.x, y: p.y, z: p.z, r: rad*RS, limb: RAG_LIMB.has(i)});
     });
     // a rider coming down on their head starts partly in the ground: lifted out of it first
     const lift = max(0, ...pts.map(p=> terrainAt(p.x, p.z) + p.r - p.y));
@@ -8123,12 +8165,21 @@ function startWreck(hit={})
     {
         const c = vec3(x, y, z), w = M.transformPoint(c), R = M.copy(), out = w.subtract(mid);
         R.m[12] = R.m[13] = R.m[14] = 0;
-        return {key, c, x: w.x, y: w.y, z: w.z, r: rad*RS, wheel, R, tipAt: 1.5 + Math.random()*2,
+        return wreckBody({key, c, x: w.x, y: w.y, z: w.z, r: rad*RS, wheel, R, tipAt: 1.5 + Math.random()*2,
             vx: bx + out.x*3 + rnd()*3, vy: by + out.y*3 + Math.random()*2.5, vz: uz*.5 + out.z*4 + rnd()*5,
-            w: wheel ? vec3(rnd()*2, rnd()*2, -vx/(rad*RS)*.6) : front ? vec3(rnd()*4, rnd()*4, -(5 + Math.random()*5)) : vec3(rnd()*14, rnd()*14, rnd()*14)};
+            w: wheel ? vec3(rnd()*2, rnd()*2, -vx/(rad*RS)*.6) : front ? vec3(rnd()*4, rnd()*4, -(5 + Math.random()*5)) : vec3(rnd()*14, rnd()*14, rnd()*14)});
     });
     wheelSpinAtCrash = wheelSpin;
     rag = {x: hip.x, y: hip.y, z: hip.z};
+}
+// every number a body of the wreck keeps, there from the start (as numbers), so they stay in place in it rather than
+// each new value being made anew
+function wreckBody(b)
+{
+    const far = 1e9 + .5;
+    return {x: b.x, y: b.y, z: b.z, r: b.r, vx: b.vx ?? 0, vy: b.vy ?? 0, vz: b.vz ?? 0, ox: b.x, oy: b.y, oz: b.z, ivx: 0, ivy: 0, ivz: 0,
+        g: -far, gt: -far, gx: far, gz: far, nx: 0, ny: 1, nz: 0, nfx: far, nfz: far, hit: false, phase: 0, bt: 0, fall: 0,
+        limb: !!b.limb, key: b.key ?? '', c: b.c ?? null, wheel: !!b.wheel, R: b.R ?? null, tipAt: b.tipAt ?? 0, w: b.w ?? null};
 }
 // what the wreck can hit besides the ground: the rocks, fallen trees and logs from a little behind to a long way on,
 // as an ellipsoid each, or a trunk lying across the trail (and the cows, wherever they have got to)
@@ -8204,7 +8255,7 @@ function groundNormal(p)
 // two points pulled or pushed (half each) to within lo..hi of each other
 function keepApart(A, B, lo, hi)
 {
-    const dx = B.x - A.x, dy = B.y - A.y, dz = B.z - A.z, d = hypot(dx, dy, dz) || 1e-6, want = d < lo ? lo : d > hi ? hi : d;
+    const dx = B.x - A.x, dy = B.y - A.y, dz = B.z - A.z, d = sqrt(dx*dx + dy*dy + dz*dz) || 1e-6, want = d < lo ? lo : d > hi ? hi : d;
     if (want == d) return;
     const f = (d - want)/d*.5;
     A.x += dx*f; A.y += dy*f; A.z += dz*f; B.x -= dx*f; B.y -= dy*f; B.z -= dz*f;
@@ -8243,6 +8294,9 @@ function wreckSound(name, hit)
     wreckSfxT = time + .09;
     sfx(name);
 }
+// where the hurt rider's waving hand, kicking feet and lifting head are steered to (worked out each step in place)
+const HURT_GOAL = ['hdR', 'ftL', 'ftR', 'head'].map(n=> ({i: RAG_I[n], x: 0, y: 0, z: 0}));
+const setGoal = (g, x, y, z)=> { g.x = x; g.y = y; g.z = z; };
 function stepWreck(dt)
 {
     // (getting up in a match the rider is posed by hand, so the ragdoll's physics has nothing to move)
@@ -8270,27 +8324,28 @@ function stepWreck(dt)
                 const dx = (C.vx - sin(a)*w - p.vx)*k, dy = (C.vy + cos(a)*w - p.vy)*k;
                 p.vx += dx; p.vy += dy; sx += dx; sy += dy;
             }
-            for (const p of P) { p.vx -= sx/P.length; p.vy -= sy/P.length; }
+            for (let i = 0; i < P.length; ++i) { const p = P[i]; p.vx -= sx/P.length; p.vy -= sy/P.length; }
         }
         // down and hurt: a hand comes up and waves feebly, the legs kick slowly, the head lifts and drops back,
         // steered like the flailing, with what it gives the limbs taken back off the body
         if (state == 'crash' && crashT > 2 && !mp.rec)
         {
             const H = P[RAG_I.hip], k = 1 - damp(5, h), u = clamp01((crashT - 2)*1.5), w = t*1.1;
-            const goal = [[RAG_I.hdR, C.x + sin(t*4)*.35, C.y + .75 + .12*sin(t*2.3), C.z + .2],
-                [RAG_I.ftL, H.x + .45 + cos(w*2.3)*.3, H.y + .35 + .25*sin(w*2.3), H.z + .15],
-                [RAG_I.ftR, H.x + .45 + cos(w*2.3 + 2)*.3, H.y + .35 + .25*sin(w*2.3 + 2), H.z - .15],
-                [RAG_I.head, C.x + .1, C.y + .25 + .22*max(0, sin(t*.9)), C.z]];
+            const G = HURT_GOAL;
+            setGoal(G[0], C.x + sin(t*4)*.35, C.y + .75 + .12*sin(t*2.3), C.z + .2);
+            setGoal(G[1], H.x + .45 + cos(w*2.3)*.3, H.y + .35 + .25*sin(w*2.3), H.z + .15);
+            setGoal(G[2], H.x + .45 + cos(w*2.3 + 2)*.3, H.y + .35 + .25*sin(w*2.3 + 2), H.z - .15);
+            setGoal(G[3], C.x + .1, C.y + .25 + .22*max(0, sin(t*.9)), C.z);
             let sx = 0, sy = 0, sz = 0;
-            for (const [i, gx, gy, gz] of goal)
+            for (let j = 0; j < 4; ++j)
             {
-                const p = P[i], dx = ((gx - p.x)*4 - p.vx)*k*u, dy = ((gy - p.y)*4 - p.vy)*k*u, dz = ((gz - p.z)*4 - p.vz)*k*u;
+                const g = G[j], p = P[g.i], dx = ((g.x - p.x)*4 - p.vx)*k*u, dy = ((g.y - p.y)*4 - p.vy)*k*u, dz = ((g.z - p.z)*4 - p.vz)*k*u;
                 p.vx += dx; p.vy += dy; p.vz += dz; sx += dx; sy += dy; sz += dz;
             }
-            for (const p of P) { p.vx -= sx/P.length; p.vy -= sy/P.length; p.vz -= sz/P.length; }
+            for (let i = 0; i < P.length; ++i) { const p = P[i]; p.vx -= sx/P.length; p.vy -= sy/P.length; p.vz -= sz/P.length; }
         }
-        for (const p of P)
-        {
+        for (let i = 0; i < P.length; ++i)
+        { const p = P[i];
             p.ox = p.x; p.oy = p.y; p.oz = p.z;
             p.vy -= G_AIR*h;
             p.ivx = p.vx; p.ivy = p.vy; p.ivz = p.vz;
@@ -8302,12 +8357,12 @@ function stepWreck(dt)
         if (P.length) for (let it = 0; it < 5; ++it)
         {
             for (let j = 0; j < RAG_BONES.length; ++j) { const b = RAG_BONES[j]; keepApart(P[b[0]], P[b[1]], R.len[j], R.len[j]); }
-            for (const [a, b, lo, hi] of R.range) keepApart(P[a], P[b], lo, hi);
-            for (const p of P) if (p.y < p.g) { p.y = p.g; p.hit = true; }
-            if (titleWreck) for (const p of P) offLogo(p, false);
+            for (let j = 0; j < R.range.length; ++j) { const q = R.range[j]; keepApart(P[q[0]], P[q[1]], q[2], q[3]); }
+            for (let i = 0; i < P.length; ++i) { const p = P[i]; if (p.y < p.g) { p.y = p.g; p.hit = true; } }
+            if (titleWreck) for (let i = 0; i < P.length; ++i) { const p = P[i]; offLogo(p, false); }
         }
-        for (const p of P)
-        {
+        for (let i = 0; i < P.length; ++i)
+        { const p = P[i];
             p.vx = (p.x - p.ox)/h; p.vy = (p.y - p.oy)/h; p.vz = (p.z - p.oz)/h;
             if (p.hit)
             {
@@ -8326,14 +8381,14 @@ function stepWreck(dt)
         }
         // the pieces of the bike: tumbling, bouncing off the ground and what is on it, and the wheels rolling on down
         // the slope
-        if (!(mp.rec && crashT > REC.stood)) for (const p of pieces)
-        {
+        if (!(mp.rec && crashT > REC.stood)) for (let i = 0; i < pieces.length; ++i)
+        { const p = pieces[i];
             p.vy -= G_AIR*h;
             p.x += p.vx*h; p.y += p.vy*h; p.z += p.vz*h;
             if (titleWreck) offLogo(p, true);
             else { const b = bumpObstacles(p, p.r*.8, .35); if (b > 2) wreckSound(p.wheel ? 'thud' : 'clank', b + 3); }
             if (p.wheel && crashT > p.tipAt) p.w.x += 2.5*h*(p.key == 'rw' ? 1 : -1);
-            if (p.w.x || p.w.y || p.w.z) p.R = Matrix4.rotation(vec3(p.w.x*h, p.w.y*h, p.w.z*h)).multiply(p.R);
+            if (p.w.x || p.w.y || p.w.z) p.R.m.set(Matrix4.rotation(setV(SMV, p.w.x*h, p.w.y*h, p.w.z*h), SM).multiply(p.R).m);
             const g = groundAt(p) + p.r;
             if (p.y < g)
             {
@@ -8375,7 +8430,7 @@ function stepWreck(dt)
     S.hx = hip.x; S.hy = hip.y; S.hz = hip.z;
     // how far the yard sale has spread, for the camera to take it all in
     let spread = 0;
-    for (const p of pieces) spread = max(spread, abs(p.x - hip.x) + abs(p.z - hip.z)*.6);
+    for (let i = 0; i < pieces.length; ++i) { const p = pieces[i]; spread = max(spread, abs(p.x - hip.x) + abs(p.z - hip.z)*.6); }
     R.spread += (min(spread, 30) - R.spread)*damp(2, dt);
 }
 // a piece of the bike where it is now, turning about its own middle
@@ -8657,10 +8712,11 @@ function drawBody(J, B, k=1)
 }
 // a full-face downhill lid in its own space (forward -z, up +y): a faceted shell with a star on the brow, a peak, the
 // chin bar with its vents, goggles with an orange mirror lens on a strap round the shell
+const HELM_M = new Matrix4;
 function helmetHead(H)
 {
     const keep = MC;
-    MC = keep.copy().multiply(H);
+    HELM_M.m.set(keep.m); MC = HELM_M.multiply(H);
     const shell = (off, size, color, rot)=> drawPart(meshHelmet, buildMatrix(off, rot, size, scratch), color);
     shell(vec3(0, .01, 0), vec3(.37, .37, .41), PAL.helmet);
     shell(vec3(0, .07, .03), vec3(.33, .25, .38), PAL.helmet2);
@@ -8703,7 +8759,8 @@ function ik(a, c, l1, l2, hint)
 // bike geometry in its own space: forward is -Z, ground contact at y=0
 const RW = .37, AXLE_R = vec3(0, RW, .62), AXLE_F = vec3(0, RW, -.64), STEERER = vec3(0, .9, -.44);
 // turned about the steerer: the frame in a tailwhip, the bars in a barspin
-const aboutSteerer = (M, a)=> a ? M.copy().multiply(buildMatrix(STEERER, vec3(0, a, 0))).multiply(Matrix4.translation(STEERER.scale(-1))) : M;
+const aboutSteerer = (M, a)=> a ? M.copy().multiply(buildMatrix(STEERER, setV(SMV, 0, a, 0), undefined, SM)).multiply(Matrix4.translation(STEERER_BACK, SM)) : M;
+const STEERER_BACK = STEERER.scale(-1);
 // (G, when the bike is in pieces, gives each piece its own transform: wheels, frame, seat, fork, bars, cranks)
 function drawBike(M, cF, cR, wheelSpin, crankA, whip=0, barA=0, offF=0, offR=0, G)
 {
@@ -8870,17 +8927,19 @@ function drawRider(M, bikePts, comp, styleName, styleAmt, pull=0)
 
 // side on: the bike faces +x, pitch turns it in the screen's plane, roll tumbles it in a crash
 let airBlend = 0, pz = 0, yawV = 0, leanV = 0, bermY = 0;
+// (each part multiplied in is made in a scratch matrix from a scratch vector: only the matrix given back is new)
+const SM = new Matrix4, SMV = {x: 0, y: 0, z: 0};
 function sideMatrix(x, y, a, roll, piv, z=0, yaw=0, lean=0)
 {
     // placed on the bent world and turned along the trail's weave
-    const M = Matrix4.translation(vec3(x, y + piv, wz(x, z)));
+    const M = Matrix4.translation(setV(SMV, x, y + piv, wz(x, z)));
     yaw -= atan(wzD(x, z));
     // turned off along a branch, and leaned over into a berm
-    if (yaw) M.multiply(Matrix4.rotation(vec3(0, yaw, 0)));
-    if (lean) M.multiply(Matrix4.rotation(vec3(lean, 0, 0)));
-    M.multiply(Matrix4.rotation(vec3(a, -PI/2, roll)));
-    M.multiply(Matrix4.translation(vec3(0, -piv, 0)));
-    M.multiply(Matrix4.scaling(vec3(RS)));
+    if (yaw) M.multiply(Matrix4.rotation(setV(SMV, 0, yaw, 0), SM));
+    if (lean) M.multiply(Matrix4.rotation(setV(SMV, lean, 0, 0), SM));
+    M.multiply(Matrix4.rotation(setV(SMV, a, -PI/2, roll), SM));
+    M.multiply(Matrix4.translation(setV(SMV, 0, -piv, 0), SM));
+    M.multiply(Matrix4.scaling(setV(SMV, RS, RS, RS), SM));
     return M;
 }
 function bikeMatrix()
@@ -8889,12 +8948,13 @@ function bikeMatrix()
     const piv = .85*RS*airBlend, onSomething = grounded || grinding, t = trickAnim();
     const M = sideMatrix(px, (onSomething ? baseY : py - hopDrop) + bermY, onSomething ? ang + landVis : ang, 0, piv, pz, yawV + t.spin, leanV);
     if (hopA) hopTurn(M, hopA);
-    if (t.table) M.multiply(buildMatrix(vec3(0, .8, 0), vec3(0, 0, t.table))).multiply(Matrix4.translation(vec3(0, -.8, 0)));
+    if (t.table) M.multiply(buildMatrix(TABLE_UP, setV(SMV, 0, 0, t.table), undefined, SM)).multiply(Matrix4.translation(TABLE_DOWN, SM));
     return M;
 }
+const TABLE_UP = vec3(0, .8, 0), TABLE_DOWN = vec3(0, -.8, 0);
 // a bunny hop turns the bike up about where its back tyre meets the ground
 const HOP_PIVOT = vec3(0, 0, AXLE_R.z), HOP_BACK = vec3(0, 0, -AXLE_R.z), HOP_AXIS = vec3();
-function hopTurn(M, a) { HOP_AXIS.x = a; M.multiply(Matrix4.translation(HOP_PIVOT)).multiply(Matrix4.rotation(HOP_AXIS)).multiply(Matrix4.translation(HOP_BACK)); }
+function hopTurn(M, a) { HOP_AXIS.x = a; M.multiply(Matrix4.translation(HOP_PIVOT, SM)).multiply(Matrix4.rotation(HOP_AXIS, SM)).multiply(Matrix4.translation(HOP_BACK, SM)); }
 // the trick under way: its pose and how far round its spins are
 const TA = {};
 function trickAnim()
@@ -9228,6 +9288,7 @@ function updateVisuals(dt)
         hopT = -1; hopDrop = 0;
         const k = 1 - damp(16, dt);
         hopA *= k; hopPull *= k; hopTuck *= k;
+        if (abs(hopA) < 1e-5) hopA = 0; if (abs(hopPull) < 1e-5) hopPull = 0; if (abs(hopTuck) < 1e-5) hopTuck = 0;
     }
     // on a branch: across to its line, turned along it, leaned into the berms and riding up their walls
     let tYaw = 0, tLean = 0, tY = 0, tOff = 0;
@@ -9564,77 +9625,85 @@ function drawSkyExtras()
         for (let i = 0; i < 260; ++i)
         {
             const az = (r() - .5)*2.6, el = .05 + r()**1.4*1.3;
-            stars.push({d: vec3(sin(az)*cos(el), sin(el), -cos(az)*cos(el)), s: 2 + r()*5, tw: r()*TAU});
+            const d = vec3(sin(az)*cos(el), sin(el), -cos(az)*cos(el));
+            stars.push({d, dx: d.x*800, dy: d.y*800, dz: d.z*800, s: 2 + r()*5, tw: r()*TAU});
         }
     }
     if (night < .02) return;
-    const c = cam.pos;
-    (glow=>
+    // (no vector or colour made for each star: their places off the camera and their colour are worked out once)
+    const c = cam.pos, k = time*2, C = STAR_C;
+    for (let i = 0; i < stars.length; ++i)
     {
-        for (const s of stars) glow(c.add(s.d.scale(800)), s.s, hsl(.6,.3,.9, night*(.55 + .45*sin(time*2 + s.tw))));
-        const m = c.add(vec3(.45, .5, -.74).normalize().scale(800));
-        glow(m, 60, hsl(.6,.2,.95, night*.9));
-        glow(m, 170, hsl(.6,.5,.7, night*.15));
-    })(skyGlow);
+        const s = stars[i];
+        SKY_DOTS.add(c.x + s.dx, c.y + s.dy, c.z + s.dz, s.s, C.r, C.g, C.b, night*(.55 + .45*sin(k + s.tw)));
+    }
+    const mx = c.x + MOON_D.x, my = c.y + MOON_D.y, mz = c.z + MOON_D.z;
+    SKY_DOTS.add(mx, my, mz, 60, MOON_C.r, MOON_C.g, MOON_C.b, night*.9);
+    SKY_DOTS.add(mx, my, mz, 170, MOON_HALO.r, MOON_HALO.g, MOON_HALO.b, night*.15);
 }
+const STAR_C = hsl(.6,.3,.9), MOON_D = vec3(.45, .5, -.74).normalize().scale(800), MOON_C = hsl(.6,.2,.95), MOON_HALO = hsl(.6,.5,.7);
 
 // ---------- sprockets and battery cells: a row along the trail, a set along a rail or a line, an arc over a jump,
 // and now and then a row of blue cells on the run in to a mega booter
 const orbSeen = (o, rz)=> !o.got && o.x > camX - 40 && o.x < camX + 70 && !(abs(rz) > 2 && abs((o.z || 0) - rz) > 4);
-const orbBob = o=> W3(o.x, o.y + sin(time*3 + o.x)*.12, o.z || 0);
+const BOB = {x: 0, y: 0, z: 0}, OR = {x: 0, y: 0, z: 0}, OS = {x: 0, y: 0, z: 0}, ORB_M = new Matrix4, ORB_T = new Matrix4;
+const orbBob = o=> setV(BOB, o.x, o.y + sin(time*3 + o.x)*.12, wz(o.x, o.z || 0));
+const ORB_GLOW = {cell: hsl(.52,1,.6), tyre: hsl(.07,1,.55), gold: hsl(.12,1,.55)};
 // gold chainrings, spinning, each turned to face the camera so its teeth read from every view
 function drawSprockets()
 {
-    const m = new Matrix4, rz = riderZ(), eye = cam.pos;
+    const m = ORB_M, rz = riderZ(), eye = cam.pos;
     // cel shaded, the ink round every tooth would dull them: they glow instead, so they still read as gold
     setEmissive(meshSprocket.mat, celOn ? .55 : 0);
-    for (const o of orbs)
+    for (let i = 0; i < orbs.length; ++i)
     {
+        const o = orbs[i];
         if (o.cell || !orbSeen(o, rz)) continue;
         const p = orbBob(o);
         if (o.tyre)
         {
-            const T = Matrix4.translation(p).multiply(Matrix4.rotation(vec3(0, atan2(eye.x - p.x, eye.z - p.z), 0)))
-                .multiply(Matrix4.rotation(vec3(PI/2, 0, 0))).multiply(Matrix4.rotation(vec3(0, -time*2.5 - o.x, 0))).multiply(Matrix4.scaling(vec3(1.7)));
+            const T = Matrix4.translation(p, ORB_T).multiply(Matrix4.rotation(setV(OR, 0, atan2(eye.x - p.x, eye.z - p.z), 0), m))
+                .multiply(Matrix4.rotation(setV(OR, PI/2, 0, 0), m)).multiply(Matrix4.rotation(setV(OR, 0, -time*2.5 - o.x, 0), m)).multiply(Matrix4.scaling(setV(OS, 1.7, 1.7, 1.7), m));
             meshTyre.add(T); meshRim.add(T, PAL.silver);
             continue;
         }
-        buildMatrix(p, vec3(0, atan2(eye.x - p.x, eye.z - p.z), -time*3 - o.x), vec3(o.air ? 1.2 : 1.05), m);
+        const k = o.air ? 1.2 : 1.05;
+        buildMatrix(p, setV(OR, 0, atan2(eye.x - p.x, eye.z - p.z), -time*3 - o.x), setV(OS, k, k, k), m);
         meshSprocket.add(m);
     }
 }
 // the cells glow: a bright blue core in a spinning ring
 function drawCells()
 {
-    const m = new Matrix4, rz = riderZ();
-    for (const o of orbs)
+    const m = ORB_M, rz = riderZ();
+    for (let i = 0; i < orbs.length; ++i)
     {
+        const o = orbs[i];
         if (!o.cell || !orbSeen(o, rz)) continue;
-        const p = orbBob(o), pulse = 1 + .08*sin(time*8 + o.x);
-        buildMatrix(p, vec3(0, time*2 + o.x, 0), vec3(.75*pulse), m);
+        const p = orbBob(o), pulse = 1 + .08*sin(time*8 + o.x), k = .75*pulse;
+        buildMatrix(p, setV(OR, 0, time*2 + o.x, 0), setV(OS, k, k, k), m);
         meshCell.add(m, CELL_CORE);
-        buildMatrix(p, vec3(time*2.4 + o.x, 0, PI/2 + sin(time + o.x)*.6), vec3(1.25), m);
+        buildMatrix(p, setV(OR, time*2.4 + o.x, 0, PI/2 + sin(time + o.x)*.6), setV(OS, 1.25, 1.25, 1.25), m);
         meshCellRing.add(m, CELL_RING);
     }
 }
 function drawOrbGlow()
 {
-    const rz = riderZ();
-    (glow=>
+    const rz = riderZ(), G = ORB_GLOW;
+    G.cell.a = .6 + night*.3; G.tyre.a = .35 + night*.3; G.gold.a = .16 + night*.3;
+    for (let i = 0; i < orbs.length; ++i)
     {
-        for (const o of orbs)
-        {
-            if (!orbSeen(o, rz)) continue;
-            glow(orbBob(o), o.cell ? 3 : o.tyre ? 2.6 : o.air ? 1.9 : 1.6,
-                o.cell ? hsl(.52,1,.6,.6 + night*.3) : o.tyre ? hsl(.07,1,.55,.35 + night*.3) : hsl(.12,1,.55,.16 + night*.3));
-        }
-    })(glow);
+        const o = orbs[i];
+        if (!orbSeen(o, rz)) continue;
+        glow(orbBob(o), o.cell ? 3 : o.tyre ? 2.6 : o.air ? 1.9 : 1.6, o.cell ? G.cell : o.tyre ? G.tyre : G.gold);
+    }
 }
 function collectOrbs()
 {
     const cy = (grounded || grinding ? baseY : py) + .9*RS, rz = riderZ();
-    for (const o of orbs)
+    for (let i = 0; i < orbs.length; ++i)
     {
+        const o = orbs[i];
         if (o.got || abs(o.x - px) > 2.5 || abs((o.z || 0) - rz) > 2.4) continue;
         if ((o.x - px)**2 + (o.y - cy)**2 > (o.air ? 2.2 : 1.7)**2) continue;
         o.got = true; ++orbStreak;
@@ -9677,37 +9746,43 @@ function collectOrbs()
 }
 
 // ---------- dust, snow spray, grind sparks, falling snow
+const BW_FX = {};
 function updateEffects(dt)
 {
     const riding = state == 'ride';
-    const snowy = surfNow == S_SNOW, bw = biomeW(camX, {});
+    const snowy = surfNow == S_SNOW, bw = biomeW(camX, BW_FX);
     let rate = 0;
     // a berm throws up a big spray as the back wheel slides round
     const inBerm = ride && px > ride.x0 && px < ride.x1 && (px < ride.x0 + ride.T || px > ride.x1 - ride.T) || !ride && abs(bankAt(px)) > .15;
     if (riding && grounded)
         rate = (snowy ? 3.2 : 2)*sp + (landVis ? abs(landVis)*120 : 0) + (inBerm ? abs(leanV)*260 : 0) + (turboT > 0 ? 40 : 0) + (braking ? 160 : 0);
     dust.emitRate = min(rate, 160);
-    if (snowy) { dust.colorStartA = hsl(.6,.15,.97,.75); dust.colorStartB = hsl(.6,.2,.9,.6); }
-    else { dust.colorStartA = hsl(.08,.3,.55,.6); dust.colorStartB = hsl(.09,.25,.45,.5); }
-    dust.colorEndA = dust.colorStartA.scale(1, 0); dust.colorEndB = dust.colorStartB.scale(1, 0);
+    const D = snowy ? DUST_SNOW : DUST_DIRT;
+    dust.colorStartA = D[0]; dust.colorStartB = D[1]; dust.colorEndA = D[2]; dust.colorEndB = D[3];
     // thrown up and back off the rear wheel
     const head = -atan(wzD(px, pz)) + yawV;
-    dust.pos3D = W3(px - .75*RS, py + .15 + bermY, pz + .2);
-    dust.rotation3D = vec3(0, head, .9);
+    setW3(dust.pos3D, px - .75*RS, py + .15 + bermY, pz + .2);
+    setV(dust.rotation3D, 0, head, .9);
     sparks.emitRate = riding && grinding && !grinding.deck && !grinding.wall ? 90 : 0;
-    sparks.pos3D = W3(px - .3, py + .05, .2);
-    sparks.rotation3D = vec3(0, head, 1.1);
+    setW3(sparks.pos3D, px - .3, py + .05, .2);
+    setV(sparks.rotation3D, 0, head, 1.1);
     zap.emitRate = riding && turboT > 0 ? 160 : 0;
     const wet = riding && grounded && !onBranch(px) && gullies.some(g=> !g.bridge && abs(px - g.xc) < 2.2);
     splashFx.emitRate = wet ? 40 + sp*14 : 0;
-    splashFx.pos3D = W3(px, py + .2, pz);
-    splashFx.rotation3D = vec3(0, head, .3);
-    zap.pos3D = W3(px - .7*RS*cos(ang), (grounded ? baseY + bermY : py) + .45, pz);
-    zap.rotation3D = vec3(0, head, PI*.5 + ang);
+    setW3(splashFx.pos3D, px, py + .2, pz);
+    setV(splashFx.rotation3D, 0, head, .3);
+    setW3(zap.pos3D, px - .7*RS*cos(ang), (grounded ? baseY + bermY : py) + .45, pz);
+    setV(zap.rotation3D, 0, head, PI*.5 + ang);
     // snow falls in snow country, and lightly in the alpine at night
     snowFall.emitRate = 70*bw.snow + (runTime > 90 ? 25*bw.alpine*night : 0);
-    snowFall.pos3D = W3(camX + 6, camY + 22, camZ);
+    setW3(snowFall.pos3D, camX + 6, camY + 22, camZ);
 }
+// the dust's colours, on dirt and on snow: start pair, end pair (faded out)
+const DUST_DIRT = [hsl(.08,.3,.55,.6), hsl(.09,.25,.45,.5)], DUST_SNOW = [hsl(.6,.15,.97,.75), hsl(.6,.2,.9,.6)];
+for (const D of [DUST_DIRT, DUST_SNOW]) D.push(D[0].scale(1, 0), D[1].scale(1, 0));
+// an emitter's place or turn set where it is (its own vector, so nothing new is made each frame)
+const setV = (v, x, y, z)=> { v.x = x; v.y = y; v.z = z; return v; };
+const setW3 = (v, x, y, zr=0)=> setV(v, x, y, wz(x, zr));
 
 // rock flies apart when the turbo goes through it
 function rockBurst(r)
@@ -10176,7 +10251,7 @@ function drawHUD()
     {
         ctx.globalAlpha = clamp01(min(m.t*5, (m.dur - m.t)*3));
         const my = W > H ? H*.64 : H*.8, step = tall ? 42 : 56;
-        txt(m.title, W/2, my + i*step, fitSize(m.title, 30*sc, wide), m.color.toString(), 'center', 900);
+        txt(m.title, W/2, my + i*step, fitSize(m.title, 30*sc, wide), m.css ||= m.color.toString(), 'center', 900);
         if (m.sub) txt(m.sub, W/2, my + i*step + 26*sc, fitSize(m.sub, 15*sc, wide, 700), '#fff', 'center', 700);
         ctx.globalAlpha = 1;
     });
@@ -10367,7 +10442,7 @@ function drawSpeedLines(W, H, amount)
     {
         const s = (i*97.13) % 1, y = H*(.12 + s*.76), phase = (time*(2.2 + s) + s*7) % 1;
         const x = W*(1.1 - phase*1.3), len = 60 + 120*amount;
-        ctx.strokeStyle = 'rgba(255,255,255,' + (.08 + .18*amount)*(1 - abs(phase - .5)*1.6) + ')';
+        ctx.strokeStyle = '#fff'; ctx.globalAlpha = max(0, (.08 + .18*amount)*(1 - abs(phase - .5)*1.6));
         ctx.lineWidth = 1.5 + amount*1.5;
         ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + len, y - len*.3); ctx.stroke();
     }
@@ -11037,7 +11112,7 @@ function gameRenderPost() { noteFrame(); drawHUD(); }
 // ---------- a performance meter, for checking on a phone (?perf=1): how long each frame took from the last, the
 // game's own work in it (the ride and the camera, then handing the scene to the renderer), the worst of the last
 // few seconds, and marks where a chunk of the world was finished, more track was laid out or the quality changed
-const PERF = /[?&]perf=1\b/.test(location.search) ? {n: 300, i: 0, gap: [], logic: [], draw: [], mark: [], last: 0, upd: 0, rs: 0, ev: 0} : null;
+const PERF = /[?&]perf=1\b/.test(location.search) ? {n: 300, i: 0, gap: [], logic: [], draw: [], hud: [], mark: [], last: 0, upd: 0, rs: 0, ev: 0} : null;
 const perfMark = k=> { if (PERF) PERF.ev |= k; };
 const PERF_MARKS = [[1, '#ffd23a', 'chunk'], [2, '#5ff', 'track'], [8, '#fff', 'quality']];
 function perfTimed(f, post)
@@ -11057,7 +11132,9 @@ function perfRenderPost()
     // from the end of the update to here is the scene handed to the renderer
     P.gap[k] = P.last ? t - P.last : 16.7; P.logic[k] = P.upd; P.draw[k] = P.rs ? t - P.rs : 0; P.mark[k] = P.ev;
     P.last = t; P.upd = P.rs = P.ev = 0;
+    // and the HUD drawn over it all (timed into the frame just counted)
     gameRenderPost();
+    P.hud[k] = performance.now() - t;
     drawPerf();
 }
 function drawPerf()
@@ -11069,7 +11146,7 @@ function drawPerf()
     const ms = v=> min(h, v*h/50), bw = w/P.n;
     // 16.7 and 33 ms lines
     ctx.fillStyle = 'rgba(255,255,255,.35)'; ctx.fillRect(x0, y0 + h - ms(16.7), w, 1); ctx.fillRect(x0, y0 + h - ms(33.3), w, 1);
-    let worst = 0, hitch = 0, lsum = 0, lmax = 0, dsum = 0, dmax = 0;
+    let worst = 0, hitch = 0, lsum = 0, lmax = 0, dsum = 0, dmax = 0, hsum = 0;
     const gaps = [];
     for (let j = 0; j < n; ++j)
     {
@@ -11079,13 +11156,13 @@ function drawPerf()
         ctx.fillStyle = '#3a8cff'; ctx.fillRect(x, y0 + h - ms(l + d), max(1, bw - .3), ms(l + d));
         ctx.fillStyle = '#b07aff'; ctx.fillRect(x, y0 + h - ms(l), max(1, bw - .3), ms(l));
         for (const [bit, c] of PERF_MARKS) if (P.mark[k] & bit) { ctx.fillStyle = c; ctx.fillRect(x, y0 - 4 - 3*Math.log2(bit), max(2, bw), 2); }
-        worst = max(worst, g); hitch += g > 25; lsum += l; lmax = max(lmax, l); dsum += d; dmax = max(dmax, d); gaps.push(g);
+        worst = max(worst, g); hitch += g > 25; lsum += l; lmax = max(lmax, l); dsum += d; dmax = max(dmax, d); hsum += P.hud[k] || 0; gaps.push(g);
     }
     gaps.sort((a, b)=> a - b);
     const p95 = gaps[floor(gaps.length*.95)] || 0, f1 = v=> v.toFixed(1);
     ctx.font = '700 11px ' + FONT; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#fff';
     ctx.fillText(`${round(averageFPS)} fps   frame p95 ${f1(p95)}  worst ${f1(worst)} ms   hitches ${hitch}   q${quality}`, x0, y0 - 24);
-    ctx.fillText(`logic avg ${f1(lsum/max(1, n))} max ${f1(lmax)}   render avg ${f1(dsum/max(1, n))} max ${f1(dmax)} ms`, x0, y0 - 10);
+    ctx.fillText(`logic avg ${f1(lsum/max(1, n))} max ${f1(lmax)}   render avg ${f1(dsum/max(1, n))} max ${f1(dmax)}   hud ${f1(hsum/max(1, n))} ms`, x0, y0 - 10);
     ctx.restore();
 }
 
@@ -11484,6 +11561,8 @@ window.__mtb = {
     start: ()=> startRide(),
     // a frame drawn by hand, and a look inside, for the performance checks
     draw: ()=> drawFrame(), ev: s=> eval(s),
+    // whole frames by hand, as the engine runs them (for the performance checks), with the engine paused
+    frame: (n=1, dt=1/60)=> { for (let k = 0; k < n; ++k) { const was = paused; paused = false; runFrame(dt); paused = was; } return window.__mtb.info(); },
     // steps the game by hand, a 60th of a second at a time, with the engine paused
     // (or by frames of another length, a number or a function giving one, as a screen at another rate would)
     sim: (n, until, dt)=> { for (let k = 0; k < n; ++k) { timeDelta = typeof dt == 'function' ? dt() : dt || 1/frameRate; time += timeDelta; ++frame; gameUpdate(); gameUpdatePost(); if (until && until()) break; } return window.__mtb.info(); },
@@ -11697,21 +11776,24 @@ function devPanel()
 // what is drawn afresh each frame: the riders and the bike parts, the pickups, the glows and the particles, written
 // into their instance buffers from a spot near the camera; the logo, the flags; and the camera, the sun and its
 // shadow box round the rider, handed to three
+let ALL_DOTS;
+const SUN_OFF = new THREE.Vector3;
 function drawFrame()
 {
+    ALL_DOTS ||= [DUST_DOTS, GLOW_DOTS, SKY_DOTS];
     ORIGIN.set(round(cam.pos.x), round(cam.pos.y), round(cam.pos.z));
     for (const b of BATCHES) b.begin();
-    for (const d of [DUST_DOTS, GLOW_DOTS, SKY_DOTS]) d.begin();
+    for (const d of ALL_DOTS) d.begin();
     drawRiderView(); drawRemote(); drawCows(); drawTurboGlow(); drawSprockets(); drawCells(); drawOrbGlow(); drawSkyExtras();
     for (const e of EMITTERS) e.draw();
     for (const b of BATCHES) b.end();
-    for (const d of [DUST_DOTS, GLOW_DOTS, SKY_DOTS]) d.end();
+    for (const d of ALL_DOTS) d.end();
     updateLogo(); animateChunks();
     camera.position.set(cam.pos.x, cam.pos.y, cam.pos.z);
     camera.fov = cam.fov*180/PI; camera.updateProjectionMatrix();
     camera.lookAt(cam.look.x, cam.look.y, cam.look.z);
     sky.position.copy(camera.position);
-    const c = SHADOW.center, r = SHADOW.range*.55, d = SUN_DIR.clone().normalize().multiplyScalar(150);
+    const c = SHADOW.center, r = SHADOW.range*.55, d = SUN_OFF.copy(SUN_DIR).normalize().multiplyScalar(150);
     sunLight.target.position.set(c.x, c.y, c.z); sunLight.position.set(c.x + d.x, c.y + d.y, c.z + d.z);
     const sc = sunLight.shadow.camera;
     if (sc.right != r) { sc.left = sc.bottom = -r; sc.right = sc.top = r; sc.near = 1; sc.far = 400; sc.updateProjectionMatrix(); }
@@ -11733,15 +11815,26 @@ function drawFlare(W, H)
     if (!(flare?.intensity > .01)) return;
     const p = project(cam.pos.add(vec3(SUN_DIR.x, SUN_DIR.y, SUN_DIR.z).normalize().scale(1000)));
     if (!p || p.x < -W*.2 || p.x > W*1.2 || p.y < -H*.2 || p.y > H*1.2) return;
-    const ctx = mainContext, k = flare.intensity, dx = W/2 - p.x, dy = H/2 - p.y;
+    const ctx = mainContext, k = flare.intensity, dx = W/2 - p.x, dy = H/2 - p.y, disc = flareDisc();
     ctx.save(); ctx.globalCompositeOperation = 'lighter';
-    for (const [t, rad, a] of [[0, .22, .55], [.35, .04, .25], [.6, .07, .18], [1.1, .03, .2], [1.45, .11, .12]])
+    for (const [t, rad, a] of FLARE_RINGS)
     {
-        const x = p.x + dx*t, y = p.y + dy*t, R = rad*max(W, H), g = ctx.createRadialGradient(x, y, 0, x, y, R);
-        g.addColorStop(0, `rgba(255,236,200,${a*k})`); g.addColorStop(1, 'rgba(255,220,180,0)');
-        ctx.fillStyle = g; ctx.fillRect(x - R, y - R, 2*R, 2*R);
+        const x = p.x + dx*t, y = p.y + dy*t, R = rad*max(W, H);
+        ctx.globalAlpha = a*k;
+        ctx.drawImage(disc, x - R, y - R, 2*R, 2*R);
     }
     ctx.restore();
+}
+// where along the line through the middle each ring of the flare is, how big, how bright
+const FLARE_RINGS = [[0, .22, .55], [.35, .04, .25], [.6, .07, .18], [1.1, .03, .2], [1.45, .11, .12]];
+let FLARE_DISC = null;
+function flareDisc()
+{
+    if (FLARE_DISC) return FLARE_DISC;
+    const c = FLARE_DISC = document.createElement('canvas'), n = c.width = c.height = 256, g = c.getContext('2d'), gr = g.createRadialGradient(n/2, n/2, 0, n/2, n/2, n/2);
+    gr.addColorStop(0, 'rgba(255,236,200,1)'); gr.addColorStop(1, 'rgba(255,220,180,0)');
+    g.fillStyle = gr; g.fillRect(0, 0, n, n);
+    return c;
 }
 const UPDATE = PERF ? perfTimed(gameUpdate) : gameUpdate, UPDATE_POST = PERF ? perfTimed(gameUpdatePost, true) : gameUpdatePost;
 let lastT = 0;
@@ -11751,12 +11844,20 @@ function frameLoop(t)
     const dt = lastT ? min(.1, max(0, (t - lastT)/1000)) : 1/frameRate;
     lastT = t;
     if (dt > 0) averageFPS = averageFPS ? mix(averageFPS, 1/dt, .05) : 1/dt;
+    runFrame(dt);
+}
+// one whole frame: the game moved on (unless paused), the scene drawn, the HUD over it
+function runFrame(dt)
+{
     fitCanvases();
     if (!paused)
     {
         timeDelta = dt*slowMoK(dt); time += timeDelta; ++frame;
         UPDATE();
+        // (the particles counted in with the game's own work on the meter)
+        const te = PERF ? performance.now() : 0;
         for (const e of EMITTERS) e.update();
+        if (PERF) PERF.upd += performance.now() - te;
         UPDATE_POST();
     }
     drawFrame();

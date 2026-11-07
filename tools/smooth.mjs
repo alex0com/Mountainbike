@@ -15,7 +15,7 @@ catch { playwright = require(path.join(execSync('npm root -g').toString().trim()
 const here = path.dirname(fileURLToPath(import.meta.url));
 const args = process.argv.slice(2), opt = (k, d)=> { const i = args.indexOf('--' + k); return i < 0 ? d : args[i + 1]; };
 // --game measures another copy of the page, for comparing against an older version
-const game = pathToFileURL(opt('game') || path.join(here, '..', 'Downhill MTB 3D.html')).href;
+const game = pathToFileURL(opt('game') || path.join(here, '..', 'Downhill MTB Three.html')).href;
 const [W, H] = opt('size', '900x600').split('x').map(Number), view = opt('view', '3/4'), seeds = +opt('seeds', 3), km = +opt('km', 2), lanes = opt('lanes', 'main');
 const browser = await playwright.chromium.launch({args: ['--use-gl=swiftshader', '--enable-unsafe-swiftshader', '--mute-audio']});
 const page = await browser.newPage({viewport: {width: W, height: H}});

@@ -874,6 +874,43 @@ The rider is reworked after `art/bluecow-rider-concept.png`, at its level of det
   - **Less garbage per frame:** the rider's and bike's parts are placed with scratch matrices and plain numbers (`framed`, `bone`, `tube`, `ball`), `plus(x, y, z)` replaces `add(vec3(...))`, and `lerp` makes one vector, not three. This means fewer garbage collections, which are the hitches on a phone. The picture is pixel-identical.
   - **Checked and fine:** no shader is compiled mid-ride (7 programs at the title, the same after 3 km), and chunk building stays within its 2 ms slice.
 
+## Forks, ragdoll crashes and a leaner frame: done (Three.js version)
+- **Forks without invisible walls or floating cows.**
+  - **Cows:** a cow stands on the ground where it is (`terrainAt` at its own spot). Before, it was drawn at the height of whichever line the rider was on, so on a fork it hung metres in the air or sank into the hill.
+  - **Collisions:** cows, rocks, logs and fallen trees only meet a rider who is across from them, using how far across the trail each one is drawn (`COW_REACH`, `rockSpan`).
+  - **Placement:** no cows anywhere on a fork, and no fallen trees where its lines turn off or come back (`forkAt`, `clearForkEnd`). Tree hops don't count on a line, and the autopilot ignores cows across the trail.
+  - **Test:** a scratch fork-ride check found up to a dozen cows on forks per run and cows up to 50 m off their ground. Over 8 seeds × 5 km it now finds no events and none floating.
+- **Ragdoll crashes.**
+  - **Launch:** `crash(reason, {kind})` throws the rider by what happened:
+    - `front` (into a rock, tree or edge): over the bars, head over heels harder the faster it was going; the bike stops dead and flips over its front wheel;
+    - `slam` (a bad landing): on along the slope, bounced up a little, still turning the way the flip was;
+    - `fall` (into a chasm);
+    - `twist` (a trick gone wrong): off sideways, cartwheeling.
+  - **Start pose:** the body starts from the rider exactly as last drawn (`lastPose`), so a crash mid-trick keeps the trick's pose.
+  - **Contact:** the ground is met along its slope (`rebound`). It bounces back about a third of the hit off a real impact, and friction is as strong as the press into the ground, so a body slides and tumbles down a steep slope and stops on a gentle one. Rocks, fallen trees, logs and cows are solid, and a cow hit by a flying rider runs off.
+  - **Joints:** the head sits on a neck, and hands and feet can't fold back onto shoulders and hips (`RAG_NECK`, `RAG_REACH`).
+  - **Two-player:** the 15 points and 7 bike pieces are unchanged, so two-player sync still fits.
+  - **Big crashes:** slow motion only on big ones (very fast into something, a hard slam or fast spin, a chasm, a trick gone wrong high up): a 0.12 s freeze, then slow, easing back over 1.1 s, in real time (`slowMoK`). The camera closes in fast and punches in, then stands back to take in the yard sale.
+  - **Dust and the card:** dust flies where the body and pieces hit hard. The score card shows the WIPEOUT: how far the body tumbled, how often it bounced, how long it flew (no points).
+- **A leaner frame**, measured with the new `tools/perf.mjs` (whole frames on autopilot with the GL render left out, heap sampled).
+  - **Riding:** 173 KB of garbage and 1.21 ms of CPU a frame went to 139 KB and 1.04 ms. Most of what is left is the world being built ahead, which has to be kept anyway.
+  - **Crashing:** 157 KB and 0.92 ms went to 121 KB and 0.81 ms.
+  - **The picture is unchanged:** five seeded reference frames (day, dusk, night, title, crash) are pixel-identical, and so is a night sky with stars against the commit before. The sun's flare is within 3/255.
+  - **Particles:** no vector, matrix or colour is made per particle, and particles are reused. The random numbers are drawn in the same order, so a seeded run is the same run.
+  - **Stars and moon:** placed from offsets worked out once.
+  - **Matrices:** `sideMatrix`, the hop, the steerer, the helmet, cows, sprockets and cells build their parts in scratch matrices (`Matrix4.translation`/`scaling` take an `out`).
+  - **Orbs:** one scratch point and glow colours made once.
+  - **Smaller items:**
+    - `terrainAt` has no closure per look;
+    - the lines near a point come from a list;
+    - the buffers keep one update range each;
+    - the effects move their emitters in place;
+    - the flare is one cached disc;
+    - the speed lines use alpha, not a new colour string for each line.
+  - **The wreck:** each body is built with all its numbers from the start, which keeps them in place in memory. The ground under a resting body isn't looked up again.
+  - **A small bug:** a bunny hop's tilt now dies away to nothing instead of being worked on every frame for a minute after.
+  - **Tools:** `?perf=1` also times the particles and the HUD. `tools/sim.mjs`, `smooth.mjs` and `shot.mjs` now default to the Three.js file.
+
 ## Next: proposals
 - **More fun:**
   - pumping (hold on a downslope for speed);
@@ -1053,6 +1090,7 @@ Two kinds, so the players have different powers and different choices:
     node tools/shot.mjs --seed 3 --at 800 --view SIDE --zoom 1 --day .3 --out shot.png [--size 390x844] [--js "code"] [--game other.html]
     node tools/smooth.mjs [--view 3/4] [--size 900x600] [--seeds 3] [--km 2] [--lanes main] [--game other.html]
     node tools/listen.mjs [--out sound.wav] [--seconds 44] [--parts "loops jingles thumps"] [--game other.html]
+    node tools/perf.mjs [--frames 1800] [--seed 5] [--at 300] [--night] [--crash] [--gl] [--top 20] [--paths] [--game other.html]
 
 Open the game with `?perf=1` for the frame meter, and `?look=smooth` or `?look=cel` to pick the look (cel is the default).
 

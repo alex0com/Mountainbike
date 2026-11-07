@@ -5466,7 +5466,7 @@ function addRail(d)
 // and back into the hill, to a kicker on the summit. Off the kicker (a tap there pops it higher) the rider hucks the
 // height they have climbed, down onto a long, steep landing laid out for it. The climb scores by the height gained,
 // the huck by the drop, and the air is big enough for tricks
-let WALL_LEAN = -.75, WALL_H = 12, WALL_LEN = 90, WALL_EVERY = 500;
+let WALL_LEAN = -.4, WALL_H = 12, WALL_LEN = 90, WALL_EVERY = 500;
 const WALL_Z = -3.35, WALL_TAP = 6, WALL_DEPTH = .3;
 let walls = [], nextWallX = 650;
 function addWallRide(d)
@@ -6853,7 +6853,8 @@ function makeSign(s)
 // a stretch of a wall ride's mountainside: a jagged rock face rising from the edge of the trail up the hill, the line
 // the bike rides along it running back into the hill as it climbs; boulders on the summit, a sign before the start.
 // Each row of the face: how far behind the line (or, the first, the trail's edge) and how high, for a line h high
-const WALL_ROWS = [[null, h=> -.25], [.5, h=> .45*h], [.1, h=> h - .08], [-.6, h=> h + .85], [-1.5, h=> h + 1.7], [-2.6, h=> h + 2.1], [-4.6, h=> h + .8]];
+// (a ledge for the wheels where the line runs, the face rising well behind it, so a leaning bike stays clear of it)
+const WALL_ROWS = [[null, h=> -.25], [.5, h=> .45*h], [.3, h=> h - .08], [-.35, h=> h - .02], [-1.25, h=> h + 1], [-2.1, h=> h + 1.85], [-3.1, h=> h + 2.15], [-4.9, h=> h + .8]];
 function makeWallRock(r)
 {
     const xa = r.x0, ya = groundY(xa), mesh = new MeshData, cols = [], first = r.i == 0, last = !r.next;
@@ -6865,8 +6866,8 @@ function makeWallRock(r)
         const col = WALL_ROWS.map(([dz, f], j)=>
         {
             const z0 = dz === null ? -2.2 : j == 1 ? mix(-2.2, zp, dz) : zp + dz;
-            const jag = j >= 3 ? NV(x*.5, j*1.7 + r.i)*.45 : j == 1 ? NV(x*.4, 5)*.3*min(1, h/4) : 0;
-            const y = g + f(h)*t - (1 - t)*.3 + jag, zz = z0 + (j >= 3 ? NV(x*.35 + 5, j)*.3 : 0);
+            const jag = j >= 4 ? NV(x*.5, j*1.7 + r.i)*.45 : j == 1 ? NV(x*.4, 5)*.3*min(1, h/4) : 0;
+            const y = g + f(h)*t - (1 - t)*.3 + jag, zz = z0 + (j >= 4 ? NV(x*.35 + 5, j)*.25 : 0);
             const k = (.78 + .22*j/6)*(.9 + .2*NV(x*.3, j*.5 + 7)), w = clamp01(.35 + .5*NV(x*.2 + 2, j*.3));
             return {p: vec3(x - xa, y - ya, wz(x, zz)), c: new Color(mix(face[0], rock[0], w)*k, mix(face[1], rock[1], w)*k, mix(face[2], rock[2], w)*k)};
         });

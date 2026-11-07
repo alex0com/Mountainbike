@@ -812,6 +812,20 @@ Open the game with `?dev` (or `?=dev`) for a panel of sliders over the game. It 
 - A tap anywhere outside the open panel folds it away. That tap only folds the panel: it doesn't reach the ride.
 - **Two players** is on hold: not being worked on or tested for now.
 
+## Sharper picture: done (Three.js version)
+The game drew at no more than 1.6 pixels a point. On a 3× phone that is about half its sharpness, stretched, and on phones the cel look's frame had no edge smoothing.
+- **A quality ladder** (`applyQuality`, `QUALITY_RATIO`):
+  - 5: the screen's own sharpness (up to 3×).
+  - 4: 2.25×. This is where it starts.
+  - 3: 1.75×.
+  - 2: 1.3×.
+  - 1: 1×.
+  - 0: 1× with no shadows.
+- From 3 up, edges are smoothed (4 samples a pixel in the cel frame, on phones too) and shadows are sharp (2048). Below 3, both are lower.
+- **Adapting:** it climbs to 5 when the frames have room, and steps down when they run slow, as before.
+- **On a 3× screen** the frame went from 688×1491 to 967×2097, and up to 1290×2796 at full.
+- **In `?dev`:** a Resolution slider (0 = automatic) fixes the pixels a point. A line under it shows what is drawn now: size, pixels a point, quality step and frame rate.
+
 ## Downed trees and blue cows: done (Three.js version)
 The LittleJS version is no longer updated; new work goes into `Downhill MTB Three.html` only.
 - **Placement:** after each stretch of trail is laid out, a pass (`placeExtras`) puts these on free parts of the main trail: clear of every feature, rail, rock, gap and wall ride. That gives about a cow every 150 m and a fallen tree every 300 m.

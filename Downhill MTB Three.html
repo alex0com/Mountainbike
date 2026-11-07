@@ -4411,7 +4411,7 @@ const glCanvas = renderer.domElement, mainCanvas = document.createElement('canva
 for (const c of [glCanvas, mainCanvas]) { c.style.cssText = 'position:fixed;left:0;top:0;width:100%;height:100%;display:block;touch-action:none'; document.body.appendChild(c); }
 mainCanvas.style.pointerEvents = 'none';
 const mainCanvasSize = vec2(innerWidth, innerHeight);
-let pixelRatio = min(window.devicePixelRatio || 1, 1.6), sizeKey = '';
+let pixelRatio = min(window.devicePixelRatio || 1, 2.25), sizeKey = '';
 const setCanvasPixelRatio = r=> { pixelRatio = r; sizeKey = ''; };
 function fitCanvases()
 {
@@ -4539,23 +4539,23 @@ void main()
     gl_FragColor = vec4(c.rgb, 1.);
 }`;
 let ink = null;
-function makeInk()
+function makeInk(samples=4)
 {
-    const target = new THREE.WebGLRenderTarget(1, 1, {depthTexture: new THREE.DepthTexture(1, 1), samples: PHONE ? 0 : 4});
+    const target = new THREE.WebGLRenderTarget(1, 1, {depthTexture: new THREE.DepthTexture(1, 1), samples});
     const mat = new THREE.ShaderMaterial({
         uniforms: {tColor: {value: target.texture}, tDepth: {value: target.depthTexture}, res: {value: new THREE.Vector2(1, 1)}, near: {value: .3}, far: {value: 6000}},
         vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0., 1.); }',
         fragmentShader: INK_FRAGMENT, depthTest: false, depthWrite: false});
     const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat), quadScene = new THREE.Scene();
     quad.frustumCulled = false; quadScene.add(quad);
-    return {target, mat, quadScene, quadCam: new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1),
+    return {samples, target, mat, quadScene, quadCam: new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1),
         size(w, h) { target.setSize(max(1, round(w)), max(1, round(h))); mat.uniforms.res.value.set(max(1, round(w)), max(1, round(h))); }};
 }
 function setCel(on, keep=true)
 {
     celOn = on; CEL.value = on ? 1 : 0;
     if (keep) try { localStorage.setItem('bcr.cel', on ? '1' : '0'); } catch(e) {}
-    if (on && !ink) { ink = makeInk(); sizeKey = ''; }
+    if (on && !ink) { ink = makeInk(quality >= 3 ? 4 : 0); sizeKey = ''; }
 }
 const PHONE = /iPhone|iPad|Android/i.test(navigator.userAgent) || navigator.maxTouchPoints > 1 && /Mac/.test(navigator.platform || '');
 
@@ -9370,10 +9370,12 @@ function dustBurst(x, y, count)
 // drop the resolution and shadow detail on phones that cannot hold the frame rate
 // looked at soon after the start and often at first, on the summit as well as riding, so a slow phone is on the
 // lighter settings within a second or two; one that is very slow drops two steps at once
-// how finely the screen is drawn: 3 full, 2 a lower pixel ratio, 1 lower again with smaller shadows, 0 no shadows.
+// how finely the screen is drawn: 5 at the screen's own sharpness (up to 3 pixels a point), 4 at 2.25, 3 at 1.75 (all
+// with smoothed edges and sharp shadows), 2 at 1.3 and 1 at 1 with softer shadows and no smoothing, 0 no shadows.
+// It starts at 4 and climbs to 5 when there is room, unless ?dev fixes the resolution (RES_FIX).
 // Stepped down when the frames run slow on average, or when one in twenty runs long (a hiccup that keeps coming
 // back); stepped back up after a good while with room to spare, though not after it has had to come down a few times
-let quality = 3, qualityT = 0, qualityLooks = 0, qualityGood = 0, qualityDrops = 0;
+let quality = 4, RES_FIX = 0, qualityT = 0, qualityLooks = 0, qualityGood = 0, qualityDrops = 0;
 const frameGaps = new Float32Array(120);
 let frameGapI = 0, frameLast = 0;
 function noteFrame()
@@ -9382,11 +9384,16 @@ function noteFrame()
     if (frameLast) frameGaps[frameGapI++ % frameGaps.length] = t - frameLast;
     frameLast = t;
 }
+const QUALITY_RATIO = [1, 1, 1.3, 1.75, 2.25, 3];
 function applyQuality()
 {
-    setCanvasPixelRatio(quality == 3 ? min(window.devicePixelRatio || 1, 1.6) : quality == 2 ? min(window.devicePixelRatio || 1, 1.2) : 1);
-    SHADOW.size = quality >= 2 && !PHONE ? 2048 : 1024;
+    const dpr = window.devicePixelRatio || 1;
+    setCanvasPixelRatio(RES_FIX > 0 ? RES_FIX : min(dpr, QUALITY_RATIO[quality]));
+    SHADOW.size = quality >= 3 ? 2048 : 1024;
     SHADOW.on = quality > 0;
+    // the cel look's frame, smoothed (four samples a pixel) from 3 up
+    const samples = quality >= 3 ? 4 : 0;
+    if (ink && ink.samples != samples) { ink.target.dispose(); ink = makeInk(samples); sizeKey = ''; }
 }
 function adaptQuality(dt)
 {
@@ -9399,7 +9406,7 @@ function adaptQuality(dt)
         qualityGood = 0; ++qualityDrops;
         perfMark(8); applyQuality();
     }
-    else if (quality < 3 && qualityDrops < 3 && averageFPS > 57 && p95 > 0 && p95 < 18.5 && ++qualityGood >= 4)
+    else if (quality < 5 && qualityDrops < 3 && averageFPS > 57 && p95 > 0 && p95 < 18.5 && ++qualityGood >= 4)
     {
         ++quality; qualityGood = 0;
         perfMark(8); applyQuality();
@@ -10646,7 +10653,7 @@ function autopilotInput()
 function gameInit()
 {
     setSky(hsl(.6,.55,.42), hsl(.57,.35,.8), hsl(.3,.2,.4));
-    SHADOW.size = PHONE ? 1024 : 2048;
+    SHADOW.size = 2048;
     if (celOn) setCel(true, false);
     buildRiderMeshes();
     buildSceneMeshes();
@@ -11195,6 +11202,7 @@ const flyNow = ()=> { V_FLY = VMAX + 3 + 1.2 + FLOW_AIR; };
 const DEV_KNOBS = [
     ['TESTING'],
     ['God mode: back on the bike after a crash', 'check', ()=> GOD, v=> GOD = !!v],
+    ['Resolution (0 = automatic)', 0, 3, .25, ()=> RES_FIX, v=> { RES_FIX = v; applyQuality(); }],
     ['PHYSICS'],
     ['Gravity in the air', 6, 24, .5, ()=> G_AIR, v=> G_AIR = v],
     ['Gravity on the ground', 5, 16, .1, ()=> G_RIDE, v=> G_RIDE = v],
@@ -11279,6 +11287,11 @@ function devPanel()
         rows.push(show); show();
         body.appendChild(row);
     }
+    // what is drawn right now: the size of the frame, the pixels to a point, the quality step and the frame rate
+    const now = document.createElement('div');
+    now.style.cssText = 'opacity:.75;margin:6px 0 2px;font-size:11px';
+    body.insertBefore(now, body.children[3] || null);
+    setInterval(()=> { if (!el.classList.contains('shut')) now.textContent = `drawn at ${renderer.domElement.width}×${renderer.domElement.height} · ${pixelRatio.toFixed(2)}× · quality ${quality} · ${averageFPS.toFixed(0)} fps`; }, 500);
     body.insertAdjacentHTML('beforeend', `<div><button data-act="run">NEW RUN</button><button data-act="reset">RESET ALL</button><button data-act="copy">COPY</button></div>`);
     el.addEventListener('click', e=>
     {

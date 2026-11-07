@@ -5502,6 +5502,8 @@ function addWallRide(d)
 // how far back into the hill the line runs where it stands this high over the trail
 const wallH = (r, x)=> railY(r, x) - groundY(x);
 const wallZAt = (r, x)=> WALL_Z - max(0, wallH(r, clampV(x, r.x0, r.x1)) - 1.2)*WALL_DEPTH;
+// the same anywhere along a climb: on whichever stretch of it x is beside
+const climbZ = (g, x)=> wallZAt(g.segs.find(r=> x <= r.x1) || g.segs[g.segs.length - 1], x);
 // the wall ride the rider is beside, from a good way before it to partway up the climb (higher, no pop reaches)
 const wallStartAt = x=> onBranch(x) ? null : walls.find(g=> x > g.x0 - 14 && x < g.enterTo);
 const wallAimAt = (g, x)=> g.segs.find(r=> r.x1 - 4 > max(x + 6, r.x0 + 3.5));
@@ -7432,7 +7434,8 @@ function pedalPower()
     legT = LEG_LEN; ++legBoosts;
     sfx('chain');
 }
-const riderZ = ()=> (ride ? brZ(ride, px) : 0) + (grinding?.wall ? wallZAt(grinding, px) : wallGroup && !wallExit ? WALL_Z : 0);
+// (on a wall ride, on the rock or hopping along it, as far into the hill as the climb is there)
+const riderZ = ()=> (ride ? brZ(ride, px) : 0) + (grinding?.wall ? wallZAt(grinding, px) : wallGroup && !wallExit ? climbZ(wallGroup, px) : 0);
 function charge(pts)
 {
     if (turboT > 0 || state != 'ride') return;

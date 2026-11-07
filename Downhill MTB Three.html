@@ -5658,7 +5658,10 @@ function addCow(x)
     cows.push({x, side, z: side*(side < 0 ? 8 : 11), state: 'wait', t: 0, phase: rnd()*TAU, yaw: side < 0 ? PI : 0, y: groundY(x), dx: 0});
 }
 const cowOnTrail = c=> (c.state == 'walk' || c.state == 'stand') && abs(c.z) < 1.4;
-const cowTop = c=> rideY(c.x) + COW_TOP;
+// (the top of a cow on the main trail: from the main trail's ground, whichever line the rider is on)
+const cowTop = c=> groundY(c.x) + COW_TOP;
+// near enough across the trail to the rider to meet them: a rider out on a fork's line passes it by
+const COW_REACH = 1.3;
 function updateCows(dt)
 {
     for (const c of cows)
@@ -5689,7 +5692,8 @@ function updateCows(dt)
         }
         else if (c.state == 'stand') c.yaw += (((c.side < 0 ? PI : 0) + sin(time*.7 + c.x)*.4) - c.yaw)*damp(2, dt);
         c.phase += dt*(speed ? speed*1.9 : 0);
-        c.y = c.state == 'flee' || c.state == 'wait' ? terrainAt(c.x, wz(c.x, c.z)) : rideY(c.x);
+        // on the ground where it stands (worked out once while it waits, its spot never changing)
+        c.y = c.state == 'wait' ? c.yWait ??= terrainAt(c.x, wz(c.x, c.z)) : terrainAt(c.x, wz(c.x, c.z));
     }
 }
 // off it runs, back the way it came and a little down the mountain, mooing
@@ -5701,10 +5705,11 @@ function cowFlee(c)
 // down on its back from the air: a bounce into a new flight, scored like a landing first
 function stompCow(ox, oy)
 {
-    if (wallGroup || onBranch(px) && abs(riderZ()) > 1.5 || vy >= 0) return false;
+    if (wallGroup || vy >= 0) return false;
+    const rz = riderZ();
     for (const c of cows)
     {
-        if (!cowOnTrail(c) || abs(px - c.x) > COW_HALF) continue;
+        if (!cowOnTrail(c) || abs(px - c.x) > COW_HALF || abs(rz - c.z) > COW_REACH) continue;
         const top = cowTop(c);
         if (!(oy >= top - .05 && py <= top)) continue;
         // the bike has to come down on it near enough upright, the same as onto the ground
@@ -5731,10 +5736,11 @@ function stompCow(ox, oy)
 // into its side, on the ground or flying low: a bump, no harm done but the speed
 function checkCows()
 {
-    if (wallGroup || onBranch(px) && abs(riderZ()) > 1.5) return;
+    if (wallGroup) return;
+    const rz = riderZ();
     for (const c of cows)
     {
-        if (!cowOnTrail(c) || abs(px - c.x) > COW_HALF - .2 || py > cowTop(c) - .35) continue;
+        if (!cowOnTrail(c) || abs(px - c.x) > COW_HALF - .2 || abs(rz - c.z) > COW_REACH || py > cowTop(c) - .35) continue;
         sp *= .7;
         const th = atan(rideSlope(px));
         vx = sp*cos(th); vy = max(grounded ? 0 : vy, sp*sin(th)) + 3.6; py += .05;
@@ -5901,6 +5907,13 @@ function openFork(d)
     if (rnd() < .7 || !kinds.length) kinds.push('low');
     // (long enough for each line's feature to land a rider who rides it fast, and climb back after)
     openSplit = {x0, kinds, len: kinds.includes('pro') ? 400 + rnd()*40 : 330 + rnd()*50};
+    // nothing laid out already where the lines turn off: no cow, no fallen tree across them
+    clearForkEnd(x0 - 25, x0 + FORK_END, true);
+}
+function clearForkEnd(a, b, cowsToo)
+{
+    if (cowsToo) cows = cows.filter(c=> c.x < a || c.x > b);
+    rocks = rocks.filter(r=> r.type != 'tree' || r.x < a || r.x > b);
 }
 function closeFork(d)
 {
@@ -5913,6 +5926,7 @@ function closeFork(d)
     s.lines = {};
     for (const k of s.kinds) { const b = buildLine(s, k); s.lines[b.lane] = b; }
     splits.push(s); noSign.push({x0: s.x0 - 26, x1: s.x1 + 8});
+    clearForkEnd(s.x1 - FORK_END, s.x1 + 25, false);
     lastSplitEnd = s.x1; nextSplitGap = 40 + rnd()*60; openSplit = null;
 }
 // a line: the main trail smoothed and swung up the hill or down the slope, with its own features built on top
@@ -6141,13 +6155,21 @@ function gentleBefore(x)
     for (let k = 0; k < 35; ++k) if (groundSlope(x - k*2) - groundSlope(x - k*2 - 2) < -.07) return false;
     return true;
 }
+// a fork about here: anywhere along one (from a little before to a little after), or only at its ends, where the
+// lines run close by the main trail
+const FORK_END = 66;
+function forkAt(x, ends)
+{
+    const near = (x0, x1)=> ends ? x > x0 - 25 && x < x0 + FORK_END || x1 !== undefined && x > x1 - FORK_END && x < x1 + 25 : x > x0 - 25 && (x1 === undefined || x < x1 + 25);
+    return splits.some(s=> near(s.x0, s.x1)) || !!openSplit && near(openSplit.x0);
+}
 function placeExtras(a, b)
 {
     // (a cow with a clear run after it, for the flight off its back, and no fallen tree near)
     for (let x = max(a, nextCowX); x < b - 6; x += 5)
-        if (x > 220 && [0, 15, 30, 45].every(d=> extraFree(x + d, 6)) && !rocks.some(r=> r.x > x - 30 && r.x < x + 60)) { addCow(x); nextCowX = x + COW_EVERY*(.55 + rnd()*.95); break; }
+        if (x > 220 && [0, 15, 30, 45].every(d=> extraFree(x + d, 6)) && !forkAt(x, false) && !rocks.some(r=> r.x > x - 30 && r.x < x + 60)) { addCow(x); nextCowX = x + COW_EVERY*(.55 + rnd()*.95); break; }
     for (let x = max(a, nextTreeX); x < b - 6; x += 5)
-        if ([0, 10, 20, 30, 40, 50, 60, 70].every(d=> extraFree(x - d, 10)) && gentleBefore(x) && !cows.some(c=> c.x > x - 90 && c.x < x + 30))
+        if ([0, 10, 20, 30, 40, 50, 60, 70].every(d=> extraFree(x - d, 10)) && gentleBefore(x) && !forkAt(x, true) && !cows.some(c=> c.x > x - 90 && c.x < x + 30))
         {
             rocks.push({type: 'tree', x, w: .5, h: .85 + rnd()*.3, y: groundY(x), rot: rnd() - .5});
             nextTreeX = x + TREE_EVERY*(.6 + rnd()*.8);
@@ -7903,12 +7925,18 @@ function stepGrind(dt)
 }
 
 // ---------- rocks and logs
+// how far across the trail each kind of obstacle is drawn (z from, z to): a fallen tree's trunk and roots, a log, a
+// boulder; a rider out on a fork's line beyond it passes it by
+const rockSpan = r=> r.type == 'tree' ? [-5.7*r.h/.95, 3.6*r.h/.95] : r.type == 'log' ? [-2.1, 1.7] : [-2.2, 2.2];
 function checkRocks()
 {
-    if (onBranch(px) && abs(riderZ()) > 1.5 || wallGroup) return;
+    if (wallGroup) return;
+    const rz = riderZ();
     for (const r of rocks)
     {
-        if (r.smashed || abs(px - r.x) > r.w + .4 || py >= r.y + r.h - .18) continue;
+        if (r.smashed || abs(px - r.x) > r.w + .4 || py >= r.y + r.h - .18 || py < r.y - 1) continue;
+        const [za, zb] = rockSpan(r);
+        if (rz < za - .3 || rz > zb + .3) continue;
         // on the turbo, and just after it while still flying, the bike goes straight through
         if (turboT > 0 || turboGrace > 0)
         {
@@ -8904,7 +8932,7 @@ function rideStep(dt)
     for (const r of rocks) if (r.type == 'tree' && !r.cleared && px > r.x + r.w)
     {
         r.cleared = true;
-        if (!r.hit && !r.smashed && !grounded && !grinding && py > r.y + r.h) { addTrick('TREE HOP', 150); countTrick('TREE HOP'); addFlow(.05); }
+        if (!r.hit && !r.smashed && !grounded && !grinding && py > r.y + r.h && !onBranch(px)) { addTrick('TREE HOP', 150); countTrick('TREE HOP'); addFlow(.05); }
     }
     collectOrbs();
     if (turboGrace > 0) turboGrace -= dt;
@@ -10731,7 +10759,7 @@ function autopilotInput()
         // a cow on the trail ahead: most of the time it jumps so as to come down on its back, otherwise over it
         for (const c of cows)
         {
-            if (!cowOnTrail(c) && c.state != 'walk' || c.x < px || c.x - px > 45) continue;
+            if (!cowOnTrail(c) && c.state != 'walk' || c.x < px || c.x - px > 45 || cowOnTrail(c) && abs(riderZ() - c.z) > COW_REACH) continue;
             if (c.ap === undefined) c.ap = Math.random() < (window.__cowPilot ?? .6);
             const th = atan(rideSlope(px)), pop = POP*bike.pop, top = cowTop(c);
             let x = px, y = py + .05, wx = sp*cos(th) - sin(th)*pop*.5, wy = sp*sin(th) + cos(th)*pop*.5 + pop*.5, hit = false;

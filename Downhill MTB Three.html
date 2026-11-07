@@ -7124,13 +7124,27 @@ function buildLogo(img)
             else wi.push(base, base + 1, base + 2, base, base + 2, base + 3);
         }
     }
-    const tex = new THREE.Texture(img);
+    // the picture with its colours deepened: more saturated, the mid tones darker, whites kept white
+    const tc = document.createElement('canvas'); tc.width = img.width; tc.height = img.height;
+    const tg = tc.getContext('2d', {willReadFrequently: true});
+    tg.drawImage(img, 0, 0);
+    const id = tg.getImageData(0, 0, tc.width, tc.height), q = id.data;
+    for (let i = 0; i < q.length; i += 4)
+    {
+        const r = q[i]/255, gr = q[i + 1]/255, b = q[i + 2]/255, l = .3*r + .59*gr + .11*b;
+        q[i] = 255*clamp01(l + (r - l)*1.3)**1.2; q[i + 1] = 255*clamp01(l + (gr - l)*1.3)**1.2; q[i + 2] = 255*clamp01(l + (b - l)*1.3)**1.2;
+    }
+    tg.putImageData(id, 0, 0);
+    const tex = new THREE.Texture(tc);
     tex.flipY = false; tex.anisotropy = 4; tex.needsUpdate = true;
     const face = (data, o)=> { const m = new THREE.Mesh(data.geometry(), litMaterial({specular: .35, ...o})); m.castShadow = m.receiveShadow = true; return m; };
     const group = new THREE.Group(), sign = new THREE.Group();
     sign.add(face(new MeshData().addTriangles(fp, fi, fn, fu)), face(new MeshData().addTriangles(bp, bi, bn, fu), {color: hsl(.6,.05,.09)}),
         face(new MeshData().addTriangles(wp, wi, wn), {color: hsl(.6,.06,.12), side: THREE.DoubleSide}));
     sign.children[0].material.map = tex; sign.children[1].material.map = tex;
+    // the picture's own colours carry it, the light only shaping the relief: no sheen or haze to wash it out
+    setEmissive(sign.children[0].material, .6); sign.children[0].material.specular.setScalar(.05);
+    for (const m of sign.children) m.material.fog = false;
     sign.position.y = LOGO_LIFT;
     // two posts down into the ground
     const posts = [-2.4, 2.4].map(x=> { const m = obj(M.gatePost, hsl(.07,.35,.3)); m.position.x = x; return m; });

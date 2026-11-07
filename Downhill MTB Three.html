@@ -4387,7 +4387,8 @@ class Color
     }
     // as three's colour, red green and blue as they are (the game works in the screen's own colours, unconverted)
     three(out=new THREE.Color) { return out.setRGB(this.r, this.g, this.b); }
-    css() { const c = v=> round(255*clamp(v)); return `rgba(${c(this.r)},${c(this.g)},${c(this.b)},${clamp(this.a)})`; }
+    // as a css colour, for the HUD
+    toString() { const c = v=> round(255*clamp(v)); return `rgba(${c(this.r)},${c(this.g)},${c(this.b)},${+clamp(this.a).toFixed(3)})`; }
 }
 const hsl = (h, s, l, a=1)=> new Color().setHSLA(h, s, l, a);
 const rgb = (r, g, b, a=1)=> new Color(r, g, b, a);
@@ -4433,19 +4434,19 @@ const camera = new THREE.PerspectiveCamera(45, 1, .3, 6000);
 const cam = {pos: vec3(0, 0, 10), look: vec3(), fov: .78, lookAt(p) { this.look = p; }};
 // the ambient light from the sky above and the ground below, and the sun (or the moon), which casts the shadows.
 // (three's lit materials divide by pi, the light reaching a surface from a light of 1: so each light is pi strong)
-const hemi = new THREE.HemisphereLight(0xffffff, 0x444444, PI), sun = new THREE.DirectionalLight(0xffffff, PI);
-sun.castShadow = true;
-sun.shadow.bias = -.0004; sun.shadow.normalBias = .04;
-scene.add(hemi, sun, sun.target);
+const hemi = new THREE.HemisphereLight(0xffffff, 0x444444, PI), sunLight = new THREE.DirectionalLight(0xffffff, PI);
+sunLight.castShadow = true;
+sunLight.shadow.bias = -.0004; sunLight.shadow.normalBias = .04;
+scene.add(hemi, sunLight, sunLight.target);
 // the rider's headlamp at night
-const headlampLight = new THREE.PointLight(0xffffff, 0, 16, 1);
+const headlampLight = new THREE.PointLight(0xffffff, 0, 16, 0);
 scene.add(headlampLight);
 const SHADOW = {size: 2048, range: 55, center: vec3(), on: true};
 function setShadowMapSize(n)
 {
-    if (sun.shadow.mapSize.x == n) return;
-    sun.shadow.mapSize.set(n, n);
-    sun.shadow.map?.dispose(); sun.shadow.map = null;
+    if (sunLight.shadow.mapSize.x == n) return;
+    sunLight.shadow.mapSize.set(n, n);
+    sunLight.shadow.map?.dispose(); sunLight.shadow.map = null;
 }
 // the sky: a dome about the camera, the horizon's colour blending up into the top and down into the ground's
 const sky = new THREE.Mesh(new THREE.SphereGeometry(5000, 32, 16), new THREE.ShaderMaterial({
@@ -4489,7 +4490,7 @@ const CEL_FRAGMENT = (()=>
     return {begin, phong, pars, bsdfs};
 })();
 // a lit material: the colour of each point (from the mesh, an instance or the material) under the sky's light, the
-// sun and the lamps, banded when the look is cel shaded; emissive glows its own colour by that much; specular is the
+// sun and the lamps, banded when the look is cel shaded; emissive shows its own colour unlit by that much; specular is the
 // strength of the highlight
 function litMaterial({color=WHITE, vertexColors=false, emissive=0, specular=0, side=THREE.FrontSide, transparent=false, opacity=1, shininess=16}={})
 {
@@ -4505,7 +4506,7 @@ function litMaterial({color=WHITE, vertexColors=false, emissive=0, specular=0, s
             .replace('#include <lights_pars_begin>', CEL_FRAGMENT.pars)
             .replace('#include <lights_phong_pars_fragment>', CEL_FRAGMENT.phong)
             .replace('#include <lights_fragment_begin>', CEL_FRAGMENT.begin)
-            .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n\ttotalEmissiveRadiance += diffuseColor.rgb*emissiveK;');
+            .replace('#include <opaque_fragment>', 'outgoingLight = mix(outgoingLight, diffuseColor.rgb, emissiveK);\n#include <opaque_fragment>');
     };
     m.customProgramCacheKey = ()=> 'cel';
     return m;
@@ -8627,7 +8628,7 @@ function updateSky(dt)
     // the sun crosses the sky by day, the moon by night
     const arc = night > .5 ? (dayT - .68)/.3 : dayT/.62;
     SUN_DIR.set(mix(-.8, .8, clamp01(arc)), max(.06, height), .55);
-    col3(sun).scale(bright, 1).three(sun.color);
+    col3(sun).scale(bright, 1).three(sunLight.color);
     new Color(top[0]*.5 + .07, top[1]*.5 + .07, top[2]*.5 + .1).three(hemi.color);
     new Color(bot[0]*.5 + .04, bot[1]*.5 + .04, bot[2]*.5 + .05).three(hemi.groundColor);
     if (flare) flare.intensity = .7*(1 - night)*clamp01(height*4);
@@ -10534,6 +10535,8 @@ window.__mtb = {
     mpHost: ()=> { mpHost(); startRide(); }, mpJoin: c=> mpJoin(c), mpLeave: ()=> mpLeave(), mpTune: o=> Object.assign(MP, o),
     brake: on=> { brakeHeld = on; }, tyresTo: n=> { brakeFuel = n >= 3 ? BRAKE_LEN : 0; },
     endRun: ()=> endRun(),
+    // a crash on demand, for checking how the wreck looks
+    crash: reason=> crash(reason || 'TEST'),
     // the middle of rider and bike as drawn, for close-ups
     riderAt: ()=> wrecked() ? vec3(rag.x, rag.y, rag.z) : bikeMatrix().transformPoint(vec3(0, 1, 0)),
     // where the wheels touch down as drawn, back then front, and the hop's pitch, for checking how a hop looks
@@ -10607,10 +10610,10 @@ function drawFrame()
     camera.lookAt(cam.look.x, cam.look.y, cam.look.z);
     sky.position.copy(camera.position);
     const c = SHADOW.center, r = SHADOW.range*.55, d = SUN_DIR.clone().normalize().multiplyScalar(150);
-    sun.target.position.set(c.x, c.y, c.z); sun.position.set(c.x + d.x, c.y + d.y, c.z + d.z);
-    const sc = sun.shadow.camera;
+    sunLight.target.position.set(c.x, c.y, c.z); sunLight.position.set(c.x + d.x, c.y + d.y, c.z + d.z);
+    const sc = sunLight.shadow.camera;
     if (sc.right != r) { sc.left = sc.bottom = -r; sc.right = sc.top = r; sc.near = 1; sc.far = 400; sc.updateProjectionMatrix(); }
-    sun.castShadow = SHADOW.on;
+    sunLight.castShadow = SHADOW.on;
     setShadowMapSize(SHADOW.size);
     if (celOn && ink)
     {

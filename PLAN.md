@@ -808,6 +808,9 @@ Open the game with `?dev` (or `?=dev`) for a panel of sliders over the game. It 
 - **Applying:** changes apply at once while riding. Things laid out with the trail apply to the trail laid out from then on: NEW RUN starts afresh with them.
 - **Keeping:** values are kept on the device (`bcr.dev`, only the ones changed). RESET ALL goes back to the defaults, and COPY puts the changed values on the clipboard as JSON to send.
 - The panel keeps its own touches and keys: moving a slider never jumps the bike.
+- **God mode** (a switch at the top, kept like the sliders): instead of a crash, the rider is put straight back on the bike where it happened. That's past whatever they hit and out of any chasm, at no less than the cruise speed, with a SAVED message naming the crash (`godSave`).
+- A tap anywhere outside the open panel folds it away. That tap only folds the panel: it doesn't reach the ride.
+- **Two players** is on hold: not being worked on or tested for now.
 
 ## Downed trees and blue cows: done (Three.js version)
 The LittleJS version is no longer updated; new work goes into `Downhill MTB Three.html` only.

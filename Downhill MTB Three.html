@@ -7929,9 +7929,31 @@ function checkRocks()
 }
 
 // ---------- crashing: a run ends with a tumble
+// god mode (?dev): instead of a crash, the rider is put straight back on the bike where it happened, past what they
+// hit and out of any chasm, and rides on
+let GOD = false;
+function godSave(reason)
+{
+    let x = px;
+    for (let k = 0; k < 400; ++k)
+    {
+        const r = rocks.find(r=> !r.smashed && abs(x - r.x) < r.w + 1.2);
+        if (r) { x = r.x + r.w + 1.5; continue; }
+        if (rideGap(x) || abs(rideSlope(x)) > 1.4) { x += .5; continue; }
+        break;
+    }
+    wallGroup = wallSeg = null; wallExit = false; grinding = null; style = undefined; stylesDone = []; trickQueued = null;
+    const th = atan(rideSlope(x));
+    px = x; py = baseY = rideY(x); grounded = true; ang = th; angVel = 0; rot = 0; airT = 0; landVis = 0; hopT = -1;
+    sp = max(sp*.7, VMIN); vx = sp*cos(th); vy = sp*sin(th);
+    fly = null; sideOff = 0;
+    showMessage('SAVED', reason.toLowerCase() + ' · god mode', hsl(.75,.6,.75));
+    camShake = max(camShake, .3);
+}
 function crash(reason)
 {
     if (state != 'ride') return;
+    if (GOD) { godSave(reason); return; }
     state = 'crash'; crashT = 0; crashReason = reason;
     flow = flowTarget = surgeA = 0; flowLevel = 0; chain = chainT = 0; wallGroup = wallSeg = null;
     window.__lastCrash = {reason, px: +px.toFixed(1), ride: ride ? ride.lane : 0, z: +riderZ().toFixed(1), turbo: +turboT.toFixed(2), tk: takeoffKind, tkx: +takeoffX.toFixed(1), rot: +(rot*57).toFixed(0), ang: +(ang*57).toFixed(0), slope: +(atan(rideSlope(px))*57).toFixed(0), airT: +airT.toFixed(2), sp: +sp.toFixed(1), vx: +vx.toFixed(1), vy: +vy.toFixed(1), style: style?.name, styleT: +styleT.toFixed(2), flightT: window.__flightT, grounded, frame};
@@ -11171,6 +11193,8 @@ window.__mtb = {
 const DEV = /[?&](dev\b|=dev\b)/.test(location.search);
 const flyNow = ()=> { V_FLY = VMAX + 3 + 1.2 + FLOW_AIR; };
 const DEV_KNOBS = [
+    ['TESTING'],
+    ['God mode: back on the bike after a crash', 'check', ()=> GOD, v=> GOD = !!v],
     ['PHYSICS'],
     ['Gravity in the air', 6, 24, .5, ()=> G_AIR, v=> G_AIR = v],
     ['Gravity on the ground', 5, 16, .1, ()=> G_RIDE, v=> G_RIDE = v],
@@ -11205,25 +11229,27 @@ const DEV_KNOBS = [
     ['Day length (s)', 30, 600, 10, ()=> DAY_LEN, v=> DAY_LEN = v],
     ['Time of day', 0, .99, .01, ()=> dayT, v=> dayT = v, true]];
 const DEV_DEFAULTS = {};
+// a knob's value, a slider's or a switch's
+const knobGet = k=> k[1] == 'check' ? +k[2]() : k[4](), knobSet = (k, v)=> k[1] == 'check' ? k[3](v) : k[5](v);
 function devSaved() { try { return JSON.parse(localStorage.getItem('bcr.dev')) || {}; } catch(e) { return {}; } }
 function devSave()
 {
     const o = {};
-    for (const k of DEV_KNOBS) if (k.length > 1 && !k[6] && k[4]() != DEV_DEFAULTS[k[0]]) o[k[0]] = k[4]();
+    for (const k of DEV_KNOBS) if (k.length > 1 && !k[6] && knobGet(k) != DEV_DEFAULTS[k[0]]) o[k[0]] = knobGet(k);
     try { localStorage.setItem('bcr.dev', JSON.stringify(o)); } catch(e) {}
 }
 function devPanel()
 {
-    for (const k of DEV_KNOBS) if (k.length > 1) DEV_DEFAULTS[k[0]] = k[4]();
+    for (const k of DEV_KNOBS) if (k.length > 1) DEV_DEFAULTS[k[0]] = knobGet(k);
     const saved = devSaved();
-    for (const k of DEV_KNOBS) if (k.length > 1 && saved[k[0]] !== undefined) k[5](+saved[k[0]]);
+    for (const k of DEV_KNOBS) if (k.length > 1 && saved[k[0]] !== undefined) knobSet(k, +saved[k[0]]);
     const css = document.createElement('style');
     css.textContent = `#dev{position:fixed;right:8px;top:calc(env(safe-area-inset-top,0px) + 132px);z-index:10;width:min(310px,84vw);max-height:calc(100% - 150px);
         overflow:auto;background:rgba(10,14,24,.88);color:#fff;font:12px system-ui,-apple-system,sans-serif;border:1px solid rgba(255,255,255,.3);
         border-radius:12px;padding:8px 10px;touch-action:pan-y;-webkit-user-select:none;user-select:none}
         #dev.shut{width:auto;overflow:hidden}#dev.shut .body{display:none}#dev h4{margin:10px 0 2px;font-size:11px;color:#ffd23a;letter-spacing:.06em}
         #dev .row{margin:4px 0}#dev .row div{display:flex;justify-content:space-between}#dev .row b{font-weight:700;color:#7fd0ff}
-        #dev input{width:100%;margin:2px 0 0;accent-color:#ffd23a;touch-action:none}#dev button{font:700 12px system-ui;color:#fff;background:rgba(255,255,255,.12);
+        #dev input{width:100%;margin:2px 0 0;accent-color:#ffd23a;touch-action:none}#dev .check{display:flex;align-items:center;gap:6px;margin:6px 0}#dev .check input{width:auto;margin:0}#dev button{font:700 12px system-ui;color:#fff;background:rgba(255,255,255,.12);
         border:1px solid rgba(255,255,255,.4);border-radius:8px;padding:5px 9px;margin:6px 4px 0 0}#dev .top{display:flex;justify-content:space-between;align-items:center}`;
     document.head.appendChild(css);
     const el = document.createElement('div');
@@ -11233,6 +11259,17 @@ function devPanel()
     for (const k of DEV_KNOBS)
     {
         if (k.length == 1) { body.insertAdjacentHTML('beforeend', `<h4>${k[0]}</h4>`); continue; }
+        if (k[1] == 'check')
+        {
+            const [name, , get, set] = k, row = document.createElement('label');
+            row.className = 'row check';
+            row.innerHTML = `<input type="checkbox"> <span>${name}</span>`;
+            const box = row.querySelector('input'), show = ()=> { box.checked = get(); };
+            box.addEventListener('change', ()=> { set(box.checked); devSave(); });
+            rows.push(show); show();
+            body.appendChild(row);
+            continue;
+        }
         const [name, lo, hi, st, get, set] = k, row = document.createElement('div');
         row.className = 'row';
         row.innerHTML = `<div><span>${name}</span><b></b></div><input type="range" min="${lo}" max="${hi}" step="${st}">`;
@@ -11248,7 +11285,7 @@ function devPanel()
         const act = e.target.dataset?.act;
         if (act == 'toggle') { el.classList.toggle('shut'); e.target.textContent = el.classList.contains('shut') ? 'DEV ▸' : 'DEV ▾'; }
         else if (act == 'run') { newRun(nextSeed()); startRide(); }
-        else if (act == 'reset') { for (const k of DEV_KNOBS) if (k.length > 1 && !k[6]) k[5](DEV_DEFAULTS[k[0]]); devSave(); rows.forEach(f=> f()); }
+        else if (act == 'reset') { for (const k of DEV_KNOBS) if (k.length > 1 && !k[6]) knobSet(k, DEV_DEFAULTS[k[0]]); devSave(); rows.forEach(f=> f()); }
         else if (act == 'copy') { const t = localStorage.getItem('bcr.dev') || '{}'; navigator.clipboard?.writeText(t).catch(()=> {}); e.target.textContent = 'COPIED'; setTimeout(()=> e.target.textContent = 'COPY', 1200); }
     });
     // the panel's own touches and keys stay with it, out of the game
@@ -11256,6 +11293,16 @@ function devPanel()
         el.addEventListener(t, e=> e.stopPropagation());
     // the time of day moves on its own: kept up to date while the panel is open
     setInterval(()=> { if (!el.classList.contains('shut')) rows[rows.length - 1](); }, 500);
+    // a tap anywhere else folds it away (and only folds it: the tap doesn't reach the ride)
+    const fold = ()=> { el.classList.add('shut'); el.querySelector('[data-act=toggle]').textContent = 'DEV ▸'; };
+    addEventListener('pointerdown', e=>
+    {
+        if (el.classList.contains('shut') || el.contains(e.target)) return;
+        fold(); e.stopPropagation(); e.preventDefault(); swallow.add(e.pointerId);
+    }, true);
+    const swallow = new Set;
+    for (const t of ['pointerup', 'pointercancel', 'pointermove'])
+        addEventListener(t, e=> { if (!swallow.has(e.pointerId)) return; e.stopPropagation(); if (t != 'pointermove') swallow.delete(e.pointerId); }, true);
     // folded away to start with on a phone, out of the way of the ride
     if (innerWidth < 600) { el.classList.add('shut'); el.querySelector('[data-act=toggle]').textContent = 'DEV ▸'; }
     document.body.appendChild(el);

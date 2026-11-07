@@ -8159,44 +8159,33 @@ function drawRagdoll(pts = ragdoll.pts)
     const P = pts.map(p=> vec3(p.x, p.y, p.z)), q = n=> P[RAG_I[n]], k = RS;
     // which way the rider faces: up the back and across the shoulders
     const up = q('head').subtract(q('hip')).normalize(), fwd = up.cross(q('shL').subtract(q('shR'))).normalize();
-    tube(q('hip'), q('chest'), .31*k, PAL.jersey);
-    ball(q('chest'), .35*k, PAL.jersey);
-    tube(q('chest').add(fwd.scale(-.14*k)), q('chest').lerp(q('hip'), .6).add(fwd.scale(-.14*k)), .16*k, PAL.pack);
-    ball(q('hip'), .31*k, PAL.pants);
-    tube(q('chest'), q('head'), .11*k, PAL.black);
-    // the helmet, turned the way the body faces
-    const z = fwd.scale(-1), x = up.cross(z).normalize(), y = z.cross(x);
-    const h = q('head');
-    helmetHead(new Matrix4([x.x, x.y, x.z, 0, y.x, y.y, y.z, 0, z.x, z.y, z.z, 0, h.x, h.y, h.z, 1]).multiply(Matrix4.scaling(vec3(k))));
-    for (const s of ['L', 'R'])
-    {
-        const sh = q('sh' + s), el = q('el' + s), hd = q('hd' + s), hp = q('hp' + s), kn = q('kn' + s), ft = q('ft' + s);
-        ball(sh, .16*k, PAL.jersey2);
-        tube(sh, el, .12*k, PAL.jersey2); ball(el, .11*k, PAL.jersey);
-        tube(el, hd, .1*k, PAL.jersey); ball(hd, .1*k, PAL.glove);
-        tube(hp, kn, .17*k, PAL.pants); ball(kn, .17*k, PAL.pad);
-        tube(kn, ft, .13*k, PAL.pants); ball(ft, .14*k, PAL.shoe);
-    }
+    const z = fwd.scale(-1), x = up.cross(z).normalize(), y = z.cross(x), h = q('head');
+    drawBody({head: h, chest: q('chest'), hip: q('hip'), sh: [q('shL'), q('shR')], el: [q('elL'), q('elR')], hd: [q('hdL'), q('hdR')],
+        hp: [q('hpL'), q('hpR')], kn: [q('knL'), q('knR')], ft: [q('ftL'), q('ftR')],
+        headM: new Matrix4([x.x, x.y, x.z, 0, y.x, y.y, y.z, 0, z.x, z.y, z.z, 0, h.x, h.y, h.z, 1]).multiply(Matrix4.scaling(vec3(k)))}, {x, y, z}, k);
 }
 
 // ============================================================================
 // BIKE AND RIDER - drawn from parts each frame so the suspension, cranks, legs
 // and arms can move; poses for riding, tucking and the style tricks
 // ============================================================================
-let meshTube, meshBall, meshBox, meshTyre, meshRim, meshSpokes, meshDisc, meshRing, meshSprocket, meshHelmet, meshCell, meshCellRing;
+let meshTube, meshLimb, meshPlate, meshBall, meshBox, meshTyre, meshRim, meshSpokes, meshDisc, meshRing, meshSprocket, meshHelmet, meshCell, meshCellRing;
 const CELL_CORE = hsl(.52,1,.68), CELL_RING = hsl(.5,1,.8);
-// a downhill racer on a downhill bike: race red frame, gold stanchions, an orange coil; black and red kit, white lid
+// the Bluecow racer, after the concept sheet: a royal blue bike with a gold fork and black parts; a two-tone blue
+// jersey, black pants, pads, gloves, shoes and pack, a blue lid with a white star and orange mirror goggles
 const PAL = {
-    frame: hsl(.995,.82,.47), frameDark: hsl(0,0,.12), gold: hsl(.085,.72,.52), black: hsl(0,0,.09),
-    silver: hsl(.6,.05,.72), chain: hsl(.6,.04,.42), spring: hsl(.07,.95,.55), tyre: hsl(0,0,.07), mark: hsl(.14,1,.55), decal: hsl(0,0,.95),
-    jersey: hsl(0,0,.13), jersey2: hsl(.995,.8,.5), white: hsl(0,0,.94), pants: hsl(.6,.06,.27), pad: hsl(0,0,.1),
-    shoe: hsl(0,0,.1), sole: hsl(.07,.45,.32), glove: hsl(.995,.8,.46), pack: hsl(0,0,.11),
-    helmet: hsl(0,0,.95), helmet2: hsl(.995,.82,.5), lens: hsl(.06,1,.55), lens2: hsl(.13,1,.6),
+    frame: hsl(.62,.75,.48), frameDark: hsl(.62,.1,.1), gold: hsl(.11,.55,.57), black: hsl(.62,.1,.09),
+    silver: hsl(.6,.05,.72), chain: hsl(.6,.04,.42), spring: hsl(.11,.6,.55), tyre: hsl(0,0,.07), mark: hsl(.11,.55,.6), decal: hsl(0,0,.95),
+    jersey: hsl(.62,.75,.45), jersey2: hsl(.615,.9,.6), white: hsl(0,0,.94), pants: hsl(.62,.08,.11), pad: hsl(.62,.07,.16),
+    shoe: hsl(.62,.08,.1), sole: hsl(.62,.04,.36), glove: hsl(.62,.08,.1), pack: hsl(.62,.07,.12), strap: hsl(.62,.08,.07),
+    kneecap: hsl(.62,.06,.22), goggle: hsl(0,0,.06),
+    helmet: hsl(.62,.78,.48), helmet2: hsl(.615,.85,.58), lens: hsl(.03,1,.55), lens2: hsl(.12,1,.62),
     battery: hsl(.6,.08,.16), motor: hsl(.6,.05,.22)};
 
-// the kits to ride in, each a set of the colours above over the plain black and red one, which is the last
+// the kits to ride in, each a set of the colours above over the Bluecow one, which is the first
 const PAL_BASE = {...PAL};
 const KITS = [
+    ['BLUECOW', {}],
     ['ELECTRIC CITRUS', {jersey: hsl(.15,1,.55), jersey2: hsl(.52,1,.5), white: hsl(0,0,.1), pants: hsl(0,0,.14), pad: hsl(.52,1,.45), glove: hsl(.52,1,.5),
         helmet: hsl(.15,1,.55), helmet2: hsl(.52,1,.45), pack: hsl(0,0,.12), frame: hsl(0,0,.12), decal: hsl(.15,1,.55), spring: hsl(.15,1,.55)}],
     ['RETRO POP', {jersey: hsl(.92,.9,.6), jersey2: hsl(.48,.85,.5), white: hsl(.15,1,.6), pants: hsl(.75,.55,.38), pad: hsl(.48,.85,.45), glove: hsl(.48,.85,.5),
@@ -8207,7 +8196,8 @@ const KITS = [
         helmet: hsl(.07,1,.55), helmet2: hsl(0,0,.96), pack: hsl(.62,.4,.2), frame: hsl(0,0,.95), decal: hsl(.07,1,.55), spring: hsl(.07,1,.55)}],
     ['ICE LIME', {jersey: hsl(0,0,.96), jersey2: hsl(.24,1,.5), white: hsl(.55,.8,.6), pants: hsl(.58,.15,.75), pad: hsl(.24,1,.45), glove: hsl(.24,1,.5),
         helmet: hsl(0,0,.12), helmet2: hsl(.24,1,.5), pack: hsl(.55,.3,.35), frame: hsl(.24,1,.45), decal: hsl(0,0,.1), spring: hsl(.24,1,.5)}],
-    ['STEALTH', {}]];
+    ['STEALTH', {jersey: hsl(0,0,.13), jersey2: hsl(.995,.8,.5), pants: hsl(.6,.06,.27), pad: hsl(0,0,.1), glove: hsl(.995,.8,.46),
+        helmet: hsl(0,0,.95), helmet2: hsl(.995,.82,.5), pack: hsl(0,0,.11), frame: hsl(.995,.82,.47), spring: hsl(.07,.95,.55), decal: hsl(0,0,.95)}]];
 // the bikes, each riding its own way: top speed (m/s over the usual), pop off the ground, how fast it flips, how
 // forgiving its landings are, and how long its turbo lasts and how fast it charges; and how it is built
 const BIKES = [
@@ -8239,9 +8229,12 @@ function setBike(i)
 
 function buildRiderMeshes()
 {
-    const R = {specular: .45};
-    meshTube = batch(buildCylinder(1, 1, 8, true), R);
-    meshBall = batch(buildSphere(1, 10, 7, true), R);
+    // (a soft sheen: on big flat facets a strong one would wash whole faces out to white)
+    const R = {specular: .12, shininess: 24};
+    // faceted, the low-poly look of the concept sheet: six-sided tubes, tapered limbs, gem-cut balls
+    meshTube = batch(buildCylinder(1, 1, 6, false), R);
+    meshLimb = batch(buildLathe([[.5, -.5], [.39, .5]], 6, false), R);
+    meshBall = batch(buildSphere(1, 7, 5, false), R);
     meshBox = batch(buildBox(1), R);
     // knobbly downhill tyres: two staggered rows of blocks round the tread
     const tyre = buildTorus(.74, .12, 22, 7, true).setColor(PAL.tyre);
@@ -8257,7 +8250,11 @@ function buildRiderMeshes()
         tyre.combine(buildBox(vec3(.035, .012, .045)).setColor(PAL.mark), buildMatrix(vec3(cos(a)*.31, side*.056, sin(a)*.31), vec3(0, -a, 0)));
     }
     meshTyre = batch(tyre, R);
-    meshHelmet = batch(buildSphere(1, 12, 8, true), R);
+    meshHelmet = batch(buildSphere(1, 9, 6, false), {specular: .3, shininess: 40});
+    // the number plate on the bars: a white board in a blue rim with a black number
+    const plate = new MeshData().combine(buildBox(vec3(.36, .27, .02)).setColor(hsl(.62,.78,.48)), vec3(0, 0, .005))
+        .combine(buildBox(vec3(.31, .22, .02)).setColor(hsl(0,0,.95)), vec3(0, 0, -.006)).combine(buildText3D('7', .17, .02).setColor(hsl(.62,.1,.1)), buildMatrix(vec3(0, -.005, -.018), vec3(0, PI, 0)));
+    meshPlate = batch(plate, R);
     meshRim = batch(buildTorus(.6, .04, 22, 5, true).setColor(PAL.black), R);
     meshDisc = batch(buildCylinder(.2, .012, 14).setColor(PAL.silver), R);
     meshRing = batch(buildTorus(.22, .03, 14, 4).setColor(PAL.silver), R);
@@ -8303,26 +8300,133 @@ function tube(a, b, dia, color)
 }
 function ball(p, dia, color) { drawPart(meshBall, buildMatrix(p, undefined, vec3(dia), scratch), color); }
 
-// a full-face downhill helmet in its own space (forward -z, up +y), drawn under H: the shell and its red band, the
-// chin bar with its vent, the peak, and the goggles on their strap
+function box(p, size, color, rot) { drawPart(meshBox, buildMatrix(p, rot, size, scratch), color); }
+
+// ---------- the rider's body: a chunky downhill racer in faceted low-poly, after the concept sheet
+// (art/bluecow-rider-concept.png): a broad two-tone blue jersey, a big black pack with its straps, a lid, pockets and
+// a hose; black pants with knee and elbow pads, chunky gloves and shoes; a full-face lid with goggles. One routine
+// draws it riding (joints from the pose, in the bike's own space) and wrecked (joints from the ragdoll, in the world)
+// a part placed in a frame: centre p, axes x y z (unit vectors), sizes along them
+function framed(parts, p, B, sx, sy, sz, color)
+{
+    const {x, y, z} = B;
+    drawPart(parts, new Matrix4([x.x*sx, x.y*sx, x.z*sx, 0, y.x*sy, y.y*sy, y.z*sy, 0, z.x*sz, z.y*sz, z.z*sz, 0, p.x, p.y, p.z, 1]), color);
+}
+// a frame with y along a to b, x as near side as it can be across it
+function boneFrame(a, b, side)
+{
+    const yv = b.subtract(a), len = yv.length(), y = len > 1e-6 ? yv.scale(1/len) : vec3(0, 1, 0);
+    let x = side.subtract(y.scale(side.dot(y)));
+    x = x.lengthSquared() > 1e-8 ? x.normalize() : (abs(y.x) < .9 ? vec3(1, 0, 0) : vec3(0, 0, 1)).cross(y).normalize();
+    return {x, y, z: x.cross(y), len};
+}
+// a limb or a muscle along a bone, from a (its thick end) to b: w across it sideways, d front to back
+function bone(parts, a, b, w, d, side, color, over=0)
+{
+    const F = boneFrame(a, b, side);
+    if (F.len < 1e-4) return;
+    framed(parts, a.add(b).scale(.5), F, w, F.len*(1 + over), d, color);
+}
+// the body, from its joints J (head, chest, hip, and pairs: shoulders, elbows, hands, hips, knees, feet: [left, right])
+// and its frame B (x to the rider's left, y up the back, z back toward the pack), k its scale
+function drawBody(J, B, k=1)
+{
+    const {x: X, y: Y, z: Z} = B, at = (p, dx, dy, dz)=> p.add(X.scale(dx*k)).add(Y.scale(dy*k)).add(Z.scale(dz*k));
+    const g = (p, sx, sy, sz, c)=> framed(meshBall, p, B, sx*k, sy*k, sz*k, c), bx = (p, sx, sy, sz, c, F=B)=> framed(meshBox, p, F, sx*k, sy*k, sz*k, c);
+    const {chest, hip, head} = J;
+    // the torso: a broad chest over a narrower middle, lighter facets across the chest and the shoulders
+    g(hip.lerp(chest, .5), .4, .38, .3, PAL.jersey);
+    g(at(chest, 0, -.01, 0), .58, .42, .38, PAL.jersey);
+    g(at(chest, 0, .15, .02), .36, .14, .24, PAL.jersey);
+    for (const s of [-1, 1])
+    {
+        g(at(chest, s*.12, .03, -.14), .22, .2, .12, PAL.jersey2);
+        g(at(chest, s*.17, -.15, -.09), .14, .16, .12, PAL.jersey2);
+    }
+    // the neck, the shorts and the belt
+    bone(meshTube, at(chest, 0, .14, -.02), at(head, 0, -.1, 0), .13*k, .13*k, X, PAL.black);
+    g(hip, .4, .27, .31, PAL.pants);
+    g(at(hip, 0, .1, 0), .42, .06, .33, PAL.strap);
+    // the pack: a big block with a lid, pockets and a strap across, riding high on the back
+    const pk = at(chest.lerp(hip, .35), 0, .02, .27);
+    bx(pk, .4, .5, .23, PAL.pack);
+    bx(at(pk, 0, .27, -.01), .38, .08, .25, PAL.pack);
+    bx(at(pk, 0, .27, .1), .2, .035, .02, PAL.strap);
+    bx(at(pk, 0, -.08, .11), .24, .16, .05, PAL.pack);
+    bx(at(pk, 0, .04, .135), .26, .025, .02, PAL.strap);
+    for (const s of [-1, 1])
+    {
+        bx(at(pk, s*.19, -.04, 0), .05, .26, .15, PAL.pack);
+        // the straps: from the top of the pack over the shoulder and down the chest
+        const top = at(pk, s*.12, .2, -.08), over = at(chest, s*.14, .2, -.02), front = at(chest, s*.12, -.12, -.2);
+        bone(meshBox, top, over, .07*k, .035*k, X, PAL.strap);
+        bone(meshBox, over, front, .07*k, .035*k, X, PAL.strap);
+    }
+    bx(at(chest, 0, -.03, -.21), .24, .03, .025, PAL.strap);
+    bx(at(chest, 0, -.03, -.225), .05, .045, .02, PAL.gold);
+    // the hose, from the top of the pack round to the strap on the chest
+    bone(meshTube, at(pk, -.17, .22, -.04), at(chest, -.2, .14, -.1), .028*k, .028*k, Y, PAL.strap);
+    bone(meshTube, at(chest, -.2, .14, -.1), at(chest, -.14, -.02, -.21), .028*k, .028*k, Y, PAL.strap);
+    for (let i = 0; i < 2; ++i)
+    {
+        const s = i ? -1 : 1, sh = J.sh[i], el = J.el[i], hd = J.hd[i], hp = J.hp[i], kn = J.kn[i], ft = J.ft[i];
+        // the arm: a big shoulder, the upper arm with its bicep, an elbow pad, the forearm, a cuff and a chunky glove
+        g(sh, .29, .26, .28, PAL.jersey2);
+        bone(meshLimb, sh, el, .18*k, .17*k, X, PAL.jersey);
+        bone(meshBall, sh.lerp(el, .18), sh.lerp(el, .8), .2*k, .18*k, X, PAL.jersey2);
+        g(el, .14, .14, .14, PAL.pad);
+        bone(meshLimb, el, hd, .16*k, .145*k, X, PAL.jersey, -.05);
+        bone(meshTube, el.lerp(hd, .78), el.lerp(hd, .93), .145*k, .14*k, X, PAL.glove);
+        const hf = boneFrame(el, hd, X);
+        framed(meshBall, hd, hf, .13*k, .14*k, .12*k, PAL.glove);
+        framed(meshBox, hd.add(hf.y.scale(.04*k)).add(hf.z.scale(-.03*k)), hf, .1*k, .05*k, .06*k, PAL.strap);
+        // the leg: baggy pants over a thick thigh, a knee pad strapped on, the shin, a chunky shoe with a grey sole
+        bone(meshLimb, hp, kn, .21*k, .21*k, X, PAL.pants);
+        bone(meshBall, hp.lerp(kn, .15), hp.lerp(kn, .88), .2*k, .19*k, X, PAL.pants);
+        bone(meshLimb, kn, ft, .155*k, .15*k, X, PAL.pants, -.08);
+        const out = kn.subtract(hp.lerp(ft, .5)), o = out.lengthSquared() > 1e-8 ? out.normalize() : Z.scale(-1);
+        const kf = boneFrame(hp, kn, X);
+        framed(meshBall, kn.add(o.scale(.035*k)), {x: kf.x, y: kf.y, z: o}, .15*k, .2*k, .1*k, PAL.kneecap);
+        bone(meshTube, kn.lerp(ft, .2), kn.lerp(ft, .26), .17*k, .165*k, X, PAL.strap);
+        bone(meshBall, kn.lerp(ft, .25), kn.lerp(ft, .75), .13*k, .13*k, X, PAL.pad);
+        // shoes along the foot's way (the bike's forward when riding)
+        const F = J.foot || B, fz = F.z;
+        framed(meshBox, ft.add(F.y.scale(.03*k)).add(fz.scale(-.03*k)), F, .13*k, .1*k, .3*k, PAL.shoe);
+        framed(meshBox, ft.add(F.y.scale(-.025*k)).add(fz.scale(-.03*k)), F, .14*k, .035*k, .31*k, PAL.sole);
+        framed(meshBall, ft.add(F.y.scale(.02*k)).add(fz.scale(-.16*k)), F, .13*k, .09*k, .1*k, PAL.shoe);
+    }
+    helmetHead(J.headM);
+}
+// a full-face downhill lid in its own space (forward -z, up +y): a faceted shell with a star on the brow, a peak, the
+// chin bar with its vents, goggles with an orange mirror lens on a strap round the shell
 function helmetHead(H)
 {
     const keep = MC;
     MC = keep.copy().multiply(H);
-    const shell = (off, size, color)=> drawPart(meshHelmet, buildMatrix(off, undefined, size, scratch), color);
-    shell(vec3(), vec3(.35, .35, .39), PAL.helmet);
-    shell(vec3(0, .025, .01), vec3(.362, .2, .4), PAL.helmet2);
-    box(vec3(0, -.115, -.13), vec3(.22, .11, .14), PAL.helmet);
-    box(vec3(0, -.035, -.165), vec3(.2, .05, .06), PAL.black);
-    box(vec3(0, -.1, -.2), vec3(.11, .045, .02), PAL.black);
-    box(vec3(0, .035, 0), vec3(.37, .04, .365), PAL.black);
-    box(vec3(0, .035, -.168), vec3(.29, .085, .05), PAL.black);
-    box(vec3(0, .03, -.193), vec3(.25, .06, .02), PAL.lens);
-    box(vec3(0, .054, -.195), vec3(.25, .016, .02), PAL.lens2);
-    box(vec3(0, .15, -.13), vec3(.29, .025, .18), PAL.helmet2, vec3(.25, 0, 0));
+    const shell = (off, size, color, rot)=> drawPart(meshHelmet, buildMatrix(off, rot, size, scratch), color);
+    shell(vec3(0, .01, 0), vec3(.37, .37, .41), PAL.helmet);
+    shell(vec3(0, .07, .03), vec3(.33, .25, .38), PAL.helmet2);
+    // the chin bar, its vents, and the ear vents
+    shell(vec3(0, -.11, -.13), vec3(.27, .14, .2), PAL.helmet);
+    for (const x of [-.06, 0, .06]) box(vec3(x, -.1, -.225), vec3(.035, .05, .02), PAL.black);
+    box(vec3(0, -.16, -.2), vec3(.14, .02, .03), PAL.black);
+    for (const s of [-1, 1]) box(vec3(s*.18, -.04, -.02), vec3(.03, .09, .12), PAL.black);
+    // the star on the brow: a diamond and its points, lying on the shell
+    const brow = vec3(0, .145, -.13), tilt = vec3(-.75, 0, 0);
+    box(brow, vec3(.05, .012, .05), PAL.decal, vec3(-.75, PI/4, 0));
+    box(brow.add(vec3(0, .02, .03)), vec3(.022, .012, .11), PAL.decal, tilt);
+    for (const s of [-1, 1]) box(brow.add(vec3(s*.045, -.004, -.01)), vec3(.08, .012, .02), PAL.decal, vec3(-.75, 0, s*.25));
+    // the peak
+    box(vec3(0, .17, -.17), vec3(.31, .025, .17), PAL.helmet, vec3(.3, 0, 0));
+    box(vec3(0, .157, -.17), vec3(.29, .012, .15), PAL.black, vec3(.3, 0, 0));
+    // the goggles: the frame, the lens with its glint, and the strap round the shell
+    box(vec3(0, .035, -.185), vec3(.32, .105, .06), PAL.goggle);
+    box(vec3(0, .035, -.215), vec3(.27, .075, .02), PAL.lens);
+    box(vec3(0, .058, -.226), vec3(.24, .016, .012), PAL.lens2);
+    for (const s of [-1, 1]) box(vec3(s*.19, .035, -.02), vec3(.02, .055, .3), PAL.goggle);
+    box(vec3(0, .035, .2), vec3(.34, .055, .02), PAL.goggle);
     MC = keep;
 }
-function box(p, size, color, rot) { drawPart(meshBox, buildMatrix(p, rot, size, scratch), color); }
 
 // two bone reach, the middle joint pushed toward the hint
 function ik(a, c, l1, l2, hint)
@@ -8368,18 +8472,19 @@ function drawBike(M, cF, cR, wheelSpin, crankA, whip=0, barA=0, offF=0, offR=0, 
     MC = G?.frame ?? MF;
     // main frame, chunky downhill tubes (thinner on a dirt jumper, fatter on the sled)
     const tk = bike.tube;
-    tube(bb, headBot, .085*tk, PAL.frame);
-    tube(ttRear, headTop.add(vec3(0, -.05, .02)), .06*tk, PAL.frame);
-    tube(bb, seatTop, .055*tk, PAL.frame);
+    tube(bb, headBot, .11*tk, PAL.frame);
+    tube(ttRear, headTop.add(vec3(0, -.05, .02)), .08*tk, PAL.frame);
+    tube(bb, seatTop, .07*tk, PAL.frame);
+    ball(headBot.lerp(bb, .1), .14*tk, PAL.frame); ball(ttRear, .1*tk, PAL.frame);
     // the brace from the top tube down to the down tube, and a decal along the top tube
-    if (bike.brace) tube(headTop.lerp(ttRear, .45), bb.lerp(headBot, .56), .05*tk, PAL.frame);
+    if (bike.brace) tube(headTop.lerp(ttRear, .45), bb.lerp(headBot, .56), .06*tk, PAL.frame);
     if (bike.skid) box(bb.add(vec3(0, -.13, -.06)), vec3(.1, .03, .22), PAL.black);
     for (const x of [-.033, .033]) tube(ttRear.lerp(headTop, .3).add(vec3(x, -.005, 0)), ttRear.lerp(headTop, .72).add(vec3(x, -.025, 0)), .016, PAL.decal);
     tube(headBot.add(vec3(0, -.05, -.02)), headTop.add(vec3(0, .03, .01)), .075, PAL.frameDark);
     for (const x of [-.055, .055])
     {
-        tube(bb.add(vec3(x, 0, 0)), rA.add(vec3(x*1.3, 0, 0)), .04, PAL.frame);
-        tube(stayTop.add(vec3(x*.7, 0, 0)), rA.add(vec3(x*1.3, 0, 0)), .035, PAL.frame);
+        tube(bb.add(vec3(x, 0, 0)), rA.add(vec3(x*1.3, 0, 0)), .055, PAL.frame);
+        tube(stayTop.add(vec3(x*.7, 0, 0)), rA.add(vec3(x*1.3, 0, 0)), .045, PAL.frame);
     }
     // eBike: a battery along the down tube, the motor round the cranks, a display on the bars
     const bA = bb.lerp(headBot, .16), bB = bb.lerp(headBot, .8);
@@ -8421,8 +8526,8 @@ function drawBike(M, cF, cR, wheelSpin, crankA, whip=0, barA=0, offF=0, offR=0, 
     for (const x of [-.075, .075])
     {
         const top = (bike.crowns == 2 ? headTop.add(vec3(0, .02, 0)) : headBot.add(vec3(0, -.02, 0))).add(vec3(x, 0, 0)), stanEnd = headBot.add(forkDir.scale(.34)).add(vec3(x, 0, 0));
-        tube(top, stanEnd, .042, PAL.gold);
-        tube(fA.add(vec3(x, 0, 0)), fA.add(vec3(x, 0, 0)).subtract(forkDir.scale(.4)), .06, PAL.black);
+        tube(top, stanEnd, .052, PAL.gold);
+        tube(fA.add(vec3(x, 0, 0)), fA.add(vec3(x, 0, 0)).subtract(forkDir.scale(.4)), .075, PAL.black);
     }
     if (bike.crowns == 2) box(headTop.add(vec3(0, .02, 0)), vec3(.23, .045, .07), PAL.black);
     box(headBot.add(vec3(0, -.02, 0)), vec3(.23, .045, .07), PAL.black);
@@ -8434,6 +8539,8 @@ function drawBike(M, cF, cR, wheelSpin, crankA, whip=0, barA=0, offF=0, offR=0, 
     box(stem.add(vec3(0, .07, .02)), vec3(.09, .05, .07), lit);
     tube(bar.add(vec3(-.4, .03, 0)), bar.add(vec3(.4, .03, 0)), .032, PAL.black);
     for (const x of [-.36, .36]) tube(bar.add(vec3(x - .04, .03, 0)), bar.add(vec3(x + .04, .03, 0)), .045, PAL.glove);
+    // the number plate, on the front of the bars
+    drawPart(meshPlate, buildMatrix(headTop.add(vec3(0, .1, -.11)), vec3(-.25, 0, 0), undefined, scratch));
     // cranks, chainring and pedals
     MC = G?.crank ?? MF;
     drawPart(meshRing, buildMatrix(bb.add(vec3(.07, 0, 0)), vec3(crankA, 0, PI/2), undefined, scratch));
@@ -8448,6 +8555,8 @@ function drawBike(M, cF, cR, wheelSpin, crankA, whip=0, barA=0, offF=0, offR=0, 
     return {pedals, grips: [bar.add(vec3(.37, .03, 0)), bar.add(vec3(-.37, .03, 0))], bb, seatTop};
 }
 
+// the feet lie along the bike
+const FOOT_FRAME = {x: vec3(1, 0, 0), y: vec3(0, 1, 0), z: vec3(0, 0, 1)};
 // pose blends: 0 riding, the style tricks pull limbs away from the bike
 function drawRider(M, bikePts, comp, styleName, styleAmt, pull=0)
 {
@@ -8484,34 +8593,18 @@ function drawRider(M, bikePts, comp, styleName, styleAmt, pull=0)
     // the hands let go above the bars while they spin, and catch them again
     else if (styleName == 'BARSPIN')
         hands = hands.map((h, i)=> h.lerp(vec3(i ? -.3 : .3, 1.3, -.32), s));
-    const shoulders = [chest.add(vec3(.2, .03, -.02)), chest.add(vec3(-.2, .03, -.02))];
-    const hips = [hip.add(vec3(.11, 0, 0)), hip.add(vec3(-.11, 0, 0))];
-    // a downhill racer: black jersey with a red chest panel, red shoulders and sleeves and white cuffs, a hydration
-    // pack, grey pants over knee pads, flat shoes, red gloves, and a full-face helmet
-    tube(hip, chest, .31, PAL.jersey);
-    ball(chest, .35, PAL.jersey);
-    drawPart(meshBall, buildMatrix(chest.add(vec3(0, .01, -.11)), undefined, vec3(.27, .2, .14), scratch), PAL.jersey2);
-    tube(chest.add(vec3(0, .03, .14)), chest.lerp(hip, .6).add(vec3(0, .07, .14)), .16, PAL.pack);
-    ball(hip, .31, PAL.pants);
-    tube(chest, head, .11, PAL.black);
-    helmetHead(buildMatrix(head, vec3(-.28, 0, 0)));
+    const shoulders = [chest.add(vec3(.24, .05, -.02)), chest.add(vec3(-.24, .05, -.02))];
+    const hips = [hip.add(vec3(.12, 0, 0)), hip.add(vec3(-.12, 0, 0))], knees = [], elbows = [];
     for (let i = 0; i < 2; ++i)
     {
         const side = i ? -1 : 1;
-        // legs, knees out over the pedals
-        const knee = ik(hips[i], feet[i], .47, .47, vec3(side*.25, .2, -1));
-        tube(hips[i], knee, .17, PAL.pants); ball(knee, .17, PAL.pad);
-        tube(knee, feet[i], .13, PAL.pants);
-        box(feet[i].add(vec3(0, .025, -.03)), vec3(.12, .09, .28), PAL.shoe);
-        box(feet[i].add(vec3(0, -.025, -.03)), vec3(.125, .025, .29), PAL.sole);
-        // arms, elbows out and back
-        const elbow = ik(shoulders[i], hands[i], .32, .31, vec3(side, -.2, .6));
-        ball(shoulders[i], .16, PAL.jersey2);
-        tube(shoulders[i], elbow, .12, PAL.jersey2); ball(elbow, .11, PAL.jersey);
-        tube(elbow, hands[i], .1, PAL.jersey);
-        tube(elbow.lerp(hands[i], .78), elbow.lerp(hands[i], .9), .106, PAL.white);
-        ball(hands[i], .1, PAL.glove);
+        // legs, knees out over the pedals; arms, elbows out and back
+        knees.push(ik(hips[i], feet[i], .47, .47, vec3(side*.25, .2, -1)));
+        elbows.push(ik(shoulders[i], hands[i], .32, .31, vec3(side, -.2, .6)));
     }
+    const y = chest.subtract(hip).normalize(), x = vec3(1, 0, 0).subtract(y.scale(y.x)).normalize();
+    drawBody({head, chest, hip, sh: shoulders, el: elbows, hd: hands, hp: hips, kn: knees, ft: feet, foot: FOOT_FRAME,
+        headM: buildMatrix(head, vec3(-.28, 0, 0))}, {x, y, z: x.cross(y)});
 }
 
 

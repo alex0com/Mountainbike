@@ -852,6 +852,18 @@ The LittleJS version is no longer updated; new work goes into `Downhill MTB Thre
 - **Hooks:** `__mtb.cows()`, `__mtb.trees()`, and `cowBounces` in `info()`.
 - **Tests:** every bike with tricks, backflips, and the up lines with turbo: 0 crashes in 12 km each, with 10–16 tree hops and 6–12 cow bounces per run.
 
+## Rider and bike after the concept sheet: done (Three.js version)
+The rider is reworked after `art/bluecow-rider-concept.png`, at its level of detail, with no cow features (no horns, cow face, patches or tail).
+- **Faceted parts:** six-sided tubes, tapered six-sided limbs (`meshLimb`), gem-cut balls and a faceted helmet shell, all flat shaded for the low-poly look. The sheen is soft so big facets don't wash out.
+- **One body routine** (`drawBody`) draws the rider riding (joints from the pose, `drawRider`) and wrecked (joints from the ragdoll, `drawRagdoll`). It has:
+  - a broad two-tone blue chest and middle, with lighter facets over the chest and shoulders;
+  - a big black pack with a lid, pockets and a strap, shoulder straps down the chest, a buckle and a hose;
+  - big shoulders, upper arms with biceps, elbow pads, forearms, cuffs and chunky gloves;
+  - black pants over thick thighs, knee pads with straps, shins, and chunky shoes with grey soles;
+  - a full-face lid (`helmetHead`): a faceted blue shell with a lighter crown, a white star on the brow, a peak, a chin bar with vents, ear vents, and goggles with an orange mirror lens, a glint and a strap.
+- **The bike:** a royal blue frame with chunkier faceted tubes and gussets, a thicker gold fork with black lowers, and a number 7 plate on the bars.
+- **The kits:** BLUECOW (the sheet's colours) is the base and the first. The old black and red look is STEALTH. The others recolour the new rider the same way.
+
 ## Next: proposals
 - **More fun:**
   - pumping (hold on a downslope for speed);

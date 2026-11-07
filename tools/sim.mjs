@@ -112,7 +112,7 @@ console.log('hard landings per km: ' + (all.reduce((s, r)=> s + (r.stats.hard ||
 {
     const t = k=> all.reduce((s, r)=> s + (r.stats[k] || 0), 0), lands = t('landsNailed') + t('landsClean') + t('landsSketchy');
     if (lands) console.log(`landings: ${(100*t('landsNailed')/lands).toFixed(0)}% nailed, ${(100*t('landsClean')/lands).toFixed(0)}% clean, ${(100*t('landsSketchy')/lands).toFixed(0)}% sketchy;` +
-        ` longest chain ${Math.max(...all.map(r=> r.stats.bestChain || 0))}; wall rides per km ${(t('wallRides')/km).toFixed(2)}, longest wall chain ${Math.max(...all.map(r=> r.stats.bestWall || 0))}`);
+        ` longest chain ${Math.max(...all.map(r=> r.stats.bestChain || 0))}; wall rides per km ${(t('wallRides')/km).toFixed(2)}, highest wall climb ${Math.max(...all.map(r=> r.stats.bestWall || 0))} m`);
 }
 console.log('air time per km:  ' + ['<.5s', '.5-1s', '1-1.5s', '1.5-2s', '2-2.5s', '2.5s+'].map((l, k)=> l + ' ' + (airs[k]/km).toFixed(1)).join('   '));
 if (Object.keys(tricks).length)

@@ -778,33 +778,36 @@ The rider physics is rewritten so speed is earned and felt, instead of set by cl
   - Average speed is 28.5–32 m/s, up from 27.5.
   - 55–79% of the autopilot's landings are nailed. The longest chains are 18–25 links.
 
-## Wall rides: done (Three.js version)
-- **Where:** a rocky outcrop along the hill side of the main trail, every 380–800 m (`addWallRide`).
-  - It has 3–5 rock sections, each 14–22 m long, with gaps of 5.5–9 m between them.
-  - Each section rises along its length to a lip, and starts a step higher than the last lip.
-  - A WALL RIDE sign stands before it, and sprockets run along every section.
-- **Getting on:** jump anywhere beside the outcrop, from 14 m before the first rock to 12 m before the end of the last, on the ground or just off it.
-  - The pop is aimed (`popFor`, flying the flight the way the ride does, with landings tested the same way) at the rock alongside if there's room left on it, otherwise the next one.
-  - Each candidate is flown before it is chosen. Rocks further along stand higher, so the pop can be big.
-  - The rider moves across to the wall and leans into it.
-  - Coming down within 3.5 m of a lip pops on its own, since there's no time to tap.
-  - Test (`wallenter` in the scratchpad), jumping every 4 m beside the outcrops on 5 seeds: every jump inside the window lands on a rock.
-- **Riding:** the sections are rails flagged `wall`. They are ridden like a grind (`stepWall`), with rock surface and dust.
-- **Lips:**
-  - **Tapped** in the last 4.5 m of a section, or within 0.2 s after leaving it: a ROCK POP aimed onto the next rock, with a surge and a link.
-  - **Not tapped:** only the lip's small kick, which doesn't reach the next, higher rock. The rider drops to the trail ("OFF THE WALL"), with no crash.
-  - Landing badly on a rock slides the rider off the same way.
-- **Scoring:** WALL RIDE 150 for the first rock, then WALL x n worth 150 × n for each rock after. Popping off the last lip after riding every rock scores ROCK RUN, 250 per rock. All of it joins the combo, and each hop is a link in the chain.
-- **The look:** each section is its own jagged rock face (`makeWallRock`), lofted along its line from the trail edge up the hill side. It is flat shaded in the land's face and rock colours, ends in a face down to the trail, and has boulders on its lip.
-- **The test rider** takes 70% of wall rides (`__wallPilot`) and pops 90% of lips (`__lipPilot`). Its swipe tricks and flips stay off the short hops between rocks.
-- **Hooks:**
-  - `__mtb.walls()` lists the wall rides laid out.
-  - `__mtb.wallState()` gives on the wall or not, the section, the chain, the best chain and the ride count.
-  - `info()` carries `onWall`, `wallChain`, `chain`, `bestChain` and the landing counts.
-- **Test** (popping every lip, popping none, riding past):
-  - All 4 rocks are chained, with ROCK RUN.
-  - With no taps, the rider is off after the first rock and back on the trail, with no crash.
-  - Riding past, nothing happens.
+## Wall rides: done, then reworked into mountain climbs (Three.js version)
+The first wall rides (short rock sections with hops between them) were too short and not intuitive. Now each one is a long climb up a rocky mountainside, then a huck back down from the height gained.
+- **The climb** (`addWallRide`): 75–110 m of rock beside the trail (`WALL_LEN`), every 375–675 m (`WALL_EVERY`). It is three stretches joined end to end:
+  - a run-up from 1.2 to 4 m over the trail;
+  - a long climb to the summit (10–16 m over the trail, `WALL_H`);
+  - a kicker that turns up into the air.
+  - The line runs back into the hill as it climbs (`wallZAt`), so the rider visibly rides up the face. Sprockets run along it.
+- **Getting on:** jump anywhere beside its lower part, from 14 m before it to a third of the way up the climb. The pop is aimed onto the line, flown first to check it lands.
+- **Riding:** leaning into the face (`WALL_LEAN`), from stretch to stretch with the bike eased round at the joints.
+  - Gravity along the line slows a climb that is steeper than the trail. On the default climbs the rider goes from about 28 m/s to 23 m/s.
+  - The camera frames the rider (as on a super send) the whole way up and off the top.
+- **The huck:**
+  - Off the summit kicker, CLIMB n m scores 25 per metre of height.
+  - A tap in the last 6 m (or just after leaving) is a HUCK POP: 3.5 m/s more pop, a surge and a link.
+  - The landing is steep (0.62) and long enough for the fastest huck (`extendLanding`). Landing on it scores HUCK n m (55 per metre of drop), and the air is big enough for tricks and flips.
+- **Falling off:** coming down badly on the rock slides the rider off to the trail, with no crash.
+- **Test** (`climb.mjs` in the scratchpad), on three seeds: on, up, off the summit 11–14 m over the trail, landed 40–70 m later; WALL RIDE, CLIMB and HUCK all scored.
+
+## Dev panel: done (Three.js version)
+Open the game with `?dev` (or `?=dev`) for a panel of sliders over the game. It starts folded on a phone.
+- **What it covers:**
+  - **Physics:** gravity in the air and on the ground, jump pop, cruise and top speed, air drag, rolling resistance, hang time.
+  - **Flow and momentum:** the flow speed bonuses, the chain window, the size of the surges and of the pump, and how square a NAILED landing must be.
+  - **Riding:** flip speed, landing forgiveness, turbo speed.
+  - **Wall rides:** climb height, length, how often, and the lean.
+  - **Obstacles:** how often cows and fallen trees come up.
+  - **View and world:** field of view, camera distance, day length, time of day.
+- **Applying:** changes apply at once while riding. Things laid out with the trail apply to the trail laid out from then on: NEW RUN starts afresh with them.
+- **Keeping:** values are kept on the device (`bcr.dev`, only the ones changed). RESET ALL goes back to the defaults, and COPY puts the changed values on the clipboard as JSON to send.
+- The panel keeps its own touches and keys: moving a slider never jumps the bike.
 
 ## Downed trees and blue cows: done (Three.js version)
 The LittleJS version is no longer updated; new work goes into `Downhill MTB Three.html` only.

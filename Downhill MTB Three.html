@@ -8211,6 +8211,10 @@ const BIKES = [
     {name: 'E-BEAST', about: 'a huge battery: charges fast, long turbos, heavy in the air', speed: .5, pop: .95, flip: .9, land: 1.1, turbo: 1.6, charge: 1.5,
         crowns: 1, shock: 'air', brace: false, tube: 1.1, batt: .21, motor: .33}];
 let kitI = 0, bikeI = 0, bike = BIKES[0];
+// the rider's pack: none (the default), or a small hydration pack, picked in the garage
+let PACK = 0;
+function setPack(v) { PACK = v ? 1 : 0; try { localStorage.setItem('bcr.pack', PACK); } catch(e) {} }
+try { PACK = localStorage.getItem('bcr.pack') == '1' ? 1 : 0; } catch(e) {}
 function setKit(i)
 {
     kitI = (i + KITS.length) % KITS.length;
@@ -8348,26 +8352,26 @@ function drawBody(J, B, k=1)
     bone(meshTube, at(chest, 0, .14, -.02), at(head, 0, -.1, 0), .13*k, .13*k, X, PAL.black);
     g(hip, .4, .27, .31, PAL.pants);
     g(at(hip, 0, .1, 0), .42, .06, .33, PAL.strap);
-    // the pack: a big block with a lid, pockets and a strap across, riding high on the back
-    const pk = at(chest.lerp(hip, .35), 0, .02, .27);
-    bx(pk, .4, .5, .23, PAL.pack);
-    bx(at(pk, 0, .27, -.01), .38, .08, .25, PAL.pack);
-    bx(at(pk, 0, .27, .1), .2, .035, .02, PAL.strap);
-    bx(at(pk, 0, -.08, .11), .24, .16, .05, PAL.pack);
-    bx(at(pk, 0, .04, .135), .26, .025, .02, PAL.strap);
-    for (const s of [-1, 1])
+    // the pack (none unless picked in the garage): a small hydration pack snug on the upper back, a lid and a pocket,
+    // straps over the shoulders to a buckle on the chest, and a hose round to the strap
+    if (PACK)
     {
-        bx(at(pk, s*.19, -.04, 0), .05, .26, .15, PAL.pack);
-        // the straps: from the top of the pack over the shoulder and down the chest
-        const top = at(pk, s*.12, .2, -.08), over = at(chest, s*.14, .2, -.02), front = at(chest, s*.12, -.12, -.2);
-        bone(meshBox, top, over, .07*k, .035*k, X, PAL.strap);
-        bone(meshBox, over, front, .07*k, .035*k, X, PAL.strap);
+        const pk = at(chest.lerp(hip, .3), 0, .04, .225);
+        bx(pk, .28, .32, .12, PAL.pack);
+        bx(at(pk, 0, .17, -.005), .26, .05, .135, PAL.pack);
+        bx(at(pk, 0, -.06, .065), .18, .11, .03, PAL.pack);
+        bx(at(pk, 0, .03, .068), .2, .02, .012, PAL.strap);
+        for (const s of [-1, 1])
+        {
+            const top = at(pk, s*.1, .15, -.05), over = at(chest, s*.14, .2, -.02), front = at(chest, s*.12, -.12, -.2);
+            bone(meshBox, top, over, .055*k, .03*k, X, PAL.strap);
+            bone(meshBox, over, front, .055*k, .03*k, X, PAL.strap);
+        }
+        bx(at(chest, 0, -.03, -.21), .22, .025, .02, PAL.strap);
+        bx(at(chest, 0, -.03, -.222), .045, .04, .018, PAL.gold);
+        bone(meshTube, at(pk, -.12, .16, -.03), at(chest, -.2, .14, -.1), .022*k, .022*k, Y, PAL.strap);
+        bone(meshTube, at(chest, -.2, .14, -.1), at(chest, -.14, -.02, -.21), .022*k, .022*k, Y, PAL.strap);
     }
-    bx(at(chest, 0, -.03, -.21), .24, .03, .025, PAL.strap);
-    bx(at(chest, 0, -.03, -.225), .05, .045, .02, PAL.gold);
-    // the hose, from the top of the pack round to the strap on the chest
-    bone(meshTube, at(pk, -.17, .22, -.04), at(chest, -.2, .14, -.1), .028*k, .028*k, Y, PAL.strap);
-    bone(meshTube, at(chest, -.2, .14, -.1), at(chest, -.14, -.02, -.21), .028*k, .028*k, Y, PAL.strap);
     for (let i = 0; i < 2; ++i)
     {
         const s = i ? -1 : 1, sh = J.sh[i], el = J.el[i], hd = J.hd[i], hp = J.hp[i], kn = J.kn[i], ft = J.ft[i];
@@ -10190,13 +10194,14 @@ function drawGarage(W, H, top, bottom)
         rrect(bx + 82, sy - 4, colW - 92, 8, 4, 'rgba(255,255,255,.12)');
         rrect(bx + 82, sy - 4, max(8, (colW - 92)*v), 8, 4, '#ffd23a');
     });
-    // the kit, and a swatch of its colours
-    const ky = two ? py + 20 : y + 84 + BIKE_STATS.length*sh + 10, kit = KITS[kitI];
+    // the kit, a swatch of its colours, and the pack: none or a small one
+    const ky = two ? py + 20 : y + 84 + BIKE_STATS.length*sh + 10, kit = KITS[kitI], sx = two ? kx + colW/2 : kx + 70;
     picker(kx, ky, colW, 'KIT', kit[0], ()=> setKit(kitI - 1), ()=> setKit(kitI + 1));
+    button(two ? kx + colW/2 - 62 : kx + colW - 136, two ? ky + 92 : ky + 54, 124, 28, PACK ? 'PACK: SMALL' : 'PACK: NONE', ()=> setPack(!PACK), !!PACK, 12);
     ['jersey', 'jersey2', 'pants', 'helmet', 'frame'].forEach((k, i)=>
     {
         const c = PAL[k];
-        ctx.beginPath(); ctx.arc(kx + colW/2 + (i - 2)*28, ky + 68, 10, 0, TAU);
+        ctx.beginPath(); ctx.arc(sx + (i - 2)*25, ky + 68, 10, 0, TAU);
         ctx.fillStyle = c.toString(); ctx.fill(); ctx.lineWidth = 2; ctx.strokeStyle = 'rgba(255,255,255,.5)'; ctx.stroke();
     });
     // back, or straight out on it
@@ -11223,7 +11228,7 @@ window.__mtb = {
     moo: ()=> moo(),
     // try out a colour scheme: the rider's and bike's colours by name
     palette: o=> Object.assign(PAL, o),
-    kit: i=> setKit(i), bike: i=> setBike(i), garage: ()=> menu = 'garage',
+    kit: i=> setKit(i), pack: v=> setPack(v), bike: i=> setBike(i), garage: ()=> menu = 'garage',
     mp: ()=> ({code: mp.code, you: mp.you, peer: mp.peer, status: mp.status, round: mp.round, roundT: mp.roundT, stars: mp.stars, wins: mp.wins,
         breakBy: mp.breakBy, breakT: mp.breakT, hold: mp.hold, draft: mp.draft, rec: !!mp.rec, crashes: mp.crashes, runSeed, buf: mp.buf.length,
         remote: mp.last && {x: mp.last.x, st: mp.last.st, sc: mp.last.sc}, clock: mp.clock}),

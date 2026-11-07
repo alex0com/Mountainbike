@@ -5714,7 +5714,7 @@ function stompCow(ox, oy)
         if (!(oy >= top - .05 && py <= top)) continue;
         // the bike has to come down on it near enough upright, the same as onto the ground
         const err = wrapPI(ang - atan(rideSlope(px)));
-        if (abs(err) > min(1, .8*bike.land*LAND_K)) { crash(abs(err) > 2 ? 'LANDED ON YOUR HEAD' : 'BAD LANDING'); return true; }
+        if (abs(err) > min(1, .8*bike.land*LAND_K)) { crash(abs(err) > 2 ? 'LANDED ON YOUR HEAD' : 'BAD LANDING', {kind: 'slam'}); return true; }
         if (!finishTrick()) return true;
         nailed = false;
         scoreAir(abs(err) < .22);
@@ -7559,7 +7559,7 @@ function stepGround(dt)
     braking ||= brakeOn();
     // the face of a drop or a chasm wall is never ridden: off its edge the bike flies, into it the bike crashes
     if (s < -2.5) { vx = sp; vy = 0; takeoff(); return; }
-    if (s > 2.5) { crash('HIT THE EDGE'); return; }
+    if (s > 2.5) { crash('HIT THE EDGE', {kind: 'front'}); return; }
     const ox = px, nx = px + sp*c*dt, gy = rideY(nx);
     if (rideSlope(nx) < -2.5)
     {
@@ -7717,7 +7717,7 @@ function stepAir(dt)
         }
     // down into a chasm
     for (const g of gaps)
-        if (px > g.x1 && px < g.x2 && py < g.landY - 1.2 && onLine(g, px)) { crash('FELL INTO THE CHASM'); return; }
+        if (px > g.x1 && px < g.x2 && py < g.landY - 1.2 && onLine(g, px)) { crash('FELL INTO THE CHASM', {kind: 'fall'}); return; }
     if (stompCow(ox, oy)) return;
     const gy = rideY(px);
     if (py <= gy) land(gy);
@@ -7731,9 +7731,9 @@ function land(gy)
     if (s < -2.5 && py > rideY(px + DX) - .05) return;
     if (vx > 4 && rideY(px + .5) < gy - 1) return;
     // the far wall of a gap or the face of a step: arriving from the side, well below the surface
-    if (abs(s) > 2.5 || gy - py > .5) { crash('HIT THE EDGE'); return; }
+    if (abs(s) > 2.5 || gy - py > .5) { crash('HIT THE EDGE', {kind: 'front'}); return; }
     const err = wrapPI(ang - th), nX = -sin(th), nY = cos(th), impact = -(vx*nX + vy*nY);
-    if (abs(err) > min(1, .8*bike.land*LAND_K)) { crash(abs(err) > 2 ? 'LANDED ON YOUR HEAD' : 'BAD LANDING'); return; }
+    if (abs(err) > min(1, .8*bike.land*LAND_K)) { crash(abs(err) > 2 ? 'LANDED ON YOUR HEAD' : 'BAD LANDING', {kind: 'slam', impact}); return; }
     if (!finishTrick()) return;
     leaveWall();
     const perfect = abs(err) < .22;
@@ -7786,7 +7786,7 @@ function finishTrick()
     const p = styleT/style.dur;
     // a short hop that came down before the trick got going just drops it
     if (p < .4 && airT < .4) { style = undefined; trickQueued = null; return true; }
-    if (p < .4) { crash(style.fail || 'FEET OFF THE PEDALS'); return false; }
+    if (p < .4) { crash(style.fail || 'FEET OFF THE PEDALS', {kind: 'twist'}); return false; }
     if (p >= .8) stylesDone.push(style);
     else { showMessage('SKETCHY!', 'finish the trick before landing', hsl(.08,.9,.6)); sfx('landHard'); ++sketchy; addFlow(-.25); }
     style = undefined; trickQueued = null;
@@ -7880,7 +7880,7 @@ function scoreAir(perfect)
 function startGrind(r)
 {
     const th = atan(r.slope), err = wrapPI(ang - th);
-    if (abs(err) > .85) { crash(r.deck ? 'BAD LANDING' : 'MISSED THE RAIL'); return; }
+    if (abs(err) > .85) { crash(r.deck ? 'BAD LANDING' : 'MISSED THE RAIL', {kind: 'slam'}); return; }
     if (!grounded && !finishTrick()) return;
     if (!grounded) scoreAir(abs(err) < .22);
     grinding = r; grounded = false;
@@ -7927,7 +7927,7 @@ function stepGrind(dt)
 // ---------- rocks and logs
 // how far across the trail each kind of obstacle is drawn (z from, z to): a fallen tree's trunk and roots, a log, a
 // boulder; a rider out on a fork's line beyond it passes it by
-const rockSpan = r=> r.type == 'tree' ? [-5.7*r.h/.95, 3.6*r.h/.95] : r.type == 'log' ? [-2.1, 1.7] : [-2.2, 2.2];
+const rockSpan = r=> r.type == 'tree' ? [-5.7*r.h/.95, 3.6*r.h/.95] : r.type == 'log' ? [-2.1, 1.7] : [-1.2, 1.2];
 function checkRocks()
 {
     if (wallGroup) return;
@@ -7971,7 +7971,7 @@ function checkRocks()
             addTrick(r.type == 'tree' ? 'TREE BOUNCE' : 'ROCK BOUNCE', r.type == 'tree' ? 180 : 120);
             continue;
         }
-        crash(r.type == 'tree' ? 'HIT A FALLEN TREE' : 'HIT A ROCK');
+        crash(r.type == 'tree' ? 'HIT A FALLEN TREE' : 'HIT A ROCK', {kind: 'front'});
         return;
     }
 }
@@ -7998,7 +7998,7 @@ function godSave(reason)
     showMessage('SAVED', reason.toLowerCase() + ' · god mode', hsl(.75,.6,.75));
     camShake = max(camShake, .3);
 }
-function crash(reason)
+function crash(reason, hit={})
 {
     if (state != 'ride') return;
     if (GOD) { godSave(reason); return; }
@@ -8006,7 +8006,13 @@ function crash(reason)
     flow = flowTarget = surgeA = 0; flowLevel = 0; chain = chainT = 0; wallGroup = wallSeg = null;
     window.__lastCrash = {reason, px: +px.toFixed(1), ride: ride ? ride.lane : 0, z: +riderZ().toFixed(1), turbo: +turboT.toFixed(2), tk: takeoffKind, tkx: +takeoffX.toFixed(1), rot: +(rot*57).toFixed(0), ang: +(ang*57).toFixed(0), slope: +(atan(rideSlope(px))*57).toFixed(0), airT: +airT.toFixed(2), sp: +sp.toFixed(1), vx: +vx.toFixed(1), vy: +vy.toFixed(1), style: style?.name, styleT: +styleT.toFixed(2), flightT: window.__flightT, grounded, frame};
     combo = comboPts = 0; comboNames = []; comboKeys = []; grinding = null; style = undefined; trickQueued = null;
-    startWreck();
+    startWreck(hit);
+    // a big one (very fast into something, a hard slam or fast spin, a fall into a chasm, a trick gone wrong high
+    // in the air) is shown in slow motion, the camera punching in on it
+    const v = hypot(vx, vy), big = hit.kind == 'fall' || hit.kind == 'front' && v > 32 || hit.kind == 'slam' && ((hit.impact ?? 0) > 11 || abs(angVel) > 8)
+        || hit.kind == 'twist' && airT > 1.4;
+    ragdoll.big = big;
+    if (big && !inMatch()) { slowMoT = 0; crashPunch = 1; }
     saveBest(); groanAt = 2.2;
     if (inMatch()) { mp.rec = {}; ++mp.crashes; }
     sfx('crash');
@@ -8024,45 +8030,198 @@ const RAG_POSE = [
     ['elR', -.45, 1.28, -.25, .06], ['hdR', -.37, 1.08, -.46, .06], ['hpL', .11, 1.16, .3, .09], ['hpR', -.11, 1.16, .3, .09],
     ['knL', .25, .8, -.2, .07], ['ftL', .17, .38, .05, .07], ['knR', -.25, .8, -.2, .07], ['ftR', -.17, .38, .05, .07]];
 const RAG_I = Object.fromEntries(RAG_POSE.map((p, i)=> [p[0], i]));
-// the torso and head braced into one piece; the arms and legs hang off it loose
-const RAG_BONES = [['head', 'chest'], ['chest', 'hip'], ['head', 'hip'], ['shL', 'shR'], ['shL', 'chest'], ['shR', 'chest'],
+// the torso braced into one piece; the head on a neck; the arms and legs hang off it loose
+const RAG_BONES = [['head', 'chest'], ['chest', 'hip'], ['shL', 'shR'], ['shL', 'chest'], ['shR', 'chest'],
     ['shL', 'hip'], ['shR', 'hip'], ['hpL', 'hpR'], ['hpL', 'hip'], ['hpR', 'hip'], ['hpL', 'chest'], ['hpR', 'chest'],
-    ['shL', 'hpL'], ['shR', 'hpR'], ['head', 'shL'], ['head', 'shR'],
+    ['shL', 'hpL'], ['shR', 'hpR'],
     ['shL', 'elL'], ['elL', 'hdL'], ['shR', 'elR'], ['elR', 'hdR'], ['hpL', 'knL'], ['knL', 'ftL'], ['hpR', 'knR'], ['knR', 'ftR']]
     .map(([a, b])=> [RAG_I[a], RAG_I[b]]);
+// and what is only kept within a range: the head nods and lolls on its neck but never into the chest or off it (a
+// share of how far it starts from the hip and the shoulders), and a hand never folds back onto its shoulder nor a foot
+// onto its hip (a share of the arm's or the leg's length)
+const RAG_NECK = [['head', 'hip', .9, 1.03], ['head', 'shL', .78, 1.18], ['head', 'shR', .78, 1.18]].map(([a, b, lo, hi])=> [RAG_I[a], RAG_I[b], lo, hi]);
+const RAG_REACH = [['shL', 'elL', 'hdL', .4], ['shR', 'elR', 'hdR', .4], ['hpL', 'knL', 'ftL', .45], ['hpR', 'knR', 'ftR', .45]]
+    .map(([a, m, b, k])=> [RAG_I[a], RAG_I[m], RAG_I[b], k]);
+const RAG_LIMB = new Set(['elL', 'hdL', 'elR', 'hdR', 'knL', 'ftL', 'knR', 'ftR'].map(n=> RAG_I[n]));
+const RAG_TORSO = ['head', 'chest', 'hip'].map(n=> RAG_I[n]);
 const LIMB_ENDS = ['hdL', 'hdR', 'ftL', 'ftR'].map(n=> RAG_I[n]);
 // the bike's pieces: what of it each is, its middle in the bike's space, and how big it is
 const PIECES = [['rw', 0, .37, .62, .37, true], ['fw', 0, .37, -.64, .37, true], ['frame', 0, .6, .05, .35],
     ['fork', 0, .62, -.55, .25], ['bars', 0, 1.08, -.46, .3], ['seat', 0, 1.02, .2, .12], ['crank', 0, .34, .05, .17]];
 let ragdoll = null, pieces = [], wreckSfxT = 0, crashCam = 0, wheelSpinAtCrash = 0;
-function startWreck()
+// slow motion after a big crash, in real seconds since it (none below 0): a moment's freeze at the hit, then slow,
+// easing back up to full speed; and the camera's punch in on it
+let slowMoT = -1, crashPunch = 0;
+const SLOW_FREEZE = .12, SLOW_EASE = 1.1;
+function slowMoK(dtReal)
 {
-    const M = bikeMatrix(), rnd = ()=> Math.random() - .5, spin = -(6 + Math.random()*6);
-    const pts = RAG_POSE.map(([n, x, y, z, rad])=> { const p = M.transformPoint(vec3(x, y, z)); return {x: p.x, y: p.y, z: p.z, r: rad*RS}; });
+    if (slowMoT < 0) return 1;
+    slowMoT += dtReal;
+    if (slowMoT > SLOW_FREEZE + SLOW_EASE) { slowMoT = -1; return 1; }
+    return slowMoT < SLOW_FREEZE ? .05 : mix(.25, 1, sstep((slowMoT - SLOW_FREEZE)/SLOW_EASE));
+}
+// how far the crash camera stands back: in close at a big hit, then back to take in the whole yard sale
+const crashZoom = ()=> (1 - .3*crashPunch)*(1 + min(.45, (ragdoll?.spread ?? 0)*.02));
+// the rider as last drawn, in the bike's own space (kept by drawRider), so the wreck starts from the very pose; and
+// where each of the ragdoll's points is in it
+let lastPose = {frame: -9, J: null}, lastBikeM = null;
+const POSE_KEYS = [['head'], ['chest'], ['hip'], ['sh', 0], ['sh', 1], ['el', 0], ['hd', 0], ['el', 1], ['hd', 1], ['hp', 0], ['hp', 1],
+    ['kn', 0], ['ft', 0], ['kn', 1], ['ft', 1]];
+// how the crash threw the rider (from crash): into something and over the bars ('front'), down onto the ground wrong
+// ('slam'), into a chasm ('fall'), or off sideways out of a trick ('twist')
+function startWreck(hit={})
+{
+    const M = bikeMatrix(), rnd = ()=> Math.random() - .5, J = lastPose.frame >= frame - 3 ? lastPose.J : null;
+    const pts = RAG_POSE.map(([n, x, y, z, rad], i)=>
+    {
+        const [k, side] = POSE_KEYS[i], q = J ? (side === undefined ? J[k] : J[k]?.[side]) : null;
+        const p = M.transformPoint(q || vec3(x, y, z));
+        return {x: p.x, y: p.y, z: p.z, r: rad*RS, limb: RAG_LIMB.has(i)};
+    });
     // a rider coming down on their head starts partly in the ground: lifted out of it first
     const lift = max(0, ...pts.map(p=> terrainAt(p.x, p.z) + p.r - p.y));
     for (const p of pts) p.y += lift;
-    const hip = pts[RAG_I.hip], ux = vx*.65, uy = max(vy, 0)*.3 + 2.5;
-    // thrown on at the bike's speed, tumbling head over heels, every limb a little its own way
+    const hip = pts[RAG_I.hip], kind = hit.kind || '', th = atan(rideSlope(px)), tx = cos(th), ty = sin(th), v = hypot(vx, vy);
+    // thrown according to what happened, turning about the hip, every limb a little its own way
+    let ux, uy, uz = 0, spin, roll = 0;
+    if (kind == 'front')
+    {
+        // into something: over the bars, flung on and up, head over heels the harder the faster it was going
+        ux = vx*.95; uy = max(vy, 0)*.4 + 3 + v*.15; spin = -min(16, 4 + v*.35);
+    }
+    else if (kind == 'slam')
+    {
+        // down onto the ground wrong: on along the slope, bounced back up off it a little, still turning the way the
+        // bike was turning (an over-rotated flip goes on over)
+        const along = vx*tx + vy*ty, into = max(0, vx*ty - vy*tx);
+        ux = tx*along*.9 - ty*(into*.3 + 1.5); uy = ty*along*.9 + tx*(into*.3 + 1.5);
+        spin = clampV(angVel*.8, -14, 14) - 2;
+    }
+    else if (kind == 'fall') { ux = vx*.9; uy = vy; spin = -(2 + Math.random()*2); }
+    else if (kind == 'twist')
+    {
+        // out of a trick gone wrong: off to one side, cartwheeling
+        ux = vx*.85; uy = max(vy, 0)*.3 + 2.5; uz = (Math.random() < .5 ? -1 : 1)*(2 + Math.random()*2);
+        spin = -3; roll = sign(uz)*(5 + Math.random()*4);
+    }
+    else { ux = vx*.65; uy = max(vy, 0)*.3 + 2.5; spin = -(6 + Math.random()*6); }
     for (const p of pts)
     {
-        p.vx = ux - spin*(p.y - hip.y) + rnd()*3; p.vy = uy + spin*(p.x - hip.x) + rnd()*3; p.vz = rnd()*2;
-        p.phase = Math.random()*TAU;
+        const dx = p.x - hip.x, dy = p.y - hip.y, dz = p.z - hip.z;
+        p.vx = ux - spin*dy + rnd()*2.4; p.vy = uy + spin*dx - roll*dz + rnd()*2.4; p.vz = uz + roll*dy + rnd()*1.6;
+        p.phase = Math.random()*TAU; p.bt = 0;
     }
-    const len = RAG_BONES.map(([a, b])=> hypot(pts[a].x - pts[b].x, pts[a].y - pts[b].y, pts[a].z - pts[b].z));
-    ragdoll = {pts, len};
-    // the bike bursts apart from its middle
-    const mid = M.transformPoint(vec3(0, .6, 0));
+    const d = (a, b)=> hypot(pts[a].x - pts[b].x, pts[a].y - pts[b].y, pts[a].z - pts[b].z);
+    const len = RAG_BONES.map(([a, b])=> d(a, b));
+    const range = [...RAG_NECK.map(([a, b, lo, hi])=> [a, b, d(a, b)*lo, d(a, b)*hi]), ...RAG_REACH.map(([a, m, b, k])=> [a, b, (d(a, m) + d(m, b))*k, 1e9])];
+    ragdoll = {pts, len, range, obs: titleWreck ? [] : wreckObstacles(px), dustT: 0, kind, spread: 0,
+        stats: {dist: 0, bounces: 0, air: 0, hx: hip.x, hy: hip.y, hz: hip.z, top: hip.y, y0: hip.y}};
+    // the bike bursts apart from its middle; run into something it stops dead there and goes over its front wheel
+    const mid = M.transformPoint(vec3(0, .6, 0)), front = kind == 'front';
+    const [bx, by] = front ? [vx*.3, max(vy, 0)*.3 + 3] : kind == 'slam' ? [ux*.85, uy*.7] : kind == 'fall' ? [vx*.85, vy] : [vx*.62, max(vy, 0)*.4 + 2];
     pieces = PIECES.map(([key, x, y, z, rad, wheel])=>
     {
         const c = vec3(x, y, z), w = M.transformPoint(c), R = M.copy(), out = w.subtract(mid);
         R.m[12] = R.m[13] = R.m[14] = 0;
         return {key, c, x: w.x, y: w.y, z: w.z, r: rad*RS, wheel, R, tipAt: 1.5 + Math.random()*2,
-            vx: vx*(wheel ? .65 : .6) + out.x*3 + rnd()*3, vy: max(vy, 0)*.4 + 2 + out.y*3 + Math.random()*2.5, vz: out.z*4 + rnd()*5,
-            w: wheel ? vec3(rnd()*2, rnd()*2, -vx/(rad*RS)*.6) : vec3(rnd()*14, rnd()*14, rnd()*14)};
+            vx: bx + out.x*3 + rnd()*3, vy: by + out.y*3 + Math.random()*2.5, vz: uz*.5 + out.z*4 + rnd()*5,
+            w: wheel ? vec3(rnd()*2, rnd()*2, -vx/(rad*RS)*.6) : front ? vec3(rnd()*4, rnd()*4, -(5 + Math.random()*5)) : vec3(rnd()*14, rnd()*14, rnd()*14)};
     });
     wheelSpinAtCrash = wheelSpin;
     rag = {x: hip.x, y: hip.y, z: hip.z};
+}
+// what the wreck can hit besides the ground: the rocks, fallen trees and logs from a little behind to a long way on,
+// as an ellipsoid each, or a trunk lying across the trail (and the cows, wherever they have got to)
+function wreckObstacles(x0)
+{
+    const out = [];
+    for (const r of rocks)
+    {
+        if (r.smashed || r.x < x0 - 15 || r.x > x0 + 160) continue;
+        if (r.type == 'tree') { const k = r.h/.95; out.push({cap: true, x: r.x, y: r.y + r.h*.5 - .06, z0: wz(r.x, -5.5*k), z1: wz(r.x, 3.5*k), rad: r.h*.5}); }
+        else if (r.type == 'log') out.push({cap: true, x: r.x, y: r.y + .22, z0: wz(r.x, -2), z1: wz(r.x, 1.6), rad: .25});
+        else out.push({x: r.x, y: r.y + r.h*.35, z: wz(r.x, 0), ax: r.w*1.1, ay: r.h*.625, az: 1.1});
+    }
+    return out;
+}
+const COW_SHAPE = {x: 0, y: 0, z: 0, ax: .6, ay: .55, az: 1.15};
+// a body (a point of the ragdoll or a piece of the bike) bounced off one obstacle: pushed out of it and its speed into
+// it turned back (e of it); gives how hard it hit
+function bumpOne(q, r, e, o)
+{
+    const dx = q.x - o.x, dy = q.y - o.y;
+    let nx, ny, nz;
+    if (o.cap)
+    {
+        const R = o.rad + r;
+        if (abs(dx) > R || abs(dy) > R) return 0;
+        const cz = clampV(q.z, min(o.z0, o.z1), max(o.z0, o.z1)), dz = q.z - cz, d = hypot(dx, dy, dz);
+        if (d >= R || d < 1e-6) return 0;
+        nx = dx/d; ny = dy/d; nz = dz/d;
+        q.x = o.x + nx*R; q.y = o.y + ny*R; q.z = cz + nz*R;
+    }
+    else
+    {
+        const ax = o.ax + r, ay = o.ay + r, az = o.az + r, dz = q.z - o.z, u = hypot(dx/ax, dy/ay, dz/az);
+        if (u >= 1 || u < 1e-6) return 0;
+        q.x = o.x + dx/u; q.y = o.y + dy/u; q.z = o.z + dz/u;
+        nx = dx/(ax*ax); ny = dy/(ay*ay); nz = dz/(az*az);
+        const l = hypot(nx, ny, nz); nx /= l; ny /= l; nz /= l;
+    }
+    const vn = q.vx*nx + q.vy*ny + q.vz*nz;
+    if (vn >= 0) return 0;
+    q.vx -= (1 + e)*vn*nx; q.vy -= (1 + e)*vn*ny; q.vz -= (1 + e)*vn*nz;
+    return -vn;
+}
+function bumpObstacles(q, r, e)
+{
+    let hit = 0;
+    for (const o of ragdoll.obs) if (abs(o.x - q.x) < 8) hit = max(hit, bumpOne(q, r, e, o));
+    for (const c of cows)
+    {
+        if (c.state == 'gone' || abs(c.x - q.x) > 2.5) continue;
+        COW_SHAPE.x = c.x; COW_SHAPE.y = c.y + 1.02*COW_S; COW_SHAPE.z = wz(c.x, c.z);
+        const b = bumpOne(q, r, e, COW_SHAPE);
+        // knocked by a flying rider, it is off, mooing
+        if (b > 2.5 && c.state != 'flee') cowFlee(c);
+        hit = max(hit, b);
+    }
+    return hit;
+}
+// the ground under a body, looked up again only once it has moved (a body at rest costs nothing), and which way the
+// ground faces there
+function groundAt(p)
+{
+    if (!(abs(p.x - p.gx) + abs(p.z - p.gz) < .04)) { p.gt = terrainAt(p.x, p.z); p.gx = p.x; p.gz = p.z; }
+    return p.gt;
+}
+function groundNormal(p)
+{
+    if (abs(p.x - p.nfx) + abs(p.z - p.nfz) < .3) return;
+    const g = terrainAt(p.x, p.z), a = -(terrainAt(p.x + .4, p.z) - g)/.4, c = -(terrainAt(p.x, p.z + .4) - g)/.4, l = hypot(a, 1, c);
+    p.nx = a/l; p.ny = 1/l; p.nz = c/l; p.nfx = p.x; p.nfz = p.z;
+}
+// two points pulled or pushed (half each) to within lo..hi of each other
+function keepApart(A, B, lo, hi)
+{
+    const dx = B.x - A.x, dy = B.y - A.y, dz = B.z - A.z, d = hypot(dx, dy, dz) || 1e-6, want = d < lo ? lo : d > hi ? hi : d;
+    if (want == d) return;
+    const f = (d - want)/d*.5;
+    A.x += dx*f; A.y += dy*f; A.z += dz*f; B.x -= dx*f; B.y -= dy*f; B.z -= dz*f;
+}
+// a point that met the ground this step: bounced back off it (only off a real hit, e of the speed it hit with, and
+// never thrown off faster: pushed up a bank is no throw), slowed along it by friction as hard as it pressed into it
+// (so it slides on down a steep slope and stops on a gentle one) and by a little rolling drag; gives how hard it hit
+function rebound(p, e, mu, drag, h)
+{
+    groundNormal(p);
+    const nx = p.nx, ny = p.ny, nz = p.nz, vin = p.ivx*nx + p.ivy*ny + p.ivz*nz;
+    let vn = p.vx*nx + p.vy*ny + p.vz*nz;
+    const tx = p.vx - vn*nx, ty = p.vy - vn*ny, tz = p.vz - vn*nz;
+    vn = vin < 0 ? min(max(vn, 0), (vin < -3 ? -vin*e : 0) + .5) : min(vn, 1 + vin);
+    const tl = hypot(tx, ty, tz), k = tl > 1e-6 ? max(0, tl - mu*max(0, vn - vin) - drag*h)/tl : 0;
+    p.vx = tx*k + vn*nx; p.vy = ty*k + vn*ny; p.vz = tz*k + vn*nz;
+    return -vin;
 }
 // on the menu the rider smacks into the logo: nothing of the wreck goes through it, and it stays on the trail in
 // front of it rather than tumbling away down the hillside
@@ -8087,7 +8246,9 @@ function wreckSound(name, hit)
 function stepWreck(dt)
 {
     // (getting up in a match the rider is posed by hand, so the ragdoll's physics has nothing to move)
-    const n = 3, h = dt/n, P = mp.rec && crashT > REC.down ? [] : ragdoll.pts;
+    const n = 3, h = dt/n, R = ragdoll, P = mp.rec && crashT > REC.down ? [] : R.pts;
+    R.dustT -= dt;
+    let onGround = false;
     for (let s = 0; s < n; ++s)
     {
         // the ragdoll: moved, then its bones pulled back to length, then kept out of the ground
@@ -8132,51 +8293,57 @@ function stepWreck(dt)
         {
             p.ox = p.x; p.oy = p.y; p.oz = p.z;
             p.vy -= G_AIR*h;
-            p.fall = p.vy;
+            p.ivx = p.vx; p.ivy = p.vy; p.ivz = p.vz;
             p.x += p.vx*h; p.y += p.vy*h; p.z += p.vz*h;
-            p.g = terrainAt(p.x, p.z) + p.r; p.hit = false;
+            p.g = groundAt(p) + p.r; p.hit = false;
         }
-        // the bones and the ground worked out together, so neither drags the other through
-        for (let it = 0; it < 5; ++it)
+        // the bones, the neck and the reach of the limbs, and the ground worked out together, so neither drags the
+        // other through
+        if (P.length) for (let it = 0; it < 5; ++it)
         {
-            if (P.length) RAG_BONES.forEach(([a, b], j)=>
-            {
-                const A = P[a], B = P[b], dx = B.x - A.x, dy = B.y - A.y, dz = B.z - A.z, d = hypot(dx, dy, dz) || 1e-6, f = (d - ragdoll.len[j])/d*.5;
-                A.x += dx*f; A.y += dy*f; A.z += dz*f; B.x -= dx*f; B.y -= dy*f; B.z -= dz*f;
-            });
+            for (let j = 0; j < RAG_BONES.length; ++j) { const b = RAG_BONES[j]; keepApart(P[b[0]], P[b[1]], R.len[j], R.len[j]); }
+            for (const [a, b, lo, hi] of R.range) keepApart(P[a], P[b], lo, hi);
             for (const p of P) if (p.y < p.g) { p.y = p.g; p.hit = true; }
             if (titleWreck) for (const p of P) offLogo(p, false);
         }
         for (const p of P)
         {
             p.vx = (p.x - p.ox)/h; p.vy = (p.y - p.oy)/h; p.vz = (p.z - p.oz)/h;
-            // being pushed out of the ground (onto a rock, up a bank) is not a throw: a contact only bounces
-            // back a little of the speed it hit with, and nothing is ever flung up faster than a tumble goes
             if (p.hit)
             {
-                if (p.fall < 0) wreckSound('thud', -p.fall);
-                p.vy = min(p.vy, max(0, -p.fall)*.3 + 1);
+                onGround = true;
                 // on the menu the heap stays at the foot of the logo rather than rolling off down the hillside
-                const f = 1 - damp(titleWreck ? 45 : 9, h);
-                p.vx *= f; p.vz *= f;
+                const hit = titleWreck ? rebound(p, .2, 3, 40, h) : rebound(p, p.limb ? .2 : .35, .55, 2.2, h);
+                wreckSound('thud', hit);
+                if (hit > 4 && !p.limb && time > p.bt) { p.bt = time + .3; ++R.stats.bounces; }
+                if (hit > 5 && R.dustT <= 0 && !titleWreck) { R.dustT = .16; dustBurst(p.x, p.y - p.r, round(clampV(hit*2, 8, 30)), p.z); }
             }
-            p.vy = min(p.vy, 8);
+            if (!titleWreck) { const b = bumpObstacles(p, p.r, p.limb ? .25 : .4); if (b > 2) { wreckSound('thud', b + 3); if (!p.limb && time > p.bt) { p.bt = time + .3; ++R.stats.bounces; } } }
+            // a big throw can go high and fast, but nothing goes faster than a real tumble does
+            p.vy = min(p.vy, 20);
             const sp = hypot(p.vx, p.vy, p.vz);
-            if (sp > 30) { p.vx *= 30/sp; p.vy *= 30/sp; p.vz *= 30/sp; }
+            if (sp > 45) { p.vx *= 45/sp; p.vy *= 45/sp; p.vz *= 45/sp; }
         }
-        // the pieces of the bike: tumbling, bouncing, and the wheels rolling on down the slope
+        // the pieces of the bike: tumbling, bouncing off the ground and what is on it, and the wheels rolling on down
+        // the slope
         if (!(mp.rec && crashT > REC.stood)) for (const p of pieces)
         {
             p.vy -= G_AIR*h;
             p.x += p.vx*h; p.y += p.vy*h; p.z += p.vz*h;
             if (titleWreck) offLogo(p, true);
+            else { const b = bumpObstacles(p, p.r*.8, .35); if (b > 2) wreckSound(p.wheel ? 'thud' : 'clank', b + 3); }
             if (p.wheel && crashT > p.tipAt) p.w.x += 2.5*h*(p.key == 'rw' ? 1 : -1);
-            p.R = Matrix4.rotation(vec3(p.w.x*h, p.w.y*h, p.w.z*h)).multiply(p.R);
-            const g = terrainAt(p.x, p.z) + p.r;
+            if (p.w.x || p.w.y || p.w.z) p.R = Matrix4.rotation(vec3(p.w.x*h, p.w.y*h, p.w.z*h)).multiply(p.R);
+            const g = groundAt(p) + p.r;
             if (p.y < g)
             {
                 p.y = g;
-                if (p.vy < 0) { wreckSound(p.wheel ? 'thud' : 'clank', -p.vy); p.vy *= -.35; }
+                if (p.vy < 0)
+                {
+                    wreckSound(p.wheel ? 'thud' : 'clank', -p.vy);
+                    if (p.vy < -7 && R.dustT <= 0 && !titleWreck) { R.dustT = .16; dustBurst(p.x, g - p.r, 10, p.z); }
+                    p.vy *= -.35;
+                }
                 if (p.wheel && crashT < p.tipAt + .6)
                 {
                     // a wheel on its rim rolls on down the mountain, slowing only a little
@@ -8188,13 +8355,28 @@ function stepWreck(dt)
                 else
                 {
                     const f = 1 - damp(titleWreck ? 14 : 2.5, h);
-                    p.vx *= f; p.vz *= f; p.w = p.w.scale(1 - damp(3, h));
+                    p.vx *= f; p.vz *= f;
+                    if (p.w.x || p.w.y || p.w.z) p.w = abs(p.w.x) + abs(p.w.y) + abs(p.w.z) < .02 ? vec3() : p.w.scale(1 - damp(3, h));
                 }
             }
         }
     }
-    const hip = ragdoll.pts[RAG_I.hip];
+    const hip = R.pts[RAG_I.hip];
     rag.x = hip.x; rag.y = hip.y; rag.z = hip.z;
+    // the wipeout, for the score card: how far the body tumbled, how often it bounced, how long it flew
+    const S = R.stats;
+    if (state == 'crash' && crashT < 8 && P.length)
+    {
+        const d = hypot(hip.x - S.hx, hip.y - S.hy, hip.z - S.hz);
+        if (d/max(dt, 1e-4) > 1.5 && d < 5) S.dist += d;
+        if (!onGround) S.air += dt;
+        S.top = max(S.top, hip.y);
+    }
+    S.hx = hip.x; S.hy = hip.y; S.hz = hip.z;
+    // how far the yard sale has spread, for the camera to take it all in
+    let spread = 0;
+    for (const p of pieces) spread = max(spread, abs(p.x - hip.x) + abs(p.z - hip.z)*.6);
+    R.spread += (min(spread, 30) - R.spread)*damp(2, dt);
 }
 // a piece of the bike where it is now, turning about its own middle
 const pieceMatrix = p=> Matrix4.translation(vec3(p.x, p.y, p.z)).multiply(p.R).multiply(Matrix4.translation(p.c.scale(-1)));
@@ -8679,8 +8861,10 @@ function drawRider(M, bikePts, comp, styleName, styleAmt, pull=0)
         elbows.push(ik(shoulders[i], hands[i], .32, .31, vec3(side, -.2, .6)));
     }
     const y = chest.subtract(hip).normalize(), x = vec3(1, 0, 0).subtract(y.scale(y.x)).normalize();
-    drawBody({head, chest, hip, sh: shoulders, el: elbows, hd: hands, hp: hips, kn: knees, ft: feet, foot: FOOT_FRAME,
-        headM: buildMatrix(head, vec3(-.28, 0, 0))}, {x, y, z: x.cross(y)});
+    const J = {head, chest, hip, sh: shoulders, el: elbows, hd: hands, hp: hips, kn: knees, ft: feet, foot: FOOT_FRAME,
+        headM: buildMatrix(head, vec3(-.28, 0, 0))};
+    if (M == lastBikeM) { lastPose.J = J; lastPose.frame = frame; }
+    drawBody(J, {x, y, z: x.cross(y)});
 }
 
 
@@ -8746,7 +8930,7 @@ function drawRiderView()
         if (crashT > 1 && !(mp.rec && crashT > REC.down)) drawStars(ragdoll.pts[RAG_I.head]);
         return;
     }
-    const M = bikeMatrix(), t = trickAnim();
+    const M = lastBikeM = bikeMatrix(), t = trickAnim();
     const pts = drawBike(M, suspF, suspR, wheelSpin, crank, t.whip, t.bar, wheelOffF, wheelOffR);
     drawRider(M, pts, riderComp(t), t.name, t.amt, hopPull);
 }
@@ -8786,7 +8970,7 @@ function newRun(s)
     runTime = dist = score = orbsGot = orbStreak = 0;
     bestCombo = 0; bestComboName = ''; flipsTotal = 0; grindDist = 0; crashReason = ''; trickCounts = {}; tricksTotal = 0; bestTrick = {name: '', pts: 0}; airHist = [0, 0, 0, 0, 0, 0]; hardLandings = 0; bestChain = landsNailed = landsClean = landsSketchy = 0; cowStreak = cowBounces = 0; cowSeen = false; combosBanked = 0; multSum = 0; cased = sketchy = perfects = maxAir = topSpeed = smashes = slides = tyresGot = 0;
     titleT = 0; titleWreck = false; menu = 'main'; logoWob = logoWobV = logoFall = logoFallV = 0; logoDown = false;
-    battery = 0; turboT = 0; turbos = 0; supers = legBoosts = sends = cellsGot = 0; tyres = brakeFuel = slideT = 0; brakeHeld = false; setShown = null; setShownT = 0; lines = 0; proLines = 0; linesRidden = new Set; allLines = false; dayT = DAY_START; dropCam = crashCam = sendCam = dropR = crashR = sendR = airR = 0; camLift = 0; camReset(); ragdoll = null; pieces = []; pz = yawV = leanV = bermY = sideOff = 0; fly = null; camZ = camB = 0;
+    battery = 0; turboT = 0; turbos = 0; supers = legBoosts = sends = cellsGot = 0; tyres = brakeFuel = slideT = 0; brakeHeld = false; setShown = null; setShownT = 0; lines = 0; proLines = 0; linesRidden = new Set; allLines = false; dayT = DAY_START; dropCam = crashCam = sendCam = dropR = crashR = sendR = airR = 0; camLift = 0; camReset(); ragdoll = null; pieces = []; slowMoT = -1; crashPunch = 0; pz = yawV = leanV = bermY = sideOff = 0; fly = null; camZ = camB = 0;
     messages.length = 0; trickPops.length = 0; swipeFx.length = 0;
     dust = new ParticleEmitter3D(vec3(), .4, 0, 0, PI*.3, undefined,
         hsl(.08,.3,.55,.6), hsl(.09,.25,.45,.5), hsl(.08,.2,.6,0), hsl(.08,.2,.5,0),
@@ -9176,7 +9360,8 @@ function gameUpdatePost()
     const want = {yaw: v.yaw[o], pitch: v.pitch[o], lead: v.lead[o], up: v.up[o], dist: v.dist[o]*CAM_ZOOMS[camView[portrait ? 'zp' : 'zl']][1], follow: v.follow, fixed: (v.fixed?.length ? v.fixed[o] : v.fixed) ? 1 : 0};
     if (!camP) camP = {...want};
     for (const key in want) camP[key] += (want[key] - camP[key])*damp(3, dt);
-    const fx = state == 'crash' || state == 'results' ? rag.x : px;
+    const hipV = (state == 'crash' || state == 'results') && ragdoll ? ragdoll.pts[RAG_I.hip].vx : 0;
+    const fx = state == 'crash' || state == 'results' ? rag.x + clampV(hipV*.12, -2.5, 2.5) : px;
     const fy = state == 'crash' || state == 'results' ? rag.y : grounded || grinding ? baseY : py;
     // a drop-in: from rolling onto the ledge until just after the landing the camera comes in close, low and
     // round in front of the rider, so the drop and the tricks off it fill the screen, then eases back out
@@ -9191,7 +9376,7 @@ function gameUpdatePost()
     const C = dropCam < .001 ? camP : {};
     if (C != camP) for (const key in camP) C[key] = mix(camP[key], DROP_VIEW[key][o] ?? DROP_VIEW[key], dropCam);
     const wrecked = state == 'crash' || state == 'results';
-    crashR = ramp(crashR, wrecked, 1, .7, dt); crashCam = sstep(crashR);
+    crashR = ramp(crashR, wrecked, ragdoll?.big ? .45 : 1, .7, dt); crashCam = sstep(crashR);
     const Cw = crashCam < .001 ? C : {};
     if (Cw != C) for (const key in C) Cw[key] = mix(C[key], CRASH_VIEW[key][o] ?? CRASH_VIEW[key], crashCam);
     const close = max(dropCam, crashCam);
@@ -9204,8 +9389,9 @@ function gameUpdatePost()
     // a fixed view is set back by its own distance, the others far enough to fit the trail across the screen;
     // eased between the two through a change of view
     const D0 = mix(mix(fit*(Cw.fixed > .99 ? 1 : Cw.dist), (Cw.fixed < .01 ? 1 : Cw.dist) + speed*.3 + airZoom*4, Cw.fixed),
-        dropDist + speed*.12, dropCam), D = mix(D0, CRASH_VIEW.dist[o], crashCam), vs = 2*D*tan(vfov/2);
+        dropDist + speed*.12, dropCam), D = mix(D0, CRASH_VIEW.dist[o]*crashZoom(), crashCam), vs = 2*D*tan(vfov/2);
     camD += (D*CAMD_K - camD)*damp(2.5, dt);
+    crashPunch = max(0, crashPunch - dt*1.2);
     const lead = state == 'title' ? min(Cw.lead, .3) - .18 : Cw.lead*(1 - sendCam*.7), reach = mix(hs, D*1.1, Cw.fixed);
     // never so far ahead that the rider is pushed off the side of the screen: from a view at an angle the lead
     // runs partly across the screen, brings the rider nearer the camera than what it looks at (which makes it
@@ -9530,11 +9716,11 @@ function rockBurst(r)
         hsl(.08,.1,.5), hsl(.08,.08,.38), hsl(.08,.1,.5,0), hsl(.08,.1,.4,0), .9, .35, .25, .08, .95, .012, .3, .5, false);
     e.rotation3D = vec3(0, 0, -.4);
 }
-function dustBurst(x, y, count)
+function dustBurst(x, y, count, zw)
 {
     const snow = surfNow == S_SNOW;
     const a = snow ? hsl(.6,.1,.97,.75) : hsl(.08,.3,.55,.6), b = snow ? hsl(.6,.15,.88,.6) : hsl(.09,.25,.42,.5);
-    const e = new ParticleEmitter3D(W3(x, y + .2, riderZ()), 1.6, .1, count*10, PI*.45, undefined,
+    const e = new ParticleEmitter3D(zw === undefined ? W3(x, y + .2, riderZ()) : vec3(x, y + .2, zw), 1.6, .1, count*10, PI*.45, undefined,
         a, b, a.scale(1, 0), b.scale(1, 0), 1.1, .5, 1.8, .08, .92, .0003, .35, .6, false);
     e.rotation3D = vec3(0, 0, 0);
 }
@@ -10361,7 +10547,8 @@ const CRASH_JOKES = {
     'LANDED ON YOUR HEAD': 'HEAD FIRST. BOLD.', 'BAD LANDING': 'GRAVITY 1, YOU 0', 'HIT A ROCK': 'THE ROCK WON',
     'HIT THE EDGE': 'THE WALL IS UNDEFEATED', 'FELL INTO THE CHASM': 'AAAAAaaaaa...', 'MISSED THE RAIL': 'RAIL 1, YOU 0',
     'MISSED THE BARS': 'BARS MISSED. GROUND FOUND.', 'TANGLED IN THE WHIP': 'TAILWHIPPED', 'LANDED SIDEWAYS': 'SIDEWAYS IS NOT A DIRECTION',
-    'LANDED ON YOUR SIDE': 'TABLE FOR ONE, ON THE FLOOR', 'HANDS OFF THE BARS': 'LOOK MA, NO LANDING', 'FEET OFF THE PEDALS': 'PEDALS ARE FOR FEET'};
+    'LANDED ON YOUR SIDE': 'TABLE FOR ONE, ON THE FLOOR', 'HANDS OFF THE BARS': 'LOOK MA, NO LANDING', 'FEET OFF THE PEDALS': 'PEDALS ARE FOR FEET',
+    'HIT A FALLEN TREE': 'TIMBER!'};
 const RATINGS = [[400000, 'LEGEN-DAIRY'], [150000, 'MOO-NSTROUS'], [60000, 'UDDERLY RADICAL'], [20000, 'HEIFER ON A MISSION'], [5000, 'MILD MOO'], [0, 'CALF IN TRAINING']];
 function drawResults(W, H)
 {
@@ -10370,7 +10557,10 @@ function drawResults(W, H)
     rrect(cx, cy, cw, ch, 18, 'rgba(12,18,30,.9)', 'rgba(255,210,70,.55)');
     const joke = CRASH_JOKES[crashReason] || 'OUCH.', rating = RATINGS.find(r=> score >= r[0])[1];
     txt(joke, W/2, cy + 30, fitSize(joke, 24, cw - 30), '#ff8a6a', 'center', 900);
-    txt((crashReason || 'wipeout').toLowerCase(), W/2, cy + 53, 13, 'rgba(255,255,255,.6)', 'center', 700);
+    // what happened, and the wipeout: how far the body tumbled, how often it bounced, how long it flew
+    const W0 = ragdoll?.stats, why = (crashReason || 'wipeout').toLowerCase() + (W0 && !titleWreck ? '  ·  WIPEOUT ' + round(W0.dist) + ' m, ' +
+        W0.bounces + (W0.bounces == 1 ? ' bounce, ' : ' bounces, ') + W0.air.toFixed(1) + ' s air' : '');
+    txt(why, W/2, cy + 53, fitSize(why, 13, cw - 30, 700), 'rgba(255,255,255,.75)', 'center', 700);
     txt('RATING:  ' + rating, W/2, cy + 78, fitSize('RATING:  ' + rating, 15, cw - 30), '#ffd23a', 'center', 900);
     const rows = [
         ['Distance ridden', floor(dist).toLocaleString() + ' m'],
@@ -11301,7 +11491,7 @@ window.__mtb = {
     press: ()=> pressMain(), release: ()=> releaseMain(),
     press2: ()=> pressSecond(), release2: ()=> releaseSecond(),
     swipe: dir=> airSwipe(dir),
-    wipe: reason=> crash(reason || 'HIT A ROCK'),
+    wipe: (reason, kind)=> crash(reason || 'HIT A ROCK', {kind: kind ?? 'front'}),
     buttons: ()=> buttons.map(({x, y, w, h, label})=> ({x, y, w, h, label})),
     moo: ()=> moo(),
     // try out a colour scheme: the rider's and bike's colours by name
@@ -11319,7 +11509,7 @@ window.__mtb = {
     trees: ()=> rocks.filter(r=> r.type == 'tree').map(r=> ({x: r.x, h: r.h, hit: !!r.hit, cleared: !!r.cleared})),
     wallState: ()=> ({on: !!wallGroup, seg: grinding?.wall ? grinding.i : -1, best: bestWall, rides: wallRides, px, py, state, grounded}),
     // a crash on demand, for checking how the wreck looks
-    crash: reason=> crash(reason || 'TEST'),
+    crash: (reason, kind)=> crash(reason || 'TEST', {kind}),
     // the middle of rider and bike as drawn, for close-ups
     riderAt: ()=> wrecked() ? vec3(rag.x, rag.y, rag.z) : bikeMatrix().transformPoint(vec3(0, 1, 0)),
     // where the wheels touch down as drawn, back then front, and the hop's pitch, for checking how a hop looks
@@ -11564,7 +11754,7 @@ function frameLoop(t)
     fitCanvases();
     if (!paused)
     {
-        timeDelta = dt; time += dt; ++frame;
+        timeDelta = dt*slowMoK(dt); time += timeDelta; ++frame;
         UPDATE();
         for (const e of EMITTERS) e.update();
         UPDATE_POST();

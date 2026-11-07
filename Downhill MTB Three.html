@@ -5425,9 +5425,12 @@ function addRocks(d)
 {
     // held at one grade, so no crest throws the bike up into them, with room before them for a flight off
     // the last crest to come down, even on pedal power
-    const start = genX(), count = rnd() < .45 + d*.35 ? 2 : 1, len = 34;
+    const start = genX(), tree = rnd() < .55, count = tree ? 1 : rnd() < .45 + d*.35 ? 2 : 1, len = tree ? 44 : 34;
     addRun(len, genGrade);
-    for (let k = 0; k < count; ++k)
+    // or a tree come down across the trail: too big to roll over, it has to be jumped
+    // (further along the straight than a rock: a flight off a crest at today's speeds carries a long way)
+    if (tree) { const x = start + 28; rocks.push({type: 'tree', x, w: .5, h: .85 + rnd()*.25 + d*.1, y: groundY(x), rot: rnd() - .5}); }
+    else for (let k = 0; k < count; ++k)
     {
         // a pair sits close, so one jump clears both
         const x = start + 18 + k*(3.6 + rnd()*1.4), log = rnd() < .3;
@@ -5636,6 +5639,141 @@ function leaveWall()
     if (!wallGroup) return;
     if (!wallExit && state == 'ride') showMessage('OFF THE WALL', 'tap at the lip to pop to the next rock', hsl(.08,.6,.75));
     wallGroup = wallSeg = null; wallExit = false;
+}
+
+// ---------- blue cows: they wait off to the side of the trail and trot out onto it as the rider comes. Come down on
+// one's back and it is a bounce: the bike springs up into a new flight, the cow runs off mooing, and it scores (more
+// for each cow in a row). Ride into one and it is a bump: the bike bucks up and loses speed, and the cow bolts
+let cows = [], nextCowX = 260, cowStreak = 0, cowSeen = false, cowBounces = 0;
+// (drawn a quarter larger than life, like the rider, so it reads on a phone)
+const COW_S = 1.25, COW_TOP = 1.42*COW_S, COW_HALF = 1.05*COW_S, COW_BLUE = hsl(.6,.78,.55), COW_WHITE = hsl(.6,.1,.95), COW_HORN = hsl(.12,.3,.85),
+    COW_NOSE = hsl(.97,.5,.75), COW_DARK = hsl(.6,.3,.12), COW_HOOF = hsl(.07,.3,.18);
+function addCow(x)
+{
+    const side = rnd() < .55 ? -1 : 1;
+    cows.push({x, side, z: side*(side < 0 ? 8 : 11), state: 'wait', t: 0, phase: rnd()*TAU, yaw: side < 0 ? PI : 0, y: groundY(x), dx: 0});
+}
+const cowOnTrail = c=> (c.state == 'walk' || c.state == 'stand') && abs(c.z) < 1.4;
+const cowTop = c=> rideY(c.x) + COW_TOP;
+function updateCows(dt)
+{
+    for (const c of cows)
+    {
+        if (abs(c.x - px) > 160) continue;
+        c.t += dt;
+        // out onto the trail as the rider comes (not when they are already on top of it)
+        if (c.state == 'wait' && state == 'ride' && c.x - px < max(22, sp*2.3) && c.x - px > 9)
+        {
+            c.state = 'walk'; c.t = 0;
+            if (!cowSeen) { cowSeen = true; showMessage('BLUE COW!', 'land on its back for points', hsl(.6,.8,.7)); }
+            moo(.9 + Math.random()*.3, 1.2, .35);
+        }
+        let speed = 0;
+        if (c.state == 'walk')
+        {
+            speed = 7;
+            c.z -= c.side*min(abs(c.z), speed*dt);
+            if (abs(c.z) < .05) { c.z = 0; c.state = 'stand'; }
+            c.yaw = c.side < 0 ? PI : 0;
+        }
+        else if (c.state == 'flee')
+        {
+            speed = 9;
+            c.z += c.side*speed*dt; c.x += c.dx*dt;
+            c.yaw = atan2(-c.dx, -c.side*speed);
+            if (c.t > 4) c.state = 'gone';
+        }
+        else if (c.state == 'stand') c.yaw += (((c.side < 0 ? PI : 0) + sin(time*.7 + c.x)*.4) - c.yaw)*damp(2, dt);
+        c.phase += dt*(speed ? speed*1.9 : 0);
+        c.y = c.state == 'flee' || c.state == 'wait' ? terrainAt(c.x, wz(c.x, c.z)) : rideY(c.x);
+    }
+}
+// off it runs, back the way it came and a little down the mountain, mooing
+function cowFlee(c)
+{
+    c.state = 'flee'; c.t = 0; c.dx = 2 + Math.random()*3;
+    moo(1 + Math.random()*.35, 1.4, .55);
+}
+// down on its back from the air: a bounce into a new flight, scored like a landing first
+function stompCow(ox, oy)
+{
+    if (wallGroup || onBranch(px) && abs(riderZ()) > 1.5 || vy >= 0) return false;
+    for (const c of cows)
+    {
+        if (!cowOnTrail(c) || abs(px - c.x) > COW_HALF) continue;
+        const top = cowTop(c);
+        if (!(oy >= top - .05 && py <= top)) continue;
+        // the bike has to come down on it near enough upright, the same as onto the ground
+        const err = wrapPI(ang - atan(rideSlope(px)));
+        if (abs(err) > min(1, .8*bike.land)) { crash(abs(err) > 2 ? 'LANDED ON YOUR HEAD' : 'BAD LANDING'); return true; }
+        if (!finishTrick()) return true;
+        nailed = false;
+        scoreAir(abs(err) < .22);
+        ang = wrapPI(ang); angVel = 0;
+        ++cowStreak; ++cowBounces;
+        addTrick(cowStreak > 1 ? 'COW BOUNCE x' + cowStreak : 'COW BOUNCE', 300 + 150*min(cowStreak - 1, 4));
+        countTrick('COW BOUNCE');
+        addFlow(.1); surge(1.2);
+        py = top + .05; vy = max(6.5, -vy*.45 + 4.5); vx = max(vx, min(sp, vTop())*.95);
+        takeoff('cow');
+        hopX0 = px; hopY0 = py; hopS = 0; hopT = 0;
+        suspFV += 3; suspRV += 3; camShake = max(camShake, .3); punchV -= .7;
+        sfx('land', .6);
+        cowFlee(c);
+        return true;
+    }
+    return false;
+}
+// into its side, on the ground or flying low: a bump, no harm done but the speed
+function checkCows()
+{
+    if (wallGroup || onBranch(px) && abs(riderZ()) > 1.5) return;
+    for (const c of cows)
+    {
+        if (!cowOnTrail(c) || abs(px - c.x) > COW_HALF - .2 || py > cowTop(c) - .35) continue;
+        sp *= .7;
+        const th = atan(rideSlope(px));
+        vx = sp*cos(th); vy = max(grounded ? 0 : vy, sp*sin(th)) + 3.6; py += .05;
+        if (grounded || grinding) takeoff('cow');
+        cowStreak = 0;
+        suspFV += 2; suspRV += 2; camShake = max(camShake, .35);
+        sfx('landHard', .5);
+        showMessage('MOO!', 'jump and land on its back for points', hsl(.6,.8,.7));
+        cowFlee(c);
+        return;
+    }
+}
+// a cow, drawn from blocks and tubes: blue with white patches, a white face, horns, a pink nose, legs that trot
+function drawCows()
+{
+    for (const c of cows)
+    {
+        if (c.state == 'gone' || abs(c.x - camX) > 120) continue;
+        const run = c.state == 'walk' || c.state == 'flee', sw = run ? sin(c.phase)*.6 : 0, bob = run ? abs(sin(c.phase))*.06 : 0;
+        MC = buildMatrix(vec3(c.x, c.y + bob, wz(c.x, c.z)), vec3(0, c.yaw - atan(wzD(c.x, c.z)), 0), vec3(COW_S));
+        box(vec3(0, 1.02, 0), vec3(.9, .72, 1.75), COW_BLUE);
+        box(vec3(.46, 1.08, -.2), vec3(.02, .38, .55), COW_WHITE); box(vec3(-.46, .98, .35), vec3(.02, .34, .5), COW_WHITE);
+        box(vec3(0, .7, .05), vec3(.72, .1, 1.1), COW_WHITE);
+        // the head, nodding as it trots or grazes
+        const nod = run ? sin(c.phase*2)*.05 : -.18 + sin(time*1.3 + c.x)*.08;
+        box(vec3(0, 1.28 + nod, -1.02), vec3(.56, .52, .6), COW_BLUE);
+        box(vec3(0, 1.3 + nod, -1.33), vec3(.4, .3, .04), COW_WHITE);
+        box(vec3(0, 1.1 + nod, -1.38), vec3(.5, .28, .22), COW_NOSE);
+        for (const s of [-1, 1])
+        {
+            ball(vec3(s*.17, 1.4 + nod, -1.31), .09, COW_DARK);
+            tube(vec3(s*.2, 1.52 + nod, -.98), vec3(s*.42, 1.72 + nod, -.92), .08, COW_HORN);
+            box(vec3(s*.36, 1.4 + nod, -.88), vec3(.2, .1, .14), COW_BLUE);
+        }
+        // legs swinging in pairs, hooves at the ends
+        for (const [lx, lz, ph] of [[-.3, -.62, 1], [.3, -.62, -1], [-.3, .62, -1], [.3, .62, 1]])
+        {
+            const hip = vec3(lx, .78, lz), a = sw*ph, foot = hip.add(vec3(0, -cos(a)*.74, -sin(a)*.74));
+            tube(hip, foot, .17, COW_BLUE);
+            box(foot.add(vec3(0, .05, 0)), vec3(.18, .1, .2), COW_HOOF);
+        }
+        tube(vec3(0, 1.3, .86), vec3(0, .78, 1.02 + sin(time*3 + c.x)*.1), .06, COW_BLUE);
+    }
 }
 
 // the sprockets and the battery cells come in sets: pick up every one in a set for its boost
@@ -5982,7 +6120,37 @@ function lineFeatures(b, lane, kind, sc)
     return {off, add, gap, feats, paces, brakes, what};
 }
 
+// each stretch of trail laid out, then blue cows and fallen trees put on its free parts
 function genSection()
+{
+    const a = genX();
+    genSection0();
+    placeExtras(a, genX());
+}
+// free: off every feature, rail, rock and gap, on the main trail. A tree also wants 70 m of clear, gentle trail
+// before it, with no crest, feature or cow, so no flight can come down right in front of it
+let nextTreeX = 900;
+const extraFree = (x, room)=> !gapAt(x) && !feats.some(f=> x > f.x0 - room && x < (f.x2 ?? f.x1) + room) && !rocks.some(r=> abs(r.x - x) < room + 6)
+    && !rails.some(r=> x > r.x0 - room && x < r.x1 + room) && !walls.some(g=> x > g.x0 - room - 14 && x < g.x1 + room) && abs(groundSlope(x)) < 1.2;
+function gentleBefore(x)
+{
+    for (let k = 0; k < 35; ++k) if (groundSlope(x - k*2) - groundSlope(x - k*2 - 2) < -.07) return false;
+    return true;
+}
+function placeExtras(a, b)
+{
+    // (a cow with a clear run after it, for the flight off its back, and no fallen tree near)
+    for (let x = max(a, nextCowX); x < b - 6; x += 5)
+        if (x > 220 && [0, 15, 30, 45].every(d=> extraFree(x + d, 6)) && !rocks.some(r=> r.x > x - 30 && r.x < x + 60)) { addCow(x); nextCowX = x + 55 + rnd()*95; break; }
+    for (let x = max(a, nextTreeX); x < b - 6; x += 5)
+        if ([0, 10, 20, 30, 40, 50, 60, 70].every(d=> extraFree(x - d, 10)) && gentleBefore(x) && !cows.some(c=> c.x > x - 90 && c.x < x + 30))
+        {
+            rocks.push({type: 'tree', x, w: .5, h: .85 + rnd()*.3, y: groundY(x), rot: rnd() - .5});
+            nextTreeX = x + 160 + rnd()*200;
+            break;
+        }
+}
+function genSection0()
 {
     const x = genX(), d = clamp01(x/6000), start = genX();
     if (openSplit) { if (x > openSplit.x0 + openSplit.len - 70) { closeFork(d); return; } }
@@ -6058,14 +6226,14 @@ function genSection()
         if (reach > genX() - 4) addRun(reach - genX() + 10, genGrade);
         pendingArcs.push(lastLaunch = addGap(d));
     }
-    else if (r < .58)
+    else if (r < .64)
     {
         const reach = launchReach(lastLaunch);
         if (reach > genX() - 4) addRun(reach - genX() + 8, genGrade);
         addRocks(d);
     }
-    else if (r < .66 && x > 160 && !openSplit) addBridge(d);
-    else if (r < .74 && x > 160) addCreek(d);
+    else if (r < .7 && x > 160 && !openSplit) addBridge(d);
+    else if (r < .76 && x > 160) addCreek(d);
     else if (r < .83 && x > 160) addWhoops(d);
     else if (r < .93 && x > 200)
     {
@@ -6094,7 +6262,7 @@ function trackInit(s)
     NA = makeNoise(rnd); NB = makeNoise(rnd); NC = makeNoise(rnd); NV = makeNoise(rnd);
     ys = []; gapF = []; rails = []; rocks = []; orbs = []; signs = []; feats = []; gaps = []; pendingArcs = [];
     splits = []; openSplit = null; lastSplitEnd = 0; nextSplitGap = 0; ride = null; noSign = []; gullies = []; arches = [];
-    nextSignX = 500; lastLaunch = null; nextBooterX = 200; nextDropX = 450; nextCanyonX = 900; nextMegaX = 380; nextTyreX = 140; paces = []; brakeZones = []; walls = []; nextWallX = 650;
+    nextSignX = 500; lastLaunch = null; nextBooterX = 200; nextDropX = 450; nextCanyonX = 900; nextMegaX = 380; nextTyreX = 140; paces = []; brakeZones = []; walls = []; nextWallX = 650; cows = []; nextCowX = 260;
     // the summit: the back of the peak rising from the left, a flat top to stand on, then the drop in
     genBase = -14; genGrade = -.6;
     pushY(genBase);
@@ -6111,7 +6279,7 @@ const TRACK_AHEAD = 950;
 function trackPrune(x)
 {
     const keep = o=> (o.x1 ?? o.x) > x;
-    rails = rails.filter(keep); rocks = rocks.filter(keep); walls = walls.filter(g=> g.x1 > x); feats = feats.filter(f=> (f.x2 ?? f.x1) > x);
+    rails = rails.filter(keep); rocks = rocks.filter(keep); walls = walls.filter(g=> g.x1 > x); cows = cows.filter(c=> c.x > x - 40); feats = feats.filter(f=> (f.x2 ?? f.x1) > x);
     gaps = gaps.filter(f=> f.x2 > x); signs = signs.filter(keep);
     orbs = orbs.filter(o=> o.x > x);
     splits = splits.filter(s=> s.x1 > x - 60); noSign = noSign.filter(f=> f.x1 > x);
@@ -6599,6 +6767,15 @@ const ownObj = (data, color, o={})=> obj(data.geometry(), color, {...o, own: tru
 function makeRock(r)
 {
     let o;
+    if (r.type == 'tree')
+    {
+        o = obj(M.deadTree);
+        o.rotation.set(0, r.rot*.35, 0);
+        o.scale.setScalar(r.h/.95);
+        o.visible = !r.smashed;
+        r.obj = o;
+        return alongTrail(anchor(o, r.x, r.y + r.h*.5 - .06, 0), r.x);
+    }
     if (r.type == 'log')
     {
         o = obj(M.log, hsl(.07,.45,.3));
@@ -7104,6 +7281,25 @@ function buildSceneMeshes()
     M.log = buildCylinder(.5, 3.6, 9).setColor(WHITE);
     M.log.combine(buildCylinder(.42, 3.62, 9).setColor(hsl(.1,.35,.55)));
     M.post = buildBox(vec3(.14, 2.2, .14));
+    // a tree come down across the trail: the trunk lying along z, the roots torn up at the hill side, snapped
+    // branches and moss, the sawn end toward the camera
+    {
+        const t = new MeshData, bark = hsl(.07,.38,.27), wood = hsl(.1,.45,.62), dirt = hsl(.07,.3,.22), moss = hsl(.27,.45,.33);
+        const along = (o, z, rot=vec3(PI/2, 0, 0), sc)=> t.combine(o, buildMatrix(vec3(0, 0, z), rot, sc));
+        along(buildCylinder(.95, 9, 11).setColor(bark), -1);
+        along(buildCylinder(.86, .05, 11).setColor(wood), 3.52);
+        along(buildCylinder(.42, .06, 9).setColor(hsl(.09,.4,.5)), 3.56);
+        along(buildCylinder(2.6, .5, 9, false).setColor(dirt), -5.6);
+        for (let k = 0; k < 7; ++k)
+        {
+            const a = k/7*TAU;
+            t.combine(buildCone(.35, 1.4, 5, false).setColor(dirt), buildMatrix(vec3(cos(a)*1.1, sin(a)*1.1, -5.75), vec3(PI/2 + sin(a)*.5, cos(a)*.5, 0)));
+        }
+        for (const [z, a, l] of [[-3.2, .7, 1.7], [-1.6, -.9, 1.3], [.4, .5, 1.5], [1.9, -.6, 1.1]])
+            t.combine(buildCylinder(.16, l, 6).setColor(bark), buildMatrix(vec3(sin(a)*.5, .35 + cos(a)*.4, z), vec3(.4, 0, a)));
+        for (const z of [-2.4, -.3, 1.2]) t.combine(buildBox(vec3(.55, .08, .9)).setColor(moss), buildMatrix(vec3(.1, .47, z), vec3(0, 0, .15)));
+        M.deadTree = t;
+    }
     M.arch = buildTorus(12.5, 2.3, 15, 6, false);
     M.arrow = new MeshData;
     M.arrow.combine(buildCone(1, .7, 8), vec3(0, .3, 0));
@@ -7182,7 +7378,7 @@ function link()
     chain = chainT > 0 ? chain + 1 : 1; chainT = CHAIN_WINDOW; bestChain = max(bestChain, chain);
     flowTarget = clamp01(flowTarget + .02 + .012*min(chain, 10));
 }
-function breakChain(loss) { chain = 0; chainT = 0; flowTarget = max(0, flowTarget - loss); }
+function breakChain(loss) { chain = 0; chainT = 0; cowStreak = 0; flowTarget = max(0, flowTarget - loss); }
 // about dv more speed, coming on and fading over half a second
 const surge = dv=> { surgeA = min(40, surgeA + dv*4); };
 // over the top speed the air and the legs hold the bike back harder the further over it is, rather than a wall
@@ -7468,6 +7664,7 @@ function stepAir(dt)
     // down into a chasm
     for (const g of gaps)
         if (px > g.x1 && px < g.x2 && py < g.landY - 1.2 && onLine(g, px)) { crash('FELL INTO THE CHASM'); return; }
+    if (stompCow(ox, oy)) return;
     const gy = rideY(px);
     if (py <= gy) land(gy);
 }
@@ -7703,17 +7900,17 @@ function checkRocks()
             continue;
         }
         // coming down on top of a rock bounces off it; only riding into its face is a crash
-        if (!grounded && !grinding && vy < 0 && py > r.y + r.h*.4)
+        if (!grounded && !grinding && vy < 0 && py > r.y + r.h*(r.type == 'tree' ? .2 : .4))
         {
             if (r.hit) continue;
             r.hit = true;
             py = r.y + r.h + .05; vy = 4.5; sp *= .9; vx = sp*cos(ang);
             suspFV += 2.5; suspRV += 2.5; camShake = max(camShake, .4);
             sfx('landHard', .6);
-            addTrick('ROCK BOUNCE', 120);
+            addTrick(r.type == 'tree' ? 'TREE BOUNCE' : 'ROCK BOUNCE', r.type == 'tree' ? 180 : 120);
             continue;
         }
-        crash('HIT A ROCK');
+        crash(r.type == 'tree' ? 'HIT A FALLEN TREE' : 'HIT A ROCK');
         return;
     }
 }
@@ -8379,7 +8576,7 @@ function newRun(s)
     state = 'title';
     placeRider(START_X);
     runTime = dist = score = orbsGot = orbStreak = 0;
-    bestCombo = 0; bestComboName = ''; flipsTotal = 0; grindDist = 0; crashReason = ''; trickCounts = {}; tricksTotal = 0; bestTrick = {name: '', pts: 0}; airHist = [0, 0, 0, 0, 0, 0]; hardLandings = 0; bestChain = landsNailed = landsClean = landsSketchy = 0; combosBanked = 0; multSum = 0; cased = sketchy = perfects = maxAir = topSpeed = smashes = slides = tyresGot = 0;
+    bestCombo = 0; bestComboName = ''; flipsTotal = 0; grindDist = 0; crashReason = ''; trickCounts = {}; tricksTotal = 0; bestTrick = {name: '', pts: 0}; airHist = [0, 0, 0, 0, 0, 0]; hardLandings = 0; bestChain = landsNailed = landsClean = landsSketchy = 0; cowStreak = cowBounces = 0; cowSeen = false; combosBanked = 0; multSum = 0; cased = sketchy = perfects = maxAir = topSpeed = smashes = slides = tyresGot = 0;
     titleT = 0; titleWreck = false; menu = 'main'; logoWob = logoWobV = logoFall = logoFallV = 0; logoDown = false;
     battery = 0; turboT = 0; turbos = 0; supers = legBoosts = sends = cellsGot = 0; tyres = brakeFuel = slideT = 0; brakeHeld = false; setShown = null; setShownT = 0; lines = 0; proLines = 0; linesRidden = new Set; allLines = false; dayT = DAY_START; dropCam = crashCam = sendCam = dropR = crashR = sendR = airR = 0; camLift = 0; camReset(); ragdoll = null; pieces = []; pz = yawV = leanV = bermY = sideOff = 0; fly = null; camZ = camB = 0;
     messages.length = 0; trickPops.length = 0; swipeFx.length = 0;
@@ -8497,6 +8694,7 @@ function gameUpdate()
     updateVisuals(dt);
     trackEnsure(px + TRACK_AHEAD);
     if (frame % 60 == 0) trackPrune(px - 260);
+    updateCows(dt);
     updateEffects(dt);
     audioUpdate(dt);
 }
@@ -8521,6 +8719,13 @@ function rideStep(dt)
     updateFork(pxWas);
     updateFeatures(dt, pxWas);
     checkRocks();
+    checkCows();
+    // a fallen tree cleared in the air
+    for (const r of rocks) if (r.type == 'tree' && !r.cleared && px > r.x + r.w)
+    {
+        r.cleared = true;
+        if (!r.hit && !r.smashed && !grounded && !grinding && py > r.y + r.h) { addTrick('TREE HOP', 150); countTrick('TREE HOP'); addFlow(.05); }
+    }
     collectOrbs();
     if (turboGrace > 0) turboGrace -= dt;
     if (turboT > 0 && !paceAt(px))
@@ -10326,8 +10531,24 @@ function autopilotInput()
         mainHeld = false;
         const lead = sp*.5 + .6;
         // rocks lie on the main trail only
-        if (!onBranch(px)) for (const r of rocks) if (!r.jumped && r.x > px && r.x - px < lead && r.x - px > 1.5) { jumpQueued = true; r.jumped = true; }
+        if (!onBranch(px)) for (const r of rocks) if (r.x > px && r.x - px < lead && r.x - px > 1.5) jumpQueued = true;
         if (!onBranch(px)) for (const r of rails) if (!r.mount && !r.wall && r.x0 > px && r.x0 - px < sp*.25 + 1) jumpQueued = true;
+        // a cow on the trail ahead: most of the time it jumps so as to come down on its back, otherwise over it
+        for (const c of cows)
+        {
+            if (!cowOnTrail(c) && c.state != 'walk' || c.x < px || c.x - px > 45) continue;
+            if (c.ap === undefined) c.ap = Math.random() < (window.__cowPilot ?? .6);
+            const th = atan(rideSlope(px)), pop = POP*bike.pop, top = cowTop(c);
+            let x = px, y = py + .05, wx = sp*cos(th) - sin(th)*pop*.5, wy = sp*sin(th) + cos(th)*pop*.5 + pop*.5, hit = false;
+            for (let t = 0; t < 2.5; t += 1/60)
+            {
+                const ly = y;
+                wy -= airG(wy)/60; x += wx/60; y += wy/60;
+                if (wy < 0 && ly >= top && y <= top) { hit = abs(x - c.x) < COW_HALF*.7; break; }
+                if (y < rideY(x)) break;
+            }
+            if (c.ap ? hit : c.x - px < sp*.5 + .6 && c.x - px > 1.5) jumpQueued = true;
+        }
         // most wall rides it takes, jumping up a few metres before the rock; on the rock it pops most lips
         const wg = grounded && !wallGroup ? wallStartAt(px) : null;
         if (wg && wg.ap === undefined) wg.ap = Math.random() < (window.__wallPilot ?? .7);
@@ -10363,13 +10584,14 @@ function autopilotInput()
         while (t < 3 && (y > rideY(x) || t < .05)) { t += 1/60; if (wx > cap) wx += (cap - wx)*damp(4, 1/60); x += wx/60; wy -= airG(wy)/60; y += wy/60; }
         const clear = !rails.some(r=> x > r.x0 - 2 && x < r.x1 + 2);
         // (a bike that flips slower needs longer)
-        window.__flipWanted = window.__flipPilot && t > .95/bike.flip && clear && !wallGroup;
+        const cowAhead = cows.some(c=> c.state != 'gone' && c.state != 'flee' && c.x > px && c.x < x + 3);
+        window.__flipWanted = window.__flipPilot && t > .95/bike.flip && clear && !wallGroup && !cowAhead;
         window.__flipFront = window.__flipPilot == 'front';
         window.__flightT = clear ? t : 0;
     }
     // a swipe trick when the rest of the flight has room for it
     // (not on the short hops between the rocks of a wall ride: it reckons its flights down to the trail)
-    if (window.__trickPilot && !wallGroup && !style && !trickQueued && airT > .1 && window.__flightT)
+    if (window.__trickPilot && !wallGroup && !style && !trickQueued && airT > .1 && window.__flightT && !cows.some(c=> c.state != 'gone' && c.state != 'flee' && c.x > px && c.x - px < 45))
     {
         let x = px, y = py, wx = vx, wy = vy, t = 0;
         const cap = airCap();
@@ -10841,7 +11063,7 @@ function drawMatch(W, H, top, bottom)
 window.__mtb = {
     info: ()=> ({state, frame, px, py, vx, vy, sp, grounded, grinding: !!grinding, ang, rot, airT, dist, score, orbsGot, flipsTotal,
         combo, comboPts, bestCombo, crashReason, runTime, fps: averageFPS, objects: EMITTERS.size, chunks: chunks.size,
-        night, dayT, boostT, onWall: !!wallGroup, wallChain, chain, bestChain, landsNailed, landsClean, landsSketchy, wallRides, bestWall, grindDist, seed, ride: ride ? ride.lane : 0, riderZ: riderZ(), battery, turboT, turbos, lines, proLines,
+        night, dayT, boostT, cowBounces, onWall: !!wallGroup, wallChain, chain, bestChain, landsNailed, landsClean, landsSketchy, wallRides, bestWall, grindDist, seed, ride: ride ? ride.lane : 0, riderZ: riderZ(), battery, turboT, turbos, lines, proLines,
         forkAhead: !!forkAhead, laneWant, view: camViewName(), zoom: camZoomName(), splits: splits.map(s=> [s.x0|0, s.x1|0, s.kinds.join('+')]),
         lineDetail: splits.map(s=> Object.values(s.lines).map(b=> b.kind + ':' + (b.what || 'plain')).join(' ')),
         dropCam, braking, sentIt, camLift, baseY, wheelOffF, wheelOffR, flow, flowLevel, drops: feats.filter(f=> f.type == 'dropin').map(f=> [f.x0|0, f.x1|0, f.landX|0, +f.F.toFixed(1)]),
@@ -10868,6 +11090,8 @@ window.__mtb = {
     endRun: ()=> endRun(),
     // the wall rides laid out so far, and the rider's wall state, for the wall ride tests
     walls: ()=> walls.map(g=> ({x0: g.x0, x1: g.x1, segs: g.segs.map(r=> [+r.x0.toFixed(1), +r.x1.toFixed(1)])})),
+    cows: ()=> cows.map(c=> ({x: +c.x.toFixed(1), z: +c.z.toFixed(2), state: c.state})),
+    trees: ()=> rocks.filter(r=> r.type == 'tree').map(r=> ({x: r.x, h: r.h, hit: !!r.hit, cleared: !!r.cleared})),
     wallState: ()=> ({on: !!wallGroup, seg: grinding?.wall ? grinding.i : -1, chain: wallChain, best: bestWall, rides: wallRides, px, py, state, grounded}),
     // a crash on demand, for checking how the wreck looks
     crash: reason=> crash(reason || 'TEST'),
@@ -10934,7 +11158,7 @@ function drawFrame()
     ORIGIN.set(round(cam.pos.x), round(cam.pos.y), round(cam.pos.z));
     for (const b of BATCHES) b.begin();
     for (const d of [DUST_DOTS, GLOW_DOTS, SKY_DOTS]) d.begin();
-    drawRiderView(); drawRemote(); drawTurboGlow(); drawSprockets(); drawCells(); drawOrbGlow(); drawSkyExtras();
+    drawRiderView(); drawRemote(); drawCows(); drawTurboGlow(); drawSprockets(); drawCells(); drawOrbGlow(); drawSkyExtras();
     for (const e of EMITTERS) e.draw();
     for (const b of BATCHES) b.end();
     for (const d of [DUST_DOTS, GLOW_DOTS, SKY_DOTS]) d.end();

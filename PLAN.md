@@ -806,6 +806,32 @@ The rider physics is rewritten so speed is earned and felt, instead of set by cl
   - With no taps, the rider is off after the first rock and back on the trail, with no crash.
   - Riding past, nothing happens.
 
+## Downed trees and blue cows: done (Three.js version)
+The LittleJS version is no longer updated; new work goes into `Downhill MTB Three.html` only.
+- **Placement:** after each stretch of trail is laid out, a pass (`placeExtras`) puts these on free parts of the main trail: clear of every feature, rail, rock, gap and wall ride. That gives about a cow every 150 m and a fallen tree every 300 m.
+- **Downed trees** (`rocks` entries of type `tree`, mesh `M.deadTree`):
+  - The look: a trunk lying across the trail, its root plate torn up on the hill side, snapped branches, moss and a sawn end toward the camera. Some also come up in place of rocks in `addRocks`.
+  - Too big to roll over:
+    - Ride into one and you crash ("HIT A FALLEN TREE").
+    - Come down onto it from above and you bounce off (TREE BOUNCE 180).
+    - Clear it in the air for TREE HOP (150), a link in the chain.
+    - The turbo smashes through it like a rock.
+  - A tree needs 70 m of clear, gentle trail before it, with no crest, feature or cow, so no flight comes down right in front of it.
+- **Blue cows** (`cows`, `updateCows`, `drawCows`): drawn from blocks and tubes, 1.25× life like the rider. They're blue with white patches, a white face, horns and a pink nose, with trotting legs and a swishing tail.
+  - **Running out:** each waits off to one side of the trail and trots out onto it as the rider comes (within the larger of 22 m and 2.3 s at the rider's speed), mooing. "BLUE COW!" shows the first time.
+  - **Landing on its back** (`stompCow`), near enough upright:
+    - a bounce into a new flight, with the flight before scored like a landing;
+    - COW BOUNCE 300, then +150 for each further cow in the chain (COW BOUNCE x n), with a surge and a link;
+    - the cow runs off, mooing.
+  - **Riding into it** (`checkCows`): the bike bucks up and loses 30% of its speed, "MOO!", and the cow bolts. No crash.
+  - Each cow has a clear 55 m after it for the flight off its back, and no fallen tree near.
+- **Test rider:**
+  - It aims to come down on 60% of cows (`__cowPilot`) by flying each jump ahead of time, and jumps over the rest.
+  - It retries a jump for a rock or tree until it makes it.
+  - It leaves out tricks and flips when a cow is in the way.
+- **Hooks:** `__mtb.cows()`, `__mtb.trees()`, and `cowBounces` in `info()`.
+- **Tests:** every bike with tricks, backflips, and the up lines with turbo: 0 crashes in 12 km each, with 10–16 tree hops and 6–12 cow bounces per run.
+
 ## Next: proposals
 - **More fun:**
   - pumping (hold on a downslope for speed);

@@ -974,7 +974,7 @@ The rider is reworked after `art/bluecow-rider-concept.png`, at its level of det
 ## Random fork lines, and Rager sections: done (Three.js version)
 - **Forks pick a line for you.**
   - **The pick:** when a fork comes within 80 m, one of its side lines (pro, high or low; never the main trail) is picked at random, with the game's own dice so the seeded mountain stays the same.
-  - **Shown ahead:** a LINE AHEAD tag in the line's colour gives its name and what's on it.
+  - **Not shown:** (a LINE AHEAD tag and the line's name at the split were tried, and taken out to keep the screen clear.)
   - **The choosing is gone:** the swipe up/down, the arrow keys and the held-back first finger near a fork are all removed. Flicks near a fork throw tricks again.
   - **Line camera:** on a line the camera rises and opens a touch (pitch +.05, distance ×1.12), turned a little toward the line's side, and eases back at the merge (`lineCam`).
   - **Tests:** a test can still force a line (`__lanePilot`: main, up, down, pro, high).
@@ -1000,41 +1000,48 @@ The rider is reworked after `art/bluecow-rider-concept.png`, at its level of det
     - 24.6 km of autopilot with flips had no crashes (6 ragers cleared), and a turbo sim no crashes either;
     - the camera's smoothness is unchanged.
 
-## Rager sections, Rampage style: done (Three.js version)
-- **The research.** Red Bull Rampage is ridden down near-vertical sandstone ridges near Virgin, Utah, on lines the riders dig themselves: cliff drops, step-downs, canyon gaps and steep chutes, linked one into the next, building to the biggest hit at the end. It is judged, not timed. Judges score line choice (difficulty and exposure), amplitude, control and fluidity (charging, not hesitating) and tricks. The winning runs are "a technical line mixed with tricks".
-- **First try (v2), and what was wrong with it.** It was a short steep section with the camera in close, the speed checked down to each hit's own speed, a judges' card at the end and tricks worth x1.5. Played, it felt exactly like the rest of the game:
-  - nothing new in how it was ridden or how the tricks were done;
-  - the hits were too far apart, with riding in between;
-  - it slowed the rider down before the gap, when a gap needs speed.
+## Rager sections tried and taken out; big lines, an always-on brake and a quieter HUD: done (Three.js version)
+- **What was tried.** The Rager section went through three versions, each a special mode with its own rules:
+  - **v1:** slowed hits.
+  - **v2:** a short, steep red-rock line, a close camera and a judges' card.
+  - **v3:** ridden at a fixed line speed, back-to-back hits with the gap landing on a fin, POP/STOMP timing taps, a RAGE multiplier, slow-mo and wind-up flips.
 
-  It also never turned up in a normal run: a section waited for 90 m clear after a block of lines, and the next block always opened sooner. Only `?rager` and NEXT RAGER showed one.
-- **Now: a game of its own** (`addRager`, one every 550–900 m on the main trail; blocks of lines hold off while one is due):
-  - **Ridden flat out, never braked.** From just above the red RAGER banner the bike is held at the line's speed, 19 m/s (`RAGE_V`, `rageBand`). It is held by easing off like a rider letting it run, not by skidding, and every hit is built for that speed. There is no check before the gap, and nothing pushes the speed on either (turbo, flow, surges; the turbo's time waits until after the section).
-  - **The hits come back to back**, each landing running straight into the next takeoff:
-    1. the drop off the brink;
-    2. the GAP over a slot canyon, landing straight on top of a sandstone fin beside the trail;
-    3. the WALL: ride out along the fin as the trail falls away beneath, and huck off its end;
-    4. the BOOTER.
+  Played, none of it worked in real riding:
+  - jumping no longer behaved as on the rest of the mountain (taps taken for pops and stomps, the pop cut down, the speed held);
+  - the hits were too close to make the wall;
+  - the camera was too close;
+  - the scoring card took too much room.
 
-    About 240 m and 13–14 s. The fin is laid out from the flights themselves: the chasm is as wide as a rider 3 m/s under the line's speed carries onto its start, and its landing face runs past where the quickest, perfectly popped flight comes down (`ragerGapWall`).
-  - **POP and STOMP, in time.** A ring closes on the rider as the bike comes to each lip: a tap as it closes pops it, and within 70 ms is a PERFECT POP, higher. The tap can come a moment early, and the pop waits for the lip. Coming down, time slows as the ground rushes up (0.55) and the ring closes again: a tap as the wheels touch STOMPS the landing (within 80 ms PERFECT). Taps in those windows are taken for the pop or the stomp, never a jump.
-  - **The RAGE multiplier.** Every stomp builds it, x1 up to x5, and every trick in the section is worth it. A landing not stomped loses it, back to x1, and lands heavy. Big in the middle over the tracker.
-  - **Wind-up flips.** Held, a flip spins faster the longer it is held (up to 1.8x), so a double is there for the taking.
-  - **The combo is held all the way down** and banks at the finish, with the judges' points on top.
-  - **The judges' card**, out of 100:
-    - TRICKS /40: what was thrown off each hit; a repeat is worth half;
-    - AMPLITUDE /20: air, plus a pop, plus a perfect one;
-    - CONTROL /20: stomps; perfect is best, and a miss, a hard or sketchy landing or the brakes cost;
-    - LINE /20: every hit ridden, and worth more further down the mountain.
+  Also, until v3 a section never came up in a normal run.
+- **Taken out completely:**
+  - the Rager mode and everything only it used: the line speed, the timing taps and rings, the RAGE multiplier, the slow-mo, the wind-up, the held combo, the judges and tracker, the close camera and its in-air framing, the red-rock look and ridge, the banners;
+  - `?rager` and NEXT RAGER.
 
-    The bonus is the score squared x12. The card shows the RAGE reached and the combo.
-  - **Kept from the first try:** the red rock knife edge ridge (`ragerW`), the close camera that pulls back in the air to show the landing (`RAGER_VIEW`), the tracker and the FINISH banner. A crash the shield rides out ends the judging ("RAGER BAILED").
+  Jumping, speed, camera and scoring are the mountain's own everywhere again.
+- **Big lines** (`addBigLine`), every 550–900 m on the main trail, in whatever country is being ridden:
+  - **The features**, one after another:
+    1. a drop-in off a ledge (`addDropIn`, restored: free brakes on the ledge, SEND IT with a tap at the lip, no forced slowdown, the landing laid out for the fastest rider);
+    2. a canyon gap (`addCanyon`: a slow rider is pedalled up to its speed, a fast one is never braked);
+    3. a downhill wall ride (`addWallDown`): a sandstone fin beside the trail whose top falls less steeply than the trail. Tap beside its start to pop up onto it, as for the climbing wall, ride out along it as the trail drops away beneath, and huck off its end;
+    4. a booter.
+  - **Spacing:** each landing is laid out for the fastest rider, and 30–45 m of plain trail follow it before the next feature's run-in (`lineGap`). A line is about 950 m.
+  - **Scoring:** the usual (DROP-IN, SEND IT, CANYON GAP, WALL RIDE, HUCK, the tricks), and no section score. A popped gap or canyon still counts (`tk` in `scoreAir`).
+  - **Placement:** blocks of lines wait while a big line is due, so the lines come up on schedule. That means fewer forks than before, about 2 per 4 km.
+  - **Testing:** `?bigline` puts the first one at about 240 m, and the `?dev` NEXT BIG LINE button jumps to the next.
+  - **The downhill fin on its own:** it also stands in for the climbing wall ride about 40% of the time.
+- **The pro line's drop-ins** no longer force a slowdown on the ledge. The brake is the rider's to use.
+- **An always-on brake.**
+  - The BRAKE button is always on screen while riding, and B, Left and A work any time.
+  - It costs some flow, except on a drop-in's ledge, where the button pulses.
+  - The spare tyres that used to give the brakes their grip are gone.
+- **A quieter screen.**
+  - **Forks:** no LINE AHEAD tag and no line name at the split.
+  - **No status announcements** (the sounds and the meters still say it): biome names, FLOW x… and FULL FLOW, TURBO READY, TURBO!, BATTERY EMPTY, PEDAL POWER, SUPERCHARGED, SPROCKET SHIELD, and the biome under DROP IN.
+  - **Kept:** feature callouts, riding feedback, trick pops, the combo and the buttons.
 - **Checked:**
-  - **Timing:** the autopilot, timing well, takes every lip at 19.3–19.5 m/s with no braking, lands every gap on the fin, reaches RAGE x5, and the judges give 84–98. Its combo is about 500k, against about 180k timing badly, where RAGE stays x1 and CONTROL drops to 6/20.
-  - **No tricks:** about 54.
-  - **The turbo going in:** no crash.
-  - **Normal runs:** 3 sections in 4 km, all cleared.
-  - **Filmstrips** in portrait and landscape.
+  - **Big lines on autopilot:** normal speeds (25–30 m/s average, no holds or slowdowns), the downhill wall entered every time on the autopilot's tap, no crashes.
+  - **Normal runs:** big lines at about 0.5, 2.3 and 4.2 km.
+  - **Sims:** 24.2 km with flips and tricks, 9.2 km on the turbo and 12.2 km on the high line, all with 0 crashes. Score per km is back to about 270k.
 
 ## Next: proposals
 - **More fun:**

@@ -971,6 +971,35 @@ The rider is reworked after `art/bluecow-rider-concept.png`, at its level of det
   - **Cow tricks:** an autopilot run with flips scored 10 cow tricks for 10 cow bounces.
   - **Bent wheels:** close-ups show the rim swinging and then straight again.
 
+## Random fork lines, and Rager sections: done (Three.js version)
+- **Forks pick a line for you.**
+  - **The pick:** when a fork comes within 80 m, one of its side lines (pro, high or low; never the main trail) is picked at random, with the game's own dice so the seeded mountain stays the same.
+  - **Shown ahead:** a LINE AHEAD tag in the line's colour gives its name and what's on it.
+  - **The choosing is gone:** the swipe up/down, the arrow keys and the held-back first finger near a fork are all removed. Flicks near a fork throw tricks again.
+  - **Line camera:** on a line the camera rises and opens a touch (pitch +.05, distance ×1.12), turned a little toward the line's side, and eases back at the merge (`lineCam`).
+  - **Tests:** a test can still force a line (`__lanePilot`: main, up, down, pro, high).
+- **Rager sections** (Rampage style, `addRager`) replace the main trail's drop-ins, every 550–900 m.
+  - **The hits, in order:**
+    1. a drop off a 28 m ledge, slowed to 8 m/s, 12–16 m high, with about 3 s of air;
+    2. a gap off a kicker, at 13 m/s;
+    3. a wall ride (a shorter climb), with its run-up held at 12 m/s, and the huck off its top.
+  - **The slowdowns:** the rider is slowed (or pedalled up) into each hit by pace zones (`ragerPace`).
+  - **Turbo:** firing it skips every crawl in the section (latched for the whole section). It only holds the rider to 20 m/s over the last 24 m before each lip, and the landings are laid out for that (`extendLanding` takes a speed).
+  - **The turbo-skips-the-slowdown rule also covers** the pro line's drop-ins, which have their ledge slowdown back.
+  - **Feeling it:**
+    - "RAGER SECTION" coming in, with the turbo hint when the battery is full;
+    - a red RAGER board before it;
+    - a DROP · GAP · WALL tracker low in the middle: grey ahead, white ridden, gold when a trick (a flip or a style trick) is landed off that hit, each worth a HIT +250;
+    - the finish: "RAGER CLEARED!" +2500 and flow when all three are tricked; otherwise "RAGER 2/3"; "RAGER SKIPPED" on the turbo;
+    - the score card: "Rager sections: N cleared of M".
+  - **Placement:** no cows or fallen trees in a section.
+  - **Easy to try:** `?rager` puts the first one at about 240 m with no fork before it, and the `?dev` panel's NEXT RAGER button jumps to 70 m before the next one.
+  - **Checked:**
+    - the autopilot (with flips) cleared it on several seeds, the drop leaving at 8 m/s and the gap at 13;
+    - a turbo run left each lip at about 20 m/s and landed every hit;
+    - 24.6 km of autopilot with flips had no crashes (6 ragers cleared), and a turbo sim no crashes either;
+    - the camera's smoothness is unchanged.
+
 ## Next: proposals
 - **More fun:**
   - pumping (hold on a downslope for speed);

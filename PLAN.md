@@ -957,6 +957,20 @@ The rider is reworked after `art/bluecow-rider-concept.png`, at its level of det
   - **The fix:** a chunk now first makes sure no fork that starts before its end is still open (`trackCover`), and the trail is laid out 1250 m ahead (was 950) so that's rarely needed mid-ride. The trail itself is unchanged.
   - **Checked:** riding the low, high and pro lines on 6 seeds found no chunk built over an open fork and no moment on a line with the ground as built over the rider.
 
+## Sprocket shield, cow tricks and bent wheels: done (Three.js version)
+- **Sprockets as rings (Sonic style).** The HUD counts the sprockets carried (`carried`); the score card keeps the run's total (`orbsGot`).
+  - **The shield:** at 200 or more (`SHIELD_AT`, a `?dev` slider "Sprockets for a save", 10–500) the gear glows with a SHIELD tag, and reaching it says "SPROCKET SHIELD!".
+  - **The save:** a crash with the shield up doesn't end the run (`shieldSave`). The rider is put back on the bike just past whatever it was (`recoverRide`, which god mode uses too), at 70% of the speed. Every carried sprocket is lost: up to 24 burst out round the bike, bounce, and can be caught again for 3 s (they blink in the last second). Flow, chain and combo go as in a crash, and the score stays.
+  - **The grace:** a 2.5 s grace follows, with the rider blinking, in which a crash only puts the rider back.
+  - **On the card:** a "Sprocket saves" row.
+- **A trick off a cow is worth 50 sprockets:** bounced off a cow's back (`cowLaunch`), a flip or style trick landed (onto the ground or another cow) gives +50, COW TRICK (+300) and a message. A plain cow bounce gives nothing extra.
+- **Bent wheels after a save:** for 10 s (`wobbleT`) each wheel's rim swings side to side once a turn (a yaw of up to 0.3 rad tied to the wheel's spin, the front and back out of step), calming over the last 4 s.
+- **Bent wheels in a wreck:** the loose wheels wobble the same way as they roll (`p.roll`).
+- **Checked:**
+  - **Saves:** crashes into a rock, a chasm fall, a head landing and a trick gone wrong are all saved with 200+ carried. A crash in the grace costs nothing; 8 of 24 scattered sprockets were caught back on autopilot; with fewer than 200 after the grace, a crash ends the run as before.
+  - **Cow tricks:** an autopilot run with flips scored 10 cow tricks for 10 cow bounces.
+  - **Bent wheels:** close-ups show the rim swinging and then straight again.
+
 ## Next: proposals
 - **More fun:**
   - pumping (hold on a downslope for speed);

@@ -5754,7 +5754,7 @@ function stompCow(ox, oy)
         countTrick('COW BOUNCE');
         addFlow(.1); surge(1.2);
         py = top + .05; vy = max(6.5, -vy*.45 + 4.5); vx = max(vx, min(sp, vTop())*.95);
-        takeoff('cow');
+        takeoff('cow'); cowLaunch = true;
         hopX0 = px; hopY0 = py; hopS = 0; hopT = 0;
         suspFV += 3; suspRV += 3; camShake = max(camShake, .3); punchV -= .7;
         sfx('land', .6);
@@ -7493,6 +7493,10 @@ let style, styleT = 0, styleIndex = 0, stylesDone = [];
 let suspF = .03, suspFV = 0, suspR = .03, suspRV = 0, compress = 0, compressKick = 0, crank = PI/2, wheelSpin = 0;
 let vyGround = 0, boostT = 0, crashT = 0, rag, crashReason = '', braking = false, takeoffFeat = null, sentIt = false;
 let runTime = 0, dist = 0, score = 0, orbsGot = 0, orbStreak = 0;
+// the sprockets carried (lost in a save; the run's total, orbsGot, is kept), and the shield they make: carrying
+// SHIELD_AT or more, a crash doesn't end the run, it costs them all. After a save, a moment's grace and bent wheels.
+// A flight off a cow's back with a trick in it is worth 50
+let SHIELD_AT = 200, carried = 0, shieldSaves = 0, shieldGraceT = 0, wobbleT = 0, cowLaunch = false;
 let nailed = false, combo = 0, comboPts = 0, comboT = 0, comboNames = [], bestCombo = 0, bestComboName = '', flipsTotal = 0;
 let grindStart = 0, grindDist = 0;
 let mainHeld = false, mainT = 0, secondHeld = false, secondT = 0, jumpQueued = false;
@@ -7747,6 +7751,7 @@ function jumpNow()
 
 function takeoff(kind)
 {
+    cowLaunch = false;
     grounded = false; grinding = null;
     airT = 0; rot = 0; style = undefined; stylesDone = []; trickQueued = null;
     takeoffX = px; takeoffY = py;
@@ -7945,6 +7950,15 @@ function scoreAir(perfect)
 {
     const n = abs(rot) > TAU*.7 ? max(1, round(abs(rot)/TAU)) : 0, back = rot > 0;
     let flipName = '', flipPts = 0;
+    // off a cow's back with a flip or a trick in the air: 50 sprockets
+    if (cowLaunch && (n || stylesDone.length))
+    {
+        cowLaunch = false;
+        gainSprockets(50, true);
+        addTrick('COW TRICK', 300); countTrick('COW TRICK');
+        showMessage('COW TRICK!', '+50 sprockets', hsl(.6,.8,.7));
+        sfx('cell');
+    }
     if (n)
     {
         flipName = (n == 2 ? 'DOUBLE ' : n == 3 ? 'TRIPLE ' : n > 3 ? n + 'X ' : '') + (back ? 'BACKFLIP' : 'FRONTFLIP');
@@ -8092,7 +8106,8 @@ function checkRocks()
 // god mode (?dev): instead of a crash, the rider is put straight back on the bike where it happened, past what they
 // hit and out of any chasm, and rides on
 let GOD = false;
-function godSave(reason)
+// back on the bike just past whatever it was, on the ground, rolling on at most of its speed
+function recoverRide()
 {
     let x = px;
     for (let k = 0; k < 400; ++k)
@@ -8106,14 +8121,66 @@ function godSave(reason)
     const th = atan(rideSlope(x));
     px = x; py = baseY = rideY(x); grounded = true; ang = th; angVel = 0; rot = 0; airT = 0; landVis = 0; hopT = -1;
     sp = max(sp*.7, VMIN); vx = sp*cos(th); vy = sp*sin(th);
-    fly = null; sideOff = 0;
-    showMessage('SAVED', reason.toLowerCase() + ' · god mode', hsl(.75,.6,.75));
+    fly = null; sideOff = 0; cowLaunch = false;
     camShake = max(camShake, .3);
+}
+function godSave(reason)
+{
+    recoverRide();
+    showMessage('SAVED', reason.toLowerCase() + ' · god mode', hsl(.75,.6,.75));
+}
+// sprockets got (the run's total too, unless they were counted before), and the shield the moment it is made
+function gainSprockets(n, total)
+{
+    const was = carried;
+    carried += n;
+    if (total) orbsGot += n;
+    if (was < SHIELD_AT && carried >= SHIELD_AT) { showMessage('SPROCKET SHIELD!', SHIELD_AT + ' sprockets: your next crash is forgiven', hsl(.13,1,.62)); sfx('ready'); }
+}
+// a crash with the shield up: every sprocket carried is lost (a handful burst out round the bike, to be caught again
+// for a moment), the wheels are bent, and the ride goes on. Within the grace after it, a crash only puts the rider
+// back on the bike
+function shieldSave(reason)
+{
+    const grace = shieldGraceT > 0;
+    recoverRide();
+    flow = flowTarget = surgeA = 0; flowLevel = 0; chain = chainT = 0;
+    combo = comboPts = 0; comboNames = []; comboKeys = [];
+    if (grace) return;
+    const lost = carried, rz = riderZ();
+    for (let k = 0, n = min(lost, 24); k < n; ++k)
+    {
+        const a = (k/n)*TAU + Math.random()*.4;
+        orbs.push({loose: true, x: px + cos(a)*.6, y: py + 1.2, z: rz + sin(a)*.9, vx: sp + cos(a)*7, vy: 5 + Math.random()*5, t: 0, got: false});
+    }
+    carried = 0; ++shieldSaves;
+    shieldGraceT = 2.5; wobbleT = 10;
+    camShake = max(camShake, .8);
+    sfx('landHard'); sfx('crash');
+    dustBurst(px, py, 60);
+    new ParticleEmitter3D(W3(px, py + 1, rz), .8, .1, 400, PI, undefined, hsl(.12,1,.62), WHITE, hsl(.12,1,.62,0), CLEAR_WHITE, .6, .5, 0, .14, .92, -.002, .1, .4, true);
+    showMessage('SAVED BY SPROCKETS!', reason.toLowerCase() + ' · ' + lost + ' sprockets lost', hsl(.13,1,.62));
+}
+// the scattered sprockets fly, fall and bounce, and are gone after 3 s; the grace and the bent wheels wear off
+function updateShield(dt)
+{
+    if (shieldGraceT > 0) shieldGraceT -= dt;
+    if (wobbleT > 0) wobbleT -= dt;
+    for (let i = 0; i < orbs.length; ++i)
+    {
+        const o = orbs[i];
+        if (!o.loose || o.got) continue;
+        if ((o.t += dt) > 3) { o.got = true; continue; }
+        o.vy -= 18*dt; o.x += o.vx*dt; o.y += o.vy*dt; o.vx *= 1 - damp(.6, dt);
+        const g = rideY(o.x) + .9;
+        if (o.y < g) { o.y = g; o.vy = abs(o.vy)*.5; o.vx *= .85; }
+    }
 }
 function crash(reason, hit={})
 {
     if (state != 'ride') return;
     if (GOD) { godSave(reason); return; }
+    if (carried >= SHIELD_AT || shieldGraceT > 0) { shieldSave(reason); return; }
     state = 'crash'; crashT = 0; crashReason = reason;
     flow = flowTarget = surgeA = 0; flowLevel = 0; chain = chainT = 0; wallGroup = wallSeg = null;
     window.__lastCrash = {reason, px: +px.toFixed(1), ride: ride ? ride.lane : 0, z: +riderZ().toFixed(1), turbo: +turboT.toFixed(2), tk: takeoffKind, tkx: +takeoffX.toFixed(1), rot: +(rot*57).toFixed(0), ang: +(ang*57).toFixed(0), slope: +(atan(rideSlope(px))*57).toFixed(0), airT: +airT.toFixed(2), sp: +sp.toFixed(1), vx: +vx.toFixed(1), vy: +vy.toFixed(1), style: style?.name, styleT: +styleT.toFixed(2), flightT: window.__flightT, grounded, frame};
@@ -8249,7 +8316,7 @@ function wreckBody(b)
     const far = 1e9 + .5;
     return {x: b.x, y: b.y, z: b.z, r: b.r, vx: b.vx ?? 0, vy: b.vy ?? 0, vz: b.vz ?? 0, ox: b.x, oy: b.y, oz: b.z, ivx: 0, ivy: 0, ivz: 0,
         g: -far, gt: -far, gx: far, gz: far, nx: 0, ny: 1, nz: 0, nfx: far, nfz: far, hit: false, phase: 0, bt: 0, fall: 0,
-        limb: !!b.limb, key: b.key ?? '', c: b.c ?? null, wheel: !!b.wheel, R: b.R ?? null, tipAt: b.tipAt ?? 0, w: b.w ?? null};
+        limb: !!b.limb, key: b.key ?? '', c: b.c ?? null, cBack: null, wheel: !!b.wheel, R: b.R ?? null, tipAt: b.tipAt ?? 0, w: b.w ?? null, roll: 0};
 }
 // what the wreck can hit besides the ground: the rocks, fallen trees and logs from a little behind to a long way on,
 // as an ellipsoid each, or a trunk lying across the trail (and the cows, wherever they have got to)
@@ -8458,6 +8525,7 @@ function stepWreck(dt)
             if (titleWreck) offLogo(p, true);
             else { const b = bumpObstacles(p, p.r*.8, .35); if (b > 2) wreckSound(p.wheel ? 'thud' : 'clank', b + 3); }
             if (p.wheel && crashT > p.tipAt) p.w.x += 2.5*h*(p.key == 'rw' ? 1 : -1);
+            if (p.wheel) p.roll += hypot(p.w.x, p.w.y, p.w.z)*h;
             if (p.w.x || p.w.y || p.w.z) p.R.m.set(Matrix4.rotation(setV(SMV, p.w.x*h, p.w.y*h, p.w.z*h), SM).multiply(p.R).m);
             const g = groundAt(p) + p.r;
             if (p.y < g)
@@ -8844,14 +8912,15 @@ function drawBike(M, cF, cR, wheelSpin, crankA, whip=0, barA=0, offF=0, offR=0, 
     // the axles ride up and down over the bumps, the fork and the swingarm with them
     const rA = AXLE_R.plus(0, offR/RS, 0), fA = AXLE_F.plus(0, offF/RS, 0);
     // wheels
+    const bent = !G && wobbleT > 0 ? .3*clamp01(wobbleT/4) : 0;
     for (const [axle, disc] of [[rA, .07], [fA, -.07]])
     {
         MC = axle == fA ? G?.fw ?? M : G?.rw ?? MF;
-        const rot = vec3(wheelSpin, 0, PI/2);
+        const wob = bent*sin(wheelSpin + (axle == fA ? 1.7 : 0)), rot = vec3(wheelSpin, wob, PI/2);
         drawPart(meshTyre, buildMatrix(axle, rot, undefined, scratch));
         drawPart(meshRim, buildMatrix(axle, rot, undefined, scratch));
-        drawPart(meshSpokes, buildMatrix(axle, vec3(wheelSpin, 0, 0), undefined, scratch));
-        drawPart(meshDisc, buildMatrix(vec3(disc, axle.y, axle.z), vec3(wheelSpin, 0, PI/2), undefined, scratch));
+        drawPart(meshSpokes, buildMatrix(axle, vec3(wheelSpin, wob, 0), undefined, scratch));
+        drawPart(meshDisc, buildMatrix(vec3(disc, axle.y, axle.z), rot, undefined, scratch));
         ball(axle, .09, PAL.silver);
     }
     MC = G?.frame ?? MF;
@@ -9054,12 +9123,16 @@ function drawRiderView()
     if (wrecked())
     {
         const G = {};
-        for (const p of pieces) G[p.key] = pieceMatrix(p);
+        // (a loose wheel wobbles on its bent rim as it rolls, about the way up through its middle)
+        for (const p of pieces) G[p.key] = p.wheel ? pieceMatrix(p).multiply(Matrix4.translation(p.c)).multiply(Matrix4.rotation(setV(SMV, 0, .3*sin(p.roll), 0), SM))
+            .multiply(Matrix4.translation(p.cBack ||= p.c.scale(-1))) : pieceMatrix(p);
         drawBike(G.frame, .05, .05, wheelSpinAtCrash, crank, 0, 0, 0, 0, G);
         drawRagdoll();
         if (crashT > 1 && !(mp.rec && crashT > REC.down)) drawStars(ragdoll.pts[RAG_I.head]);
         return;
     }
+    // (blinking through the moment's grace after a save)
+    if (shieldGraceT > 0 && state == 'ride' && (time*16) % 1 < .45) return;
     const M = lastBikeM = bikeMatrix(), t = trickAnim();
     const pts = drawBike(M, suspF, suspR, wheelSpin, crank, t.whip, t.bar, wheelOffF, wheelOffR);
     drawRider(M, pts, riderComp(t), t.name, t.amt, hopPull);
@@ -9098,6 +9171,7 @@ function newRun(s)
     state = 'title';
     placeRider(START_X);
     runTime = dist = score = orbsGot = orbStreak = 0;
+    carried = shieldSaves = 0; shieldGraceT = wobbleT = 0; cowLaunch = false;
     bestCombo = 0; bestComboName = ''; flipsTotal = 0; grindDist = 0; crashReason = ''; trickCounts = {}; tricksTotal = 0; bestTrick = {name: '', pts: 0}; airHist = [0, 0, 0, 0, 0, 0]; hardLandings = 0; bestChain = landsNailed = landsClean = landsSketchy = 0; cowStreak = cowBounces = 0; cowSeen = false; combosBanked = 0; multSum = 0; cased = sketchy = perfects = maxAir = topSpeed = smashes = slides = tyresGot = 0;
     titleT = 0; titleWreck = false; menu = 'main'; logoWob = logoWobV = logoFall = logoFallV = 0; logoDown = false;
     battery = 0; turboT = 0; turbos = 0; supers = legBoosts = sends = cellsGot = 0; tyres = brakeFuel = slideT = 0; brakeHeld = false; setShown = null; setShownT = 0; lines = 0; proLines = 0; linesRidden = new Set; allLines = false; dayT = DAY_START; dropCam = crashCam = sendCam = dropR = crashR = sendR = airR = 0; camLift = 0; camReset(); ragdoll = null; pieces = []; slowMoT = -1; crashPunch = 0; pz = yawV = leanV = bermY = sideOff = 0; fly = null; camZ = camB = 0;
@@ -9294,6 +9368,7 @@ function gameUpdate()
     trackEnsure(px + TRACK_AHEAD);
     if (frame % 60 == 0) trackPrune(px - 260);
     updateCows(dt);
+    updateShield(dt);
     updateEffects(dt);
     audioUpdate(dt);
 }
@@ -9792,7 +9867,7 @@ const STAR_C = hsl(.6,.3,.9), MOON_D = vec3(.45, .5, -.74).normalize().scale(800
 
 // ---------- sprockets and battery cells: a row along the trail, a set along a rail or a line, an arc over a jump,
 // and now and then a row of blue cells on the run in to a mega booter
-const orbSeen = (o, rz)=> !o.got && o.x > camX - 40 && o.x < camX + 70 && !(abs(rz) > 2 && abs((o.z || 0) - rz) > 4);
+const orbSeen = (o, rz)=> !o.got && o.x > camX - 40 && o.x < camX + 70 && !(abs(rz) > 2 && abs((o.z || 0) - rz) > 4) && !(o.loose && o.t > 2 && (time*14) % 1 < .5);
 const BOB = {x: 0, y: 0, z: 0}, OR = {x: 0, y: 0, z: 0}, OS = {x: 0, y: 0, z: 0}, ORB_M = new Matrix4, ORB_T = new Matrix4;
 const orbBob = o=> setV(BOB, o.x, o.y + sin(time*3 + o.x)*.12, wz(o.x, o.z || 0));
 const ORB_GLOW = {cell: hsl(.52,1,.6), tyre: hsl(.07,1,.55), gold: hsl(.12,1,.55)};
@@ -9851,9 +9926,11 @@ function collectOrbs()
     for (let i = 0; i < orbs.length; ++i)
     {
         const o = orbs[i];
-        if (o.got || abs(o.x - px) > 2.5 || abs((o.z || 0) - rz) > 2.4) continue;
+        if (o.got || abs(o.x - px) > 2.5 || abs((o.z || 0) - rz) > 2.4 || o.loose && o.t < .35) continue;
         if ((o.x - px)**2 + (o.y - cy)**2 > (o.air ? 2.2 : 1.7)**2) continue;
         o.got = true; ++orbStreak;
+        // one of the sprockets scattered by a save, caught again: carried once more (the run's total had it already)
+        if (o.loose) { gainSprockets(1, false); sfx('orb', min(orbStreak, 24)); continue; }
         if (o.tyre)
         {
             ++tyresGot; score += 50; addFlow(.03);
@@ -9869,7 +9946,7 @@ function collectOrbs()
             else showTrick('SPARE TYRE ' + tyres + '/3', 50);
             continue;
         }
-        o.cell ? ++cellsGot : ++orbsGot;
+        if (o.cell) ++cellsGot; else gainSprockets(1, true);
         addFlow(o.cell ? .03 : .012);
         score += o.cell ? 100 : o.air ? 50 : 20;
         charge(o.cell ? 400 : o.air ? 140 : 80);
@@ -10385,8 +10462,20 @@ function drawHUD()
     // distance down the mountain, and the score
     txt(fmt(floor(dist)) + ' m', 14, top + 20, 32, '#fff', 'left', 900);
     txt(fmt(score), 14, top + 50, 18, 'rgba(255,255,255,.9)', 'left', 800);
-    drawGear(20, top + 74, 7.5, '#ffc93a');
-    txt('' + orbsGot, 32, top + 74, 15, '#ffe9a0', 'left', 800);
+    // the sprockets carried, glowing once they make a shield
+    const shielded = carried >= SHIELD_AT;
+    if (shielded)
+    {
+        const g = ctx.createRadialGradient(20, top + 74, 4, 20, top + 74, 17 + 3*sin(time*6));
+        g.addColorStop(0, `rgba(255,220,90,${.75 + .2*sin(time*6)})`); g.addColorStop(1, 'rgba(255,190,40,0)');
+        ctx.fillStyle = g; ctx.beginPath(); ctx.arc(20, top + 74, 20, 0, TAU); ctx.fill();
+    }
+    drawGear(20, top + 74, 7.5, shielded ? '#fff1a0' : '#ffc93a');
+    const cs = '' + carried;
+    ctx.font = '800 15px ' + FONT;
+    let tx = 32 + ctx.measureText(cs).width + 10;
+    txt(cs, 32, top + 74, 15, shielded ? '#fff6c0' : '#ffe9a0', 'left', 800);
+    if (shielded) { txt('SHIELD', tx - 2, top + 74, 11, '#ffd23a', 'left', 900); ctx.font = '900 11px ' + FONT; tx += ctx.measureText('SHIELD').width + 8; }
 
     drawBattery(14, top + 92);
     drawFlow(82, top + 92);
@@ -10395,7 +10484,7 @@ function drawHUD()
     if (state == 'ride' && (brakeFuel > 0 || freeBrakeAt(px))) drawBrakeButton(W, H, bottom);
     drawMatch(W, H, top, bottom);
     if (state == 'ride' && !mp.code && !mp.ws) button(W - 12 - 58*2 - 7 - 70 - 82, top, 75, 38, 'INVITE', mpHost, false, 12);
-    drawTyres(64, top + 74);
+    drawTyres(max(64, tx + 4), top + 74);
     if (state == 'ride' && forkAhead && !ride) drawForkPrompt(W, H);
 
     const bw = 58, bh = 38;
@@ -10843,6 +10932,7 @@ function drawResults(W, H)
         ['Sprockets hoarded', orbsGot + (legBoosts || supers ? '  (' + [legBoosts && legBoosts + (legBoosts > 1 ? ' sets' : ' set'), supers && supers + ' super'].filter(Boolean).join(', ') + ')' : '')]];
     if (smashes) rows.push(['Rocks obliterated', smashes]);
     if (slides) rows.push(['Power slides', slides]);
+    if (shieldSaves) rows.push(['Sprocket saves', shieldSaves]);
     if (lines) rows.push(['Lines ridden', lines + (proLines ? '  (' + proLines + ' pro)' : '')]);
     rows.push(['Best trick', bestTrick.pts ? bestTrick.name + '  ' + bestTrick.pts.toLocaleString() : '-'], ['Best combo', bestCombo]);
     // one column, or two on a short wide screen, the rows closing up to leave room for the points and the buttons
@@ -11894,6 +11984,7 @@ const DEV_KNOBS = [
     ['Flip speed', .4, 2, .05, ()=> FLIP_K, v=> FLIP_K = v],
     ['Landing forgiveness', .5, 2, .05, ()=> LAND_K, v=> LAND_K = v],
     ['Turbo extra speed (m/s)', 0, 30, 1, ()=> TURBO_V, v=> TURBO_V = v],
+    ['Sprockets for a save', 10, 500, 10, ()=> SHIELD_AT, v=> SHIELD_AT = v],
     ['WALL RIDES (new trail)'],
     ['Climb height (m)', 4, 24, .5, ()=> WALL_H, v=> WALL_H = v],
     ['Climb length (m)', 40, 200, 5, ()=> WALL_LEN, v=> WALL_LEN = v],

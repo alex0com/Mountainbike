@@ -944,6 +944,14 @@ The rider is reworked after `art/bluecow-rider-concept.png`, at its level of det
   - **Ride:** a 1.4 km ride's CPU per frame has a median of 0.8 ms and a 99th percentile of 5.1 ms (render left out).
   - **Reference frame:** the 647 m frame used to show a hole in the hillside where a chunk wasn't built yet; it's complete now.
 - **The meter (`?perf=1`):** shows the shader and mesh counts, and marks chunk uploads, new shaders and range rebuilds. Any hiccup left on a phone can then be named.
+- **The ladder for the screen's own rate.**
+  - **The problem:** a phone's `?perf=1` meter (q5, 122 fps) showed 40–67 ms frames while the script stayed under 4 ms. That points to the GPU: the old rules assumed 60 Hz, so a 120 Hz screen passed "58+ fps, p95 under 17.5 ms" and climbed to q5 (full 3× resolution with 4× smoothing), too heavy to hold 8.3 ms every frame.
+  - **Screen rate:** estimated from the quickest frames (60/90/120, `screenHz`).
+  - **Climbing:** only at that rate with the 95th percentile within 1.3× its frame time and no hitch at all.
+  - **Stepping down:** when slow is under 45 fps or under two thirds of the screen's rate.
+  - **Q5:** given back after hitches two looks running (and not taken again that session).
+  - **Tested** with faked timings: a 120 Hz phone hitching at q5 settles at 4; one with a 13 ms 95th percentile stays at 4; smooth 60 and 120 Hz phones climb to 5; a GPU-bound one drops until it helps.
+- **The meter lists the last three hitches:** for each, the script time of the frame and the one before, and what happened in them (chunk, track, upload, quality, shader, ranges, text, burst, sound). A hitch with little script and nothing happening is the GPU, the browser or a garbage collection.
 - **Fix: fork lines buried in the hill.**
   - **The problem:** building chunks further ahead could build one over a fork that was still being laid out. A fork's lines are only made when it closes, so the ground wasn't cut for them, and a rider on the low line rode inside the hill (2.4–5 m under it on seed 1).
   - **The fix:** a chunk now first makes sure no fork that starts before its end is still open (`trackCover`), and the trail is laid out 1250 m ahead (was 950) so that's rarely needed mid-ride. The trail itself is unchanged.

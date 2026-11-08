@@ -1002,34 +1002,39 @@ The rider is reworked after `art/bluecow-rider-concept.png`, at its level of det
 
 ## Rager sections, Rampage style: done (Three.js version)
 - **The research.** Red Bull Rampage is ridden down near-vertical sandstone ridges near Virgin, Utah, on lines the riders dig themselves: cliff drops, step-downs, canyon gaps and steep chutes, linked one into the next, building to the biggest hit at the end. It is judged, not timed. Judges score line choice (difficulty and exposure), amplitude, control and fluidity (charging, not hesitating) and tricks. The winning runs are "a technical line mixed with tricks".
-- **How that became a game section** (`addRager`, one every 550–900 m on the main trail, in place of the old drop-in section):
-  - **Short and steep, never flat.** About 175–230 m that falls 110–150 m: the trail tips over the ridge top at a red RAGER banner into a 38° chute, and every landing is steep (31–42°) and runs straight on into the next hit. A FINISH banner stands at the booter's landing. Rides in 13–18 s (the wall ride is the longest).
-  - **Four hits, one straight after another**, each flagged at its lip:
-    1. a cliff drop off a short shelf (5–9.5 m face onto a 42° landing; about 1.7 s of air, SEND IT with a tap at the lip);
-    2. and 3. two of: a step-down off the end of a spine, a gap over a slot canyon, or a wall ride down a sandstone fin (jump up onto it, ride out along it as the trail falls away beneath, and huck off its end, about 8 m up);
-    4. the booter, the biggest air of the line.
-  - **Speed is the rider's on the brakes, done for them.** Each hit has its own speed (drop 9, step 11, gap 12.5, wall 11.5, booter 13 m/s), so its air (about 1.5–2 s) is long enough for a flip and a trick. Down each landing the speed it brings is scrubbed off evenly to have the hit's speed 4 m before its lip (`ragerPace`, a pace's `lead`). A rider coming in fast is checked from 70 m above the banner, and in a section the speed in the air is capped too, so nothing flies into it over the first lip.
-  - **A smaller pop at a hit's lip** (half the trail's): the landings fall away so steeply that a full one was a 3 s air.
-  - **The red rock ridge.** Through a section the ground is red sandstone whatever the country round it, the mountain falls away behind the trail as well as in front (a knife edge), and no trees grow on it (`ragerW`, `RAGER_PAL`).
-  - **The camera comes in close** (`RAGER_VIEW`): side on and near, a slightly longer lens. In the air off a hit it pulls back by the height of the fall and looks part way down to where the flight comes down, so the rider and the landing are both in view, then comes back in as the rider drops to it.
-  - **A touch of slow motion** in the air off a hit (0.9, back to full speed for the landing; `?dev` slider "Rager slow-mo").
-  - **Tricks are the points.** Every trick off a hit scores x1.5, and the combo is held all the way down the line (no timing out between hits): it banks at the finish. A crash loses it.
-  - **The judges' card at the finish**, scored out of 100 like Rampage, each row filling in:
-    - TRICKS /40: what was thrown off each hit (a repeat of an earlier hit's trick worth half);
-    - AMPLITUDE /20: the air off each, more for a pop at the lip;
-    - CONTROL /20: how each landing was ridden away (nailed, clean, sketchy, hard), less for dragging the brakes;
-    - LINE /20: every hit ridden (skipping the wall costs it), and worth more further down the mountain, where the line is gnarlier.
-    - Points: the line's combo, then the judges' bonus on top (the score squared x12: 85 is about 87,000). All four hits tricked is RAGER CLEARED.
-  - **The tracker** low in the middle: a pill for each hit, the next one glowing, white ridden, gold tricked.
-  - **Turbo:** fired going into the section (or in it) it skips every check down the chutes, the bike held to 21 m/s, only checked to a little over each hit's speed at its lip. The landings are laid out for that. The judges stop watching ("RAGER SKIPPED").
-  - **A crash the sprocket shield rides out** ends the judging ("RAGER BAILED").
-  - **Score card:** "Rager sections: N cleared of M · best 91.4".
+- **First try (v2), and what was wrong with it.** It was a short steep section with the camera in close, the speed checked down to each hit's own speed, a judges' card at the end and tricks worth x1.5. Played, it felt exactly like the rest of the game:
+  - nothing new in how it was ridden or how the tricks were done;
+  - the hits were too far apart, with riding in between;
+  - it slowed the rider down before the gap, when a gap needs speed.
+
+  It also never turned up in a normal run: a section waited for 90 m clear after a block of lines, and the next block always opened sooner. Only `?rager` and NEXT RAGER showed one.
+- **Now: a game of its own** (`addRager`, one every 550–900 m on the main trail; blocks of lines hold off while one is due):
+  - **Ridden flat out, never braked.** From just above the red RAGER banner the bike is held at the line's speed, 19 m/s (`RAGE_V`, `rageBand`). It is held by easing off like a rider letting it run, not by skidding, and every hit is built for that speed. There is no check before the gap, and nothing pushes the speed on either (turbo, flow, surges; the turbo's time waits until after the section).
+  - **The hits come back to back**, each landing running straight into the next takeoff:
+    1. the drop off the brink;
+    2. the GAP over a slot canyon, landing straight on top of a sandstone fin beside the trail;
+    3. the WALL: ride out along the fin as the trail falls away beneath, and huck off its end;
+    4. the BOOTER.
+
+    About 240 m and 13–14 s. The fin is laid out from the flights themselves: the chasm is as wide as a rider 3 m/s under the line's speed carries onto its start, and its landing face runs past where the quickest, perfectly popped flight comes down (`ragerGapWall`).
+  - **POP and STOMP, in time.** A ring closes on the rider as the bike comes to each lip: a tap as it closes pops it, and within 70 ms is a PERFECT POP, higher. The tap can come a moment early, and the pop waits for the lip. Coming down, time slows as the ground rushes up (0.55) and the ring closes again: a tap as the wheels touch STOMPS the landing (within 80 ms PERFECT). Taps in those windows are taken for the pop or the stomp, never a jump.
+  - **The RAGE multiplier.** Every stomp builds it, x1 up to x5, and every trick in the section is worth it. A landing not stomped loses it, back to x1, and lands heavy. Big in the middle over the tracker.
+  - **Wind-up flips.** Held, a flip spins faster the longer it is held (up to 1.8x), so a double is there for the taking.
+  - **The combo is held all the way down** and banks at the finish, with the judges' points on top.
+  - **The judges' card**, out of 100:
+    - TRICKS /40: what was thrown off each hit; a repeat is worth half;
+    - AMPLITUDE /20: air, plus a pop, plus a perfect one;
+    - CONTROL /20: stomps; perfect is best, and a miss, a hard or sketchy landing or the brakes cost;
+    - LINE /20: every hit ridden, and worth more further down the mountain.
+
+    The bonus is the score squared x12. The card shows the RAGE reached and the combo.
+  - **Kept from the first try:** the red rock knife edge ridge (`ragerW`), the close camera that pulls back in the air to show the landing (`RAGER_VIEW`), the tracker and the FINISH banner. A crash the shield rides out ends the judging ("RAGER BAILED").
 - **Checked:**
-  - the autopilot, flipping and tricking, through sections on several seeds: every lip taken at its speed, judges 84–92 when every hit was tricked;
-  - riding it with no tricks scores about 49;
-  - skipping the wall, a shield crash and a plain crash all behave;
-  - turbo runs land every hit;
-  - filmstrips in portrait and landscape.
+  - **Timing:** the autopilot, timing well, takes every lip at 19.3–19.5 m/s with no braking, lands every gap on the fin, reaches RAGE x5, and the judges give 84–98. Its combo is about 500k, against about 180k timing badly, where RAGE stays x1 and CONTROL drops to 6/20.
+  - **No tricks:** about 54.
+  - **The turbo going in:** no crash.
+  - **Normal runs:** 3 sections in 4 km, all cleared.
+  - **Filmstrips** in portrait and landscape.
 
 ## Next: proposals
 - **More fun:**

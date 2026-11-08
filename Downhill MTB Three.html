@@ -4442,6 +4442,7 @@ scene.add(hemi, sunLight, sunLight.target);
 // the rider's headlamp at night
 const headlampLight = new THREE.PointLight(0xffffff, 0, 16, 0);
 scene.add(headlampLight);
+for (const l of [hemi, sunLight, headlampLight]) l.layers.enable(1);
 const SHADOW = {size: 2048, range: 55, center: vec3(), on: true};
 function setShadowMapSize(n)
 {
@@ -4556,7 +4557,7 @@ function setCel(on, keep=true)
 {
     celOn = on; CEL.value = on ? 1 : 0;
     if (keep) try { localStorage.setItem('bcr.cel', on ? '1' : '0'); } catch(e) {}
-    if (on && !ink) { ink = makeInk(quality >= 3 ? 4 : 0); sizeKey = ''; }
+    if (on && !ink) { ink = makeInk(QUALITY_START >= 3 ? 4 : 0); sizeKey = ''; }
 }
 const PHONE = /iPhone|iPad|Android/i.test(navigator.userAgent) || navigator.maxTouchPoints > 1 && /Mac/.test(navigator.platform || '');
 
@@ -4570,10 +4571,10 @@ class MeshData
     // triangles from a list of points and the indices into it; normals worked out flat if none are given
     addTriangles(points, indices, normals, uvs, colors)
     {
-        const base = this.count;
+        const base = this.count, i0 = this.i.length;
         points.forEach((p, k)=> this.vertex(p, normals ? normals[k] : vec3(0, 1, 0), colors ? colors[k] : WHITE, uvs?.[k]));
         for (const k of indices) this.i.push(base + k);
-        if (!normals) this.computeNormals(false, base);
+        if (!normals) this.computeNormals(false, base, i0);
         return this;
     }
     setColor(c) { for (let k = 0; k < this.c.length; k += 4) { this.c[k] = c.r; this.c[k + 1] = c.g; this.c[k + 2] = c.b; this.c[k + 3] = c.a; } return this; }
@@ -4597,9 +4598,10 @@ class MeshData
     bend(f) { for (let k = 0; k < this.p.length; k += 3) { const q = f(vec3(this.p[k], this.p[k + 1], this.p[k + 2])); this.p[k] = q.x; this.p[k + 1] = q.y; this.p[k + 2] = q.z; } return this; }
     // normals from the triangles: each point's the average of the faces round it (smooth), or the face's own (flat,
     // which needs each triangle's points to be its own)
-    computeNormals(smooth=true, from=0)
+    // (from a vertex on; and given where in the index list its triangles start, only those are gone through)
+    computeNormals(smooth=true, from=0, iFrom)
     {
-        const P = this.p, n = new Float64Array(P.length - from*3), I = this.i.filter(k=> k >= from);
+        const P = this.p, n = new Float64Array(P.length - from*3), I = iFrom === undefined ? this.i.filter(k=> k >= from) : this.i.slice(iFrom);
         for (let t = 0; t < I.length; t += 3)
         {
             const a = I[t]*3, b = I[t + 1]*3, c = I[t + 2]*3;
@@ -4749,13 +4751,13 @@ function setRange(at, count)
 }
 class Dots
 {
-    constructor(additive, fog=true)
+    constructor(additive, fog=true, cap=256)
     {
         this.n = 0; this.cap = 0;
         const g = this.geo = new THREE.InstancedBufferGeometry();
         g.setAttribute('position', new THREE.Float32BufferAttribute([-.5, -.5, 0, .5, -.5, 0, .5, .5, 0, -.5, .5, 0], 3));
         g.setIndex([0, 1, 2, 0, 2, 3]);
-        this.grow(256);
+        this.grow(cap);
         this.mesh = new THREE.Mesh(g, new THREE.ShaderMaterial({vertexShader: DOT_VERTEX, fragmentShader: DOT_FRAGMENT,
             uniforms: THREE.UniformsUtils.clone(THREE.UniformsLib.fog), fog, transparent: true, depthWrite: false,
             blending: additive ? THREE.AdditiveBlending : THREE.NormalBlending}));
@@ -4799,7 +4801,7 @@ const ORIGIN = new THREE.Vector3;
 // second, the cone's half angle about its up, (unused), two start colours and two end colours to pick between, how
 // long each lives, its start and end size, speed, damping, gravity, the share of its life it fades in and out over,
 // how much each varies, and additive (glowing) or not
-const EMITTERS = new Set, DUST_DOTS = new Dots(false), GLOW_DOTS = new Dots(true), SKY_DOTS = new Dots(true, false);
+const EMITTERS = new Set, DUST_DOTS = new Dots(false, true, 2048), GLOW_DOTS = new Dots(true, true, 2048), SKY_DOTS = new Dots(true, false, 512);
 // particles done with, kept to be used again
 const PARTICLES = [];
 class ParticleEmitter3D
@@ -4898,7 +4900,7 @@ class Batch
 {
     constructor(data, o={})
     {
-        this.cap = 64; this.n = 0;
+        this.cap = 256; this.n = 0;
         this.geo = data.geometry();
         this.mat = litMaterial({vertexColors: true, ...o});
         this.make();
@@ -6552,7 +6554,7 @@ function* chunkMeshSteps(ch)
         c.alpine = MT.snow > 5 ? 0 : biomeW(x, BWS).alpine;
         C.push(c);
     }
-    yield;
+    yield 'ground';
     // the points, every row of every column including the extra two, and the colors of the chunk's own: straight
     // into flat arrays, with no object for each point, normal or colour
     const P = new Float32Array(W*R*3), nV = R*(W - 2), col = new Float32Array(nV*3);
@@ -6598,7 +6600,7 @@ function* chunkMeshSteps(ch)
             const v = 3*(j*(W - 2) + q - 1);
             col[v] = clamp(cr); col[v + 1] = clamp(cg); col[v + 2] = clamp(cb);
         }
-        yield;
+        yield 'ground';
     }
     // the points and their smooth normals, from the neighbours along and across, straight into three's buffers
     const pos = new Float32Array(nV*3), nor = new Float32Array(nV*3);
@@ -6614,7 +6616,7 @@ function* chunkMeshSteps(ch)
             if (n > 1e-9) { nor[3*v] = nx/n; nor[3*v + 1] = ny/n; nor[3*v + 2] = nz/n; } else nor[3*v + 1] = 1;
             for (let k = 0; k < 3; ++k) { pos[3*v + k] = P[o + k]; lo[k] = min(lo[k], P[o + k]); hi[k] = max(hi[k], P[o + k]); }
         }
-        if (j % 6 == 5) yield;
+        if (j % 6 == 5) yield 'ground';
     }
     // the triangles, two to each cell of the grid, facing up
     const ind = new Uint16Array((R - 1)*(cols - 1)*6);
@@ -6624,7 +6626,7 @@ function* chunkMeshSteps(ch)
         const a = j*cols + i, b = a + 1, d = a + cols + 1, f = a + cols;
         ind[e++] = a; ind[e++] = b; ind[e++] = d; ind[e++] = a; ind[e++] = d; ind[e++] = f;
     }
-    yield;
+    yield 'ground';
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
     g.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
@@ -6673,9 +6675,9 @@ function* buildChunk(ch)
         if (pick < wl.desert + wl.snow) kind = 'snowPine';
         else if (pick < wl.desert + wl.snow + wl.autumn*.75) kind = 'broad';
         lists[kind].push({x, y, z, s: sc*(kind == 'broad' ? .9 : 1), rot: rr()*TAU, t: rr()});
-        if (k % 20 == 19) yield;
+        if (k % 20 == 19) yield 'trees';
     }
-    yield;
+    yield 'trees';
     // trees down the slope in front too, far enough below the trail that they never hide the rider
     for (let k = 0; k < nTrees*.6; ++k)
     {
@@ -6685,7 +6687,7 @@ function* buildChunk(ch)
         const kind = pick < wl.desert ? 'bush' : pick < wl.desert + wl.snow ? 'snowPine' : pick < wl.desert + wl.snow + wl.autumn*.75 ? 'broad' : 'pine';
         lists[kind].push({x, y, z, s: sc*(kind == 'bush' ? 1.3 : 1), rot: rr()*TAU, t});
     }
-    yield;
+    yield 'trees';
     for (let k = 0; k < 18; ++k)
     {
         const x = x0 + rr()*CH, z = -4.5 - rr()*60;
@@ -6715,7 +6717,7 @@ function* buildChunk(ch)
         const y = back ? hillY(x, z) - .6 : rowY('drop', z, x, groundY(x), smoothY(x), 0) - gullyCut(x, z, 'drop') - .4;
         lists.crag.push({x, y, z, s: sz, rot: rr()*TAU, t, tall: 1.2 + t*2.2});
     }
-    yield;
+    yield 'misc';
     ch.objs.push(ch.mesh);
     const palAt = (x, key)=> palMix(x, key, [0,0,0]);
     const tint = {
@@ -6730,7 +6732,7 @@ function* buildChunk(ch)
     for (const [kind, list] of Object.entries(lists))
     {
         if (!list.length) continue;
-        yield;
+        yield 'set';
         // each kind of tree or rock in the chunk: one mesh, a copy for each, placed from the chunk's corner
         const set = new THREE.InstancedMesh(M[kind], PROP_MAT, list.length);
         set.castShadow = kind != 'bush'; set.receiveShadow = true;
@@ -6742,15 +6744,15 @@ function* buildChunk(ch)
     // things on the track in this chunk, a kind at a time, each sent to the GPU as it is made
     const add = (...objs)=> { for (const o of objs) ch.objs.push(o); };
     const here = x=> x >= x0 && x < x0 + CH;
-    yield;
+    yield 'rocks';
     for (const r of rocks) if (here(r.x)) add(makeRock(r));
-    for (const r of rails) if (here(r.x0)) { yield; r.wall ? add(...makeWallRock(r)) : add(r.deck ? makeDeck(r) : makeRail(r)); }
-    for (const s of signs) if (here(s.x)) { yield; add(...makeSign(s)); }
-    if (i == 0) { yield; add(...makeSummit()); }
-    for (const g of gullies) if (here(g.x0)) { yield; add(makeWater(g)); if (g.bridge) { yield; add(makeBridge(g)); } }
-    for (const a of arches) if (here(a.x)) { yield; add(makeArch(a)); }
-    for (const f of feats) if (f.type == 'dropin' && here(f.x1)) { yield; add(...makeDropMarks(f)); }
-    for (const sp of splits) if (here(sp.x0)) { yield; add(...makeForkSign(sp)); }
+    for (const r of rails) if (here(r.x0)) { yield r.wall ? 'wallrock' : r.deck ? 'deck' : 'rail'; r.wall ? add(...makeWallRock(r)) : add(r.deck ? yield* deckSteps(r) : makeRail(r)); }
+    for (const s of signs) if (here(s.x)) { yield 'sign'; add(...makeSign(s)); }
+    if (i == 0) { yield 'summit'; add(...makeSummit()); }
+    for (const g of gullies) if (here(g.x0)) { yield 'water'; add(makeWater(g)); if (g.bridge) { yield 'bridge'; add(yield* bridgeSteps(g)); } }
+    for (const a of arches) if (here(a.x)) { yield 'arch'; add(makeArch(a)); }
+    for (const f of feats) if (f.type == 'dropin' && here(f.x1)) { yield 'marks'; add(...makeDropMarks(f)); }
+    for (const sp of splits) if (here(sp.x0)) { yield 'forksign'; add(...makeForkSign(sp)); }
     placeChunk(ch);
     chunks.set(i, ch);
     perfMark(1);
@@ -6761,6 +6763,30 @@ function placeChunk(ch)
 {
     for (const o of ch.objs) { scene.add(o); if (o.userData.update) ch.anim.push(o); }
     for (const s of ch.sets) scene.add(s);
+    // (during the ride it is kept from view until the next frame has sent it to the GPU on its own; while the run
+    // is being made ready, it is all sent at once at the end)
+    if (!loadJob) { for (const o of [...ch.objs, ...ch.sets]) o.traverse(q=> q.layers.set(1)); warmQ.push(ch); }
+}
+// a chunk drawn on its own, off screen (into a pixel, with nothing culled and the shadows left as they are), which
+// sends its buffers to the GPU; then shown. Lights see layer 1 too, so it is drawn with the very shaders it will use
+const WARM_RT = new THREE.WebGLRenderTarget(1, 1), warmQ = [];
+function warmChunks()
+{
+    // (one a frame; any behind, all at once)
+    for (let k = warmQ.length > 2 ? warmQ.length : min(1, warmQ.length); k--;)
+    {
+        const ch = warmQ.shift();
+        if (chunks.get(ch.i) !== ch) continue;
+        const objs = [...ch.objs, ...ch.sets], culled = [];
+        for (const o of objs) o.traverse(q=> { if (q.frustumCulled) { q.frustumCulled = false; culled.push(q); } });
+        const au = renderer.shadowMap.autoUpdate;
+        renderer.shadowMap.autoUpdate = false; camera.layers.set(1);
+        renderer.setRenderTarget(WARM_RT); renderer.render(scene, camera); renderer.setRenderTarget(null);
+        camera.layers.set(0); renderer.shadowMap.autoUpdate = au;
+        for (const q of culled) q.frustumCulled = true;
+        for (const o of objs) o.traverse(q=> q.layers.set(0));
+        perfMark(4);
+    }
 }
 const PROP_MAT = litMaterial({vertexColors: true}), SET_M = new THREE.Matrix4, SET_C = new THREE.Color;
 function placeSet({set, list, kind, color}, x0, y0)
@@ -6792,32 +6818,57 @@ function animateChunks() { for (const ch of chunks.values()) for (const o of ch.
 // each frame, so no frame stalls on it; all at once when the world is laid out fresh. Each step's usual time is
 // learnt as chunks are built, and a step that would not fit in what is left of the slice waits for the next frame
 // (unless the frame has done nothing yet, so the work always moves on)
-const CHUNK_MS = 2, stepCost = [];
-let chunkJob = null;
+// Each step's usual time is learnt by its kind (each yield names the kind of work after it: 'ground', 'trees', a
+// 'bridge'...), and a step that ran well over the slice leaves the next frame to rest. Built a good way ahead (464 m
+// past the camera), so a chunk is done well before it is near
+const CHUNK_MS = 2, stepCost = {};
+let chunkJob = null, chunkRest = 0;
+// the chunks wanted about the camera (from a to b), and kept a little either side of them
+const chunkRange = (camX, more=0)=> [floor((camX - 150)/CH), floor((camX + 464 + more)/CH)];
+const newChunk = i=> ({i, x0: i*CH, y0: groundY(i*CH), objs: [], sets: [], anim: []});
 function updateChunks(camX, force, more=0)
 {
-    const a = floor((camX - 150)/CH), b = floor((camX + 400 + more)/CH), start = performance.now(), until = start + (force ? 1e9 : CHUNK_MS);
+    const [a, b] = chunkRange(camX, more), start = performance.now(), until = start + (force ? 1e9 : CHUNK_MS);
     if (chunkJob && (chunkJob.ch.i < a - 1 || chunkJob.ch.i > b + 2)) { dropChunkJob(); }
-    for (let ran = 0;;)
+    if (chunkRest > 0 && !force) --chunkRest;
+    else for (let ran = 0;;)
     {
         if (!chunkJob)
         {
             let i = max(0, a);
             while (i <= b && chunks.has(i)) ++i;
-            if (i > b) break;
-            const ch = {i, x0: i*CH, y0: groundY(i*CH), objs: [], sets: [], anim: []};
-            chunkJob = {ch, step: 0, steps: buildChunk(ch)};
+            if (i > b) { if (!ran) textAhead(camX); break; }
+            const ch = newChunk(i);
+            chunkJob = {ch, kind: 'start', steps: buildChunk(ch)};
         }
-        const now = performance.now(), k = chunkJob.step;
+        const now = performance.now(), k = chunkJob.kind;
         if (ran && now + (stepCost[k] || .3) > until) break;
-        const done = chunkJob.steps.next().done, took = performance.now() - now;
+        const r = chunkJob.steps.next(), took = performance.now() - now;
         stepCost[k] = stepCost[k] ? stepCost[k]*.8 + took*.2 : took;
-        ++chunkJob.step; ++ran;
-        if (done) chunkJob = null;
+        chunkJob.kind = r.value || 'misc'; ++ran;
+        if (r.done) chunkJob = null;
+        if (!force && took > CHUNK_MS*2) { chunkRest = 1; break; }
     }
     // (a Map can lose the entry it is at while it is gone through)
     for (const ch of chunks.values())
         if (ch.i < a - 1 || ch.i > b + 2) destroyChunk(ch);
+}
+// a chunk built all at once (while the run is being made ready)
+function buildChunkNow(i)
+{
+    const steps = buildChunk(newChunk(i));
+    while (!steps.next().done);
+}
+// with nothing to build this frame: the text for the next distance sign on the way made ready, one a frame, so the
+// chunk it is in only has to place it
+function textAhead(camX)
+{
+    for (const s of signs)
+    {
+        if (s.x < camX || s.x > camX + 900 || TEXT3D.has(s.d + ' m|.42|.08')) continue;
+        text3D(s.d + ' m', .42, .08);
+        return;
+    }
 }
 
 // ---------- obstacles, rails, signs and the summit
@@ -6884,15 +6935,21 @@ function makeRail(r)
 }
 
 // a plank deck on posts, with a ramp up onto it from the ground and stringers under the planks
-function makeDeck(r)
+// (built a few dozen boards at a time, a step of a chunk's build each: given back when done)
+function* deckSteps(r)
 {
     const mesh = new MeshData, len = r.x1 - r.x0, w1 = hsl(.08,.42,.4), w2 = hsl(.07,.4,.3), w3 = hsl(.07,.35,.22);
     const at = (x, y, z, size, color, rot=vec3())=> mesh.combine(buildBox(size).setColor(color), buildMatrix(vec3(x, y, z), rot));
     const a = atan(r.slope);
     let k = 0;
-    for (let x = .2; x < len; x += .42, ++k) at(x, r.slope*x - .06, 0, vec3(.36, .08, 2.2 + (k % 3)*.08), k % 2 ? w1 : w2, vec3(0, 0, a));
+    for (let x = .2; x < len; x += .42, ++k)
+    {
+        at(x, r.slope*x - .06, 0, vec3(.36, .08, 2.2 + (k % 3)*.08), k % 2 ? w1 : w2, vec3(0, 0, a));
+        if (k % 30 == 29) yield 'deck';
+    }
     for (const z of [-.85, .85])
     {
+        yield 'deck';
         at(len/2, r.slope*len/2 - .2, z, vec3(len/cos(a), .2, .16), w3, vec3(0, 0, a));
         for (let x = .6; x < len; x += 2.4)
         {
@@ -7021,17 +7078,21 @@ function makeDropMarks(f)
 }
 
 // a wooden bridge over a ravine: planks across, beams under, posts down to the stream, a rail along the back
-function makeBridge(g)
+function* bridgeSteps(g)
 {
     const mesh = new MeshData, xa = g.x0 - 1, ya = groundY(xa), w1 = hsl(.08,.42,.36), w2 = hsl(.07,.4,.28), w3 = hsl(.07,.35,.22);
     const at = (x, y, zr, size, color, rot=vec3())=>
         mesh.combine(buildBox(size).setColor(color), buildMatrix(vec3(x - xa, y - ya, wz(x, zr)), vec3(rot.x, rot.y - atan(wzD(x, zr)), rot.z)));
     let k = 0;
     for (let x = g.x0 - .6; x <= g.x1 + .6; x += .5, ++k)
+    {
         at(x, groundY(x) - .07, 0, vec3(.44, .1, 3.1 + (k % 3)*.12), k % 2 ? w1 : w2, vec3(0, 0, atan(groundSlope(x))));
+        if (k % 30 == 29) yield 'bridge';
+    }
     const floorAt = (x, zr)=> groundY(x) - gullyCut(x, zr, 'trail');
     for (let x = g.x0; x <= g.x1 + .1; x += 3.4)
     {
+        if (++k % 8 == 0) yield 'bridge';
         for (const zr of [-1.35, 1.35])
         {
             const top = groundY(x) - .15, bot = floorAt(x, zr) - .6, h = top - bot;
@@ -7045,6 +7106,7 @@ function makeBridge(g)
     // beams along under the deck and the top of the hand rail, in short straight pieces
     for (let x = g.x0 - .6; x < g.x1 + .6; x += 1)
     {
+        if (++k % 10 == 0) yield 'bridge';
         const xb = min(x + 1, g.x1 + .6), mx = (x + xb)/2, sl = (groundY(xb) - groundY(x))/(xb - x);
         for (const zr of [-1.3, 1.3]) at(mx, groundY(mx) - .24, zr, vec3(xb - x + .05, .22, .2), w3, vec3(0, 0, atan(sl)));
         at(mx, groundY(mx) + 1.05, -1.5, vec3(xb - x + .05, .1, .1), w1, vec3(0, 0, atan(sl)));
@@ -7319,7 +7381,7 @@ function updateRings(camPos, camY, x)
     {
         const drift = x*L.k;
         let r = ringObjs[i];
-        if (!r || abs(drift - r.d0) > .35) { if (r) { scene.remove(r.o); r.o.geometry.dispose(); } r = ringObjs[i] = buildRing(L, drift, x); }
+        if (!r || abs(drift - r.d0) > .35) { if (r) { scene.remove(r.o); r.o.geometry.dispose(); } r = ringObjs[i] = buildRing(L, drift, x); perfMark(32); }
         r.o.position.set(camPos.x, camY + L.base, camPos.z);
         r.o.rotation.set(0, r.d0 - drift, 0);
     });
@@ -9047,7 +9109,84 @@ function newRun(s)
     headlampLight.color = hsl(.12,.6,.85).three();
     flare = {intensity: 0};
     camX = START_X + 8; camY = groundY(START_X); camD = 30; camReset();
-    updateChunks(camX, true);
+    startLoad();
+}
+
+// ---------- the run made ready before it is played: the chunks about the start built (as far as the ride keeps
+// them, so none is thrown away when it starts), the distant ranges, the logo in, every kind of shader the ride will
+// need made (a few kinds only turn up later: water, the night's stars, so a hidden kit of them is in the scene), and
+// everything drawn once off screen with nothing left out, so all of it is on the GPU before the first frame of play.
+// A card shows how far it has got; stepped a little at a time so the card keeps moving. (Test hooks finish it at once)
+let loadJob = null, warmKitMade = false, WARMING = false;
+function startLoad() { loadJob = {steps: loadSteps(), progress: 0, sync: false, t0: performance.now()}; }
+function* loadSteps()
+{
+    const J = loadJob, [a, b] = chunkRange(camX), want = [];
+    for (let i = max(0, a); i <= b + 2; ++i) if (!chunks.has(i)) want.push(i);
+    for (let k = 0; k < want.length; ++k) { buildChunkNow(want[k]); J.progress = .75*(k + 1)/want.length; yield; }
+    updateRings(cam.pos, camY, camX);
+    // the logo's picture, given a few seconds to come in
+    while (!logo && !J.sync && performance.now() - J.t0 < 4000) yield;
+    makeWarmKit();
+    J.progress = .82; yield;
+    if (J.sync || !renderer.compileAsync) { renderer.compile(scene, camera); if (ink) renderer.compile(ink.quadScene, ink.quadCam); }
+    else
+    {
+        let done = false;
+        Promise.all([renderer.compileAsync(scene, camera), ink ? renderer.compileAsync(ink.quadScene, ink.quadCam) : 0]).then(()=> done = true, ()=> done = true);
+        while (!done && !J.sync) yield;
+    }
+    J.progress = .92; yield;
+    warmRender();
+    J.progress = 1;
+}
+// some of every step each frame, a slice at a time
+function stepLoad()
+{
+    const t = performance.now();
+    while (loadJob && performance.now() - t < 12) if (loadJob.steps.next().done) loadDone();
+}
+function finishLoad()
+{
+    if (!loadJob) return;
+    loadJob.sync = true;
+    while (loadJob) if (loadJob.steps.next().done) loadDone();
+}
+function loadDone()
+{
+    loadJob = null;
+    qualityReset(5);
+    lastT = 0;
+}
+// the kinds of shader that only turn up later in a ride, hidden far below the world: see-through water, both sides
+function makeWarmKit()
+{
+    if (warmKitMade) return;
+    warmKitMade = true;
+    const m = new MeshData().addTriangles([vec3(0, 0, 0), vec3(.1, 0, 0), vec3(0, 0, .1)], [0, 1, 2], undefined, undefined, [WHITE, WHITE, WHITE]);
+    const o = ownObj(m, WHITE, {castShadow: false, transparent: true, side: THREE.DoubleSide, emissive: .25, specular: 1});
+    o.position.set(0, -9000, 0);
+    scene.add(o);
+}
+// everything drawn twice with nothing culled: every buffer sent to the GPU, the shadows' shaders made
+function warmRender()
+{
+    const off = [];
+    scene.traverse(o=> { if (o.frustumCulled && (o.isMesh || o.isPoints)) { o.frustumCulled = false; off.push(o); } });
+    WARMING = true;
+    try { drawFrame(); drawFrame(); }
+    finally { WARMING = false; for (const o of off) o.frustumCulled = true; }
+}
+// the card while it is made ready
+function drawLoading(W, H)
+{
+    buttons = [];
+    ctx.fillStyle = '#0c1220'; ctx.fillRect(0, 0, W, H);
+    const p = loadJob ? loadJob.progress : 1, w = min(W - 60, 320), x = (W - w)/2, y = H*.52;
+    txt('BLUECOW RAGER', W/2, y - 72, fitSize('BLUECOW RAGER', 34, W - 40), '#2f5fff', 'center', 900);
+    txt('LAYING OUT THE TRAIL', W/2, y - 26, 15, '#ffd23a', 'center', 900);
+    rrect(x, y, w, 10, 5, 'rgba(255,255,255,.12)');
+    rrect(x, y, max(10, w*p), 10, 5, '#ffd23a');
 }
 
 // ---------- the menu's little show: the rider rolls off the summit, smacks into the logo and goes flying, and the
@@ -9801,18 +9940,22 @@ function dustBurst(x, y, count, zw)
 }
 
 // drop the resolution and shadow detail on phones that cannot hold the frame rate
-// looked at soon after the start and often at first, on the summit as well as riding, so a slow phone is on the
-// lighter settings within a second or two; one that is very slow drops two steps at once
-// how finely the screen is drawn: 5 at the screen's own sharpness (up to 3 pixels a point), 4 at 2.25, 3 at 1.75 (all
-// with smoothed edges and sharp shadows), 2 at 1.3 and 1 at 1 with softer shadows and no smoothing, 0 no shadows.
-// It starts at 4 and climbs to 5 when there is room, unless ?dev fixes the resolution (RES_FIX).
-// Stepped down when the frames run slow on average, or when one in twenty runs long (a hiccup that keeps coming
-// back); stepped up only while it has never had to come down, after a good while with plenty of room to spare, so
-// it settles instead of going up and down (each step resizes the picture, its shadows and outlines: a hitch). The
-// level it settles on is kept on the device, and the next visit starts there
-let quality = 4, RES_FIX = 0, qualityT = 0, qualityLooks = 0, qualityGood = 0, qualityDrops = 0;
-try { const q = localStorage.getItem('bcr.q'); if (q !== null && +q >= 0 && +q <= 5) quality = +q; } catch(e) {}
-const keepQuality = ()=> { try { localStorage.setItem('bcr.q', quality); } catch(e) {} };
+// How finely the screen is drawn: 5 at the screen's own sharpness (up to 3 pixels a point), 4 at 2.25, 3 at 1.75 (with
+// sharp shadows), 2 at 1.3 and 1 at 1 with softer shadows, 0 at 1 with soft ones. Shadows are never turned off, and
+// the cel look's smoothing stays as the session began: either would rebuild shaders or buffers, a hitch of its own.
+// A step only changes the resolution and the shadow map's size.
+// It starts at 4 (or where it last settled on this device) unless ?dev fixes the resolution (RES_FIX). Judged only
+// while riding, from 5 s in (the first seconds of a run are the world settling in, not the phone being slow), every
+// 2 s: stepped down when the frames run slow on average two looks in a row (a hiccup now and then is no reason to
+// blur the picture: a lower resolution doesn't cure it). A step that doesn't make it faster is taken back and the
+// ladder left alone for the session: a phone held at 30 a second (low power) is as fast as it will go. Stepped up
+// (one step a session) after a good while with plenty of room to spare, if it never had to come down. Kept on the
+// device once it has held for 20 s of riding
+let quality = 4, RES_FIX = 0, qualityT = 0, qualityGood = 0, qualityDrops = 0, qualitySlow = 0, qualityHeld = 0, qualityWarm = 5;
+let qualityTry = null, qualityStill = false, qualityKept = -1;
+try { const q = localStorage.getItem('bcr.q2'); if (q !== null && +q >= 0 && +q <= 5) quality = qualityKept = +q; } catch(e) {}
+const QUALITY_START = quality;
+const keepQuality = ()=> { if (quality == qualityKept) return; qualityKept = quality; try { localStorage.setItem('bcr.q2', quality); } catch(e) {} };
 const frameGaps = new Float32Array(120);
 let frameGapI = 0, frameLast = 0;
 function noteFrame()
@@ -9821,34 +9964,57 @@ function noteFrame()
     if (frameLast) frameGaps[frameGapI++ % frameGaps.length] = t - frameLast;
     frameLast = t;
 }
+// the measurements started afresh (after a run is built, after a step), and nothing judged for a while
+function qualityReset(warm=5)
+{
+    frameGaps.fill(0); frameGapI = 0; frameLast = 0; qualityT = 0; qualityGood = 0; qualitySlow = 0; averageFPS = 0; qualityWarm = warm;
+}
 const QUALITY_RATIO = [1, 1, 1.3, 1.75, 2.25, 3];
 function applyQuality()
 {
     const dpr = window.devicePixelRatio || 1;
     setCanvasPixelRatio(RES_FIX > 0 ? RES_FIX : min(dpr, QUALITY_RATIO[quality]));
-    SHADOW.size = quality >= 3 ? 2048 : 1024;
-    SHADOW.on = quality > 0;
-    // the cel look's frame, smoothed (four samples a pixel) from 3 up
-    const samples = quality >= 3 ? 4 : 0;
-    if (ink && ink.samples != samples) { ink.target.dispose(); ink = makeInk(samples); sizeKey = ''; }
+    SHADOW.size = quality >= 3 ? 2048 : quality >= 1 ? 1024 : 512;
+    qualityHeld = 0;
 }
 if (quality != 4) applyQuality();
+// the frames' gaps: the share of them that count (more than 30) sorted, for the middle and the slow end
+function frameStats()
+{
+    const g = Array.from(frameGaps).filter(v=> v > 0).sort((a, b)=> a - b);
+    return g.length > 30 ? {p50: g[floor(g.length*.5)], p95: g[floor(g.length*.95)]} : null;
+}
+function stepQuality(d)
+{
+    quality = clampV(quality + d, 0, 5);
+    perfMark(8); applyQuality(); qualityReset(1.5);
+}
 function adaptQuality(dt)
 {
-    if ((qualityT += dt) < (qualityLooks < 4 ? 1.2 : 3) || state != 'ride' && state != 'title') return;
-    qualityT = 0; ++qualityLooks;
-    const g = Array.from(frameGaps).filter(v=> v > 0).sort((a, b)=> a - b), p95 = g.length > 30 ? g[floor(g.length*.95)] : 0;
-    if (quality > 0 && (averageFPS > 0 && averageFPS < 45 || p95 > 24))
+    if (state != 'ride' || RES_FIX > 0 || qualityStill) return;
+    if (qualityWarm > 0) { if ((qualityWarm -= dt) <= 0) qualityReset(0); return; }
+    if ((qualityHeld += dt) > 20) keepQuality();
+    if ((qualityT += dt) < 2) return;
+    qualityT = 0;
+    const f = frameStats(), fps = averageFPS;
+    if (!f || !(fps > 0)) return;
+    // a step down being tried: kept if it helped, otherwise taken back, and the ladder left alone
+    if (qualityTry)
     {
-        quality = max(0, quality - (averageFPS > 0 && averageFPS < 28 ? 2 : 1));
+        if (++qualityTry.looks < 2) return;
+        if (fps < qualityTry.fps + 6) { qualityTry = null; qualityStill = true; stepQuality(1); return; }
+        qualityTry = null;
+    }
+    if (quality > 0 && fps < 45)
+    {
+        if (++qualitySlow < 2) return;
         qualityGood = 0; ++qualityDrops;
-        perfMark(8); applyQuality(); keepQuality();
+        qualityTry = {fps, looks: 0};
+        stepQuality(fps < 28 ? -2 : -1);
+        return;
     }
-    else if (quality < 5 && !qualityDrops && averageFPS > 58 && p95 > 0 && p95 < 17.5 && ++qualityGood >= 5)
-    {
-        ++quality; qualityGood = 0;
-        perfMark(8); applyQuality(); keepQuality();
-    }
+    qualitySlow = 0;
+    if (quality < min(5, QUALITY_START + 1) && !qualityDrops && fps > 58 && f.p95 < 17.5 && ++qualityGood >= 5) { qualityGood = 0; stepQuality(1); }
 }
 
 // ---------- forks: the line picked with a swipe before the split is taken at it, and scored at the merge
@@ -9975,6 +10141,7 @@ function tapScreen(key=false)
 addEventListener('pointerdown', e=>
 {
     audioUnlock();
+    if (loadJob) return;
     for (const b of buttons)
         if (e.clientX >= b.x && e.clientX <= b.x + b.w && e.clientY >= b.y && e.clientY <= b.y + b.h)
         {
@@ -10084,6 +10251,7 @@ addEventListener('keydown', e=>
     if (e.repeat) return;
     keys[e.code] = true;
     audioUnlock();
+    if (loadJob) return;
     const atFork = state == 'ride' && forkAhead && !ride;
     if (atFork && (e.code == 'ArrowUp' || e.code == 'KeyW')) chooseLine(1);
     else if (atFork && (e.code == 'ArrowDown' || e.code == 'KeyS')) chooseLine(-1);
@@ -11096,7 +11264,7 @@ function autopilotInput()
 function gameInit()
 {
     setSky(hsl(.6,.55,.42), hsl(.57,.35,.8), hsl(.3,.2,.4));
-    SHADOW.size = quality >= 3 ? 2048 : 1024; SHADOW.on = quality > 0;
+    SHADOW.size = quality >= 3 ? 2048 : quality >= 1 ? 1024 : 512;
     if (celOn) setCel(true, false);
     buildRiderMeshes();
     buildSceneMeshes();
@@ -11114,7 +11282,7 @@ function gameRenderPost() { noteFrame(); drawHUD(); }
 // few seconds, and marks where a chunk of the world was finished, more track was laid out or the quality changed
 const PERF = /[?&]perf=1\b/.test(location.search) ? {n: 300, i: 0, gap: [], logic: [], draw: [], hud: [], mark: [], last: 0, upd: 0, rs: 0, ev: 0} : null;
 const perfMark = k=> { if (PERF) PERF.ev |= k; };
-const PERF_MARKS = [[1, '#ffd23a', 'chunk'], [2, '#5ff', 'track'], [8, '#fff', 'quality']];
+const PERF_MARKS = [[1, '#ffd23a', 'chunk'], [2, '#5ff', 'track'], [4, '#7fd0ff', 'upload'], [8, '#fff', 'quality'], [16, '#ff5aff', 'shader'], [32, '#9f9', 'ranges']];
 function perfTimed(f, post)
 {
     return ()=>
@@ -11129,6 +11297,10 @@ function perfTimed(f, post)
 function perfRenderPost()
 {
     const t = performance.now(), P = PERF, k = P.i++ % P.n;
+    // a shader made this frame (the count of them went up)
+    const progs = renderer.info.programs.length;
+    if (P.progs !== undefined && progs > P.progs) P.ev |= 16;
+    P.progs = progs;
     // from the end of the update to here is the scene handed to the renderer
     P.gap[k] = P.last ? t - P.last : 16.7; P.logic[k] = P.upd; P.draw[k] = P.rs ? t - P.rs : 0; P.mark[k] = P.ev;
     P.last = t; P.upd = P.rs = P.ev = 0;
@@ -11142,7 +11314,7 @@ function drawPerf()
     const P = PERF, W = mainCanvasSize.x, H = mainCanvasSize.y, n = min(P.i, P.n), w = min(W - 20, 300), h = 64;
     const x0 = 10, y0 = H - safeBottom - 150;
     ctx.save();
-    ctx.fillStyle = 'rgba(8,10,16,.72)'; ctx.fillRect(x0 - 4, y0 - 34, w + 8, h + 40);
+    ctx.fillStyle = 'rgba(8,10,16,.72)'; ctx.fillRect(x0 - 4, y0 - 34, w + 8, h + 56);
     const ms = v=> min(h, v*h/50), bw = w/P.n;
     // 16.7 and 33 ms lines
     ctx.fillStyle = 'rgba(255,255,255,.35)'; ctx.fillRect(x0, y0 + h - ms(16.7), w, 1); ctx.fillRect(x0, y0 + h - ms(33.3), w, 1);
@@ -11163,6 +11335,7 @@ function drawPerf()
     ctx.font = '700 11px ' + FONT; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#fff';
     ctx.fillText(`${round(averageFPS)} fps   frame p95 ${f1(p95)}  worst ${f1(worst)} ms   hitches ${hitch}   q${quality}`, x0, y0 - 24);
     ctx.fillText(`logic avg ${f1(lsum/max(1, n))} max ${f1(lmax)}   render avg ${f1(dsum/max(1, n))} max ${f1(dmax)}   hud ${f1(hsum/max(1, n))} ms`, x0, y0 - 10);
+    ctx.fillText(`shaders ${P.progs}  meshes ${renderer.info.memory.geometries}   marks: ${PERF_MARKS.map(m=> m[2]).join(' ')}`, x0, y0 + h + 12);
     ctx.restore();
 }
 
@@ -11640,6 +11813,10 @@ window.__mtb = {
     cel: on=> { if (on !== undefined) setCel(on); return celOn; },
 
 };
+// (a test steps the game by hand: whatever is still being made ready is finished first)
+for (const k in window.__mtb) { const f = window.__mtb[k]; if (typeof f == 'function') window.__mtb[k] = (...a)=> { finishLoad(); return f(...a); }; }
+// (how far the run is from ready, without finishing it: -1 when it is)
+window.__loading = ()=> loadJob ? loadJob.progress : -1;
 
 // ============================================================================
 // DEV - ?dev in the link: a panel of sliders over the game for trying out its numbers while riding. What is set is
@@ -11782,11 +11959,14 @@ function drawFrame()
 {
     ALL_DOTS ||= [DUST_DOTS, GLOW_DOTS, SKY_DOTS];
     ORIGIN.set(round(cam.pos.x), round(cam.pos.y), round(cam.pos.z));
+    if (warmQ.length) warmChunks();
     for (const b of BATCHES) b.begin();
     for (const d of ALL_DOTS) d.begin();
     drawRiderView(); drawRemote(); drawCows(); drawTurboGlow(); drawSprockets(); drawCells(); drawOrbGlow(); drawSkyExtras();
     for (const e of EMITTERS) e.draw();
     for (const b of BATCHES) b.end();
+    // (making the run ready: a dot in every list, unseen, so each list's shader is made too)
+    if (WARMING) for (const d of ALL_DOTS) d.add(ORIGIN.x, ORIGIN.y - 5000, ORIGIN.z, .001, 0, 0, 0, 0);
     for (const d of ALL_DOTS) d.end();
     updateLogo(); animateChunks();
     camera.position.set(cam.pos.x, cam.pos.y, cam.pos.z);
@@ -11850,6 +12030,18 @@ function frameLoop(t)
 function runFrame(dt)
 {
     fitCanvases();
+    if (loadJob)
+    {
+        stepLoad();
+        if (loadJob)
+        {
+            const hud = mainCanvas.width/max(1, mainCanvasSize.x);
+            mainContext.setTransform(hud, 0, 0, hud, 0, 0);
+            ctx = mainContext;
+            drawLoading(mainCanvasSize.x, mainCanvasSize.y);
+            return;
+        }
+    }
     if (!paused)
     {
         timeDelta = dt*slowMoK(dt); time += timeDelta; ++frame;

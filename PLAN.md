@@ -911,6 +911,40 @@ The rider is reworked after `art/bluecow-rider-concept.png`, at its level of det
   - **A small bug:** a bunny hop's tilt now dies away to nothing instead of being worked on every frame for a minute after.
   - **Tools:** `?perf=1` also times the particles and the HUD. `tools/sim.mjs`, `smooth.mjs` and `shot.mjs` now default to the Three.js file.
 
+## A run made ready before play, and a quality ladder that settles: done (Three.js version)
+- **Why:** the resolution had dropped and there were hiccups that cleared up after a while.
+  - **The ladder:** it stepped down on the warm-up's own slow frames, and a step's own hitch made it step again (4→3→2→1→0). Each step rebuilt the outline buffer and shadow map, and level 0 turned the shadows off, which recompiled every shader (a 7.3 s stall in software GL).
+  - **Saved low:** the result was saved, so later visits started low.
+  - **Other bursts:** water and the night sky compiled their shaders the first time they appeared mid-ride, and some chunk steps (wall rocks, bridges, decks, sign text) ran whole in one frame.
+- **Loading the trail:** each new run (first load, RIDE AGAIN, MENU, a new run from the dev panel) is made ready behind a "LAYING OUT THE TRAIL" card (`loadSteps`, `drawLoading`):
+  - every chunk the start needs is built (as far as the ride keeps them), and the distant ranges;
+  - the logo is waited for (up to 4 s);
+  - a hidden kit adds the shader kinds that only turn up later: see-through water, and a dot in each dot list, including the stars;
+  - every shader is compiled (`compileAsync` where the browser can compile in parallel);
+  - everything is drawn twice off screen with nothing culled, so all of it is on the GPU and the shadow shaders are made.
+  - In a headless desktop browser that takes about a quarter of a second; a phone should be a second or two.
+  - Test hooks finish it at once; `window.__loading()` says how far it has got.
+- **Streaming during the ride:**
+  - Chunks are built one more ahead (to 464 m past the camera).
+  - Each step's cost is learnt by the kind of work (each yield names it), and a step that ran well over the 2 ms slice gives the next frame a rest.
+  - A finished chunk is kept out of view for a frame while it is drawn alone into a pixel (`warmChunks`, layer 1). Its upload never lands on the frame it first appears.
+  - Bridges and decks are built a few dozen boards per step.
+  - Wall rock faces no longer recompute normals over the whole mesh for every cell (`computeNormals` from where the new triangles start).
+  - The next distance sign's text is made in an idle frame.
+  - The dot buffers start large enough (2048, and 512 for the stars), and the batches at 256, so nothing grows mid-ride.
+- **Quality ladder:**
+  - It is judged only while riding, from 5 s in, every 2 s. It steps down only when the average is under 45 fps two looks in a row; a hiccup now and then never blurs the picture.
+  - A step that doesn't make it faster is taken back, and the ladder left alone (a phone held at 30 fps).
+  - It climbs one step a session when there is plenty of room.
+  - Shadows stay on at every level (level 0 uses a 512 shadow map), and the outline pass keeps the smoothing it started with. A step only changes the resolution and the shadow map's size: no shader is ever recompiled.
+  - The level is kept (`bcr.q2`, so every device starts afresh at 4) only once it has held for 20 s of riding.
+- **Checked:**
+  - **Shaders:** none are compiled after loading through a creek, a forced night and a crash (15 shader programs throughout).
+  - **Ladder** (faked frame rates): a steady 30 fps is tried once and taken back; a slow phone helped by a step keeps it and saves it after 20 s; a fast one climbs one step.
+  - **Ride:** a 1.4 km ride's CPU per frame has a median of 0.8 ms and a 99th percentile of 5.1 ms (render left out).
+  - **Reference frame:** the 647 m frame used to show a hole in the hillside where a chunk wasn't built yet; it's complete now.
+- **The meter (`?perf=1`):** shows the shader and mesh counts, and marks chunk uploads, new shaders and range rebuilds. Any hiccup left on a phone can then be named.
+
 ## Next: proposals
 - **More fun:**
   - pumping (hold on a downslope for speed);

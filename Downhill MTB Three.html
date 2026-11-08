@@ -7587,6 +7587,9 @@ let CHAIN_WINDOW = 2.6, HANG = .2;
 // handles for tuning (?dev): flip speed, landing forgiveness, how square a nailed landing is, the size of the surges
 // and the pump, the view's width and distance, and how often cows and fallen trees come up
 let FLIP_K = 1, LAND_K = 1, NAIL_ERR = .14, SURGE_K = 1, PUMP_K = 1, FOV_K = 1, CAMD_K = 1, COW_EVERY = 100, TREE_EVERY = 260;
+// and the camera's height round the rider (degrees more, or less, looking down than the view's own) and its pan (the
+// picture slid up or down, as a share of the screen's height)
+let CAM_TILT = 0, CAM_PAN = 0;
 let chain = 0, chainT = 0, bestChain = 0, flowTarget = 0, surgeA = 0, landsNailed = 0, landsClean = 0, landsSketchy = 0;
 let punch = 0, punchV = 0;
 let wallRides = 0, bestWall = 0;
@@ -9625,7 +9628,8 @@ const CAM_VIEWS = {
     // behind and above, looking down the trail; set back a fixed way rather than to fit the width
     'CHASE': {yaw: [1.4, 1.22], pitch: [.42, .38], lead: [.38, .32], up: [0, 0], dist: [24, 19], fixed: 1, follow: 1},
     '3/4':   {yaw: [1, .62], pitch: [.38, .3], lead: [.34, .2], up: [0, .04], dist: [27, 1], fixed: [1, 0], follow: .7},
-    'SIDE':  {yaw: [.05, .05], pitch: [.12, .1], lead: [.36, .26], up: [.06, .04], dist: [1.2, 1], follow: .3},
+    // side on and dead level, like a 2D game: never tipped down to look on the slope from above (see the level view)
+    'SIDE':  {yaw: [.05, .05], pitch: [0, 0], lead: [.36, .26], up: [.06, .04], dist: [1.2, 1], follow: .3},
     // up high looking down at the trail ahead
     'HIGH':  {yaw: [1.25, .8], pitch: [.9, .82], lead: [.16, .16], up: [0, 0], dist: [32, 34], fixed: 1, follow: .8}};
 // the drop-in view, [portrait, landscape]: in front of the rider and to the side, low, close
@@ -9662,7 +9666,9 @@ const fmt = n=> { let t = NUMS.get(n); if (t === undefined) { if (NUMS.size > 50
 // eases into the change rather than jerking. With lead it also takes on the speed of what it follows, so it keeps
 // right up with something moving steadily rather than trailing behind it
 const camSpring = ()=> ({v: 0, t: null, tv: 0});
-const CS = {x: camSpring(), y: camSpring(), ahead: camSpring(), speed: camSpring(), lift: camSpring(), floor: camSpring()};
+const CS = {x: camSpring(), y: camSpring(), ahead: camSpring(), speed: camSpring(), lift: camSpring(), floor: camSpring(), rider: camSpring()};
+// the SIDE view is level: how far it is eased in, and the rider's height the camera stands level with
+let levelR = 0, riderY = 0;
 function spring(x, target, s, w, dt, lead=0)
 {
     if (s.t === null || !(abs(target - x) < 80) || !(dt > 0)) { s.t = target; s.v = s.tv = 0; return target; }
@@ -9693,7 +9699,7 @@ function gameUpdatePost()
     // the chosen view's numbers, eased toward so a change of view glides
     // the summit is always framed three quarter on, and the camera glides into the chosen view on the drop in
     const v = state == 'title' ? CAM_VIEWS['3/4'] : CAM_VIEWS[camView[portrait ? 'p' : 'l']] || CAM_VIEWS['3/4'], o = portrait ? 0 : 1;
-    const want = {yaw: v.yaw[o], pitch: v.pitch[o], lead: v.lead[o], up: v.up[o], dist: v.dist[o]*CAM_ZOOMS[camView[portrait ? 'zp' : 'zl']][1], follow: v.follow, fixed: (v.fixed?.length ? v.fixed[o] : v.fixed) ? 1 : 0};
+    const want = {yaw: v.yaw[o], pitch: v.pitch[o] + (state == 'title' ? 0 : CAM_TILT*PI/180), lead: v.lead[o], up: v.up[o], dist: v.dist[o]*CAM_ZOOMS[camView[portrait ? 'zp' : 'zl']][1], follow: v.follow, fixed: (v.fixed?.length ? v.fixed[o] : v.fixed) ? 1 : 0};
     if (!camP) camP = {...want};
     for (const key in want) camP[key] += (want[key] - camP[key])*damp(3, dt);
     const hipV = (state == 'crash' || state == 'results') && ragdoll ? ragdoll.pts[RAG_I.hip].vx : 0;
@@ -9756,6 +9762,11 @@ function gameUpdatePost()
     // farther out it is, so a landing or a crest is a soft swing rather than a jolt
     camX = spring(camX, tx, CS.x, state == 'title' ? 4 : 7, dt, 1);
     camY = spring(camY, ty, CS.y, mix(4.5, 8, close), dt, .55);
+    riderY = spring(riderY, fy + 1, CS.rider, mix(4.5, 8, close), dt, .55);
+    // the level view (SIDE): the camera stands about level with the rider and looks at exactly the view's angle, the
+    // framing (the ground ahead, the rider up the screen) done by sliding the picture instead of tipping it
+    levelR = ramp(levelR, state != 'title' && camViewName() == 'SIDE', .7, .7, dt);
+    const lv = sstep(levelR);
     camShake = max(0, camShake - dt*2.5);
     // a nailed landing: the camera dips with the bike and comes back up, on a spring, so the landing is felt
     punchV += (-90*punch - 15*punchV)*dt; punch += punchV*dt;
@@ -9775,6 +9786,8 @@ function gameUpdatePost()
     camB += (atan(lineD) - camB)*damp(mix(1.2, 3, behind), dt);
     const al = Cw.yaw + camB*Cw.follow, el = Cw.pitch;
     const cx = camX - sin(al)*cos(el)*camD, cz = zW + cos(al)*cos(el)*camD;
+    // (how far out over the valley a level camera is: off the trail, the trail's height is no floor for it)
+    const offTrail = lv*sstep((abs(cz - zW) - 4)/6);
     // never down in the ground, neither the line behind the rider nor the hillside the camera is over: a floor that
     // rises quickly and settles slowly, and that the camera rides up onto smoothly rather than bumping into
     // (looking ahead along the way the camera is going, so it is already rising as a ridge comes under it)
@@ -9784,11 +9797,13 @@ function gameUpdatePost()
     for (let k = 0; k < 5; ++k)
     {
         const t = k*.2, qx = cx + cvx*t, qz = cz + cvz*t;
-        floorNow = max(floorNow, camGround(qx) + 2.6, terrainAt(qx, qz) + 2.2);
+        // (the trail's height only under a camera above the trail: a level one out over the valley has only the
+        // ground under it to keep clear of)
+        floorNow = max(floorNow, camGround(qx) + 2.6 - offTrail*60, terrainAt(qx, qz) + 2.2);
     }
     camFloor = spring(camFloor, floorNow, CS.floor, floorNow > camFloor ? 6 : 2, dt);
-    const cy0 = camY + sin(el)*camD, fd = cy0 - camFloor;
-    let cy = max(camFloor + (fd + sqrt(fd*fd + 1))/2, camGround(cx) + 1.2, terrainAt(cx, cz) + 1);
+    const cy0 = mix(camY, riderY, lv) + sin(el)*camD, fd = cy0 - camFloor;
+    let cy = max(camFloor + (fd + sqrt(fd*fd + 1))/2, camGround(cx) + 1.2 - offTrail*60, terrainAt(cx, cz) + 1);
     // and the rider always in sight: where the ground between rises into the view, the camera lifts to see over it,
     // quickly, and settles back down slowly once it is clear
     if (state != 'title')
@@ -9821,6 +9836,17 @@ function gameUpdatePost()
     }
     // a test can hold the camera where it wants it, for close-ups
     if (window.__camAt) { eye = window.__camAt.pos; look = window.__camAt.look; }
+    // the level view: aimed at exactly its own angle however high the camera has had to stand, the rest of the framing
+    // a slide of the picture (no further than puts the rider a quarter of the way down the screen); and the pan on top
+    const tw = titleCamW*titleCamW*(3 - 2*titleCamW), lw = window.__camAt ? 0 : lv*(1 - tw), hz = hypot(look.x - eye.x, look.z - eye.z);
+    let shift = 0;
+    if (lw > .001 && hz > .5)
+    {
+        const ly = eye.y - tan(el)*hz;
+        shift = clampV((look.y - ly)/(hz*tan(cam.fov/2)), -.45, .45)*lw;
+        look = vec3(look.x, mix(look.y, ly, lw), look.z);
+    }
+    cam.shiftY = shift + CAM_PAN*2*(1 - tw);
     cam.pos = eye;
     cam.lookAt(look);
     camLook = look;
@@ -11788,12 +11814,14 @@ function mpRecoverStep()
 }
 
 // ---------- on screen: where the other rider is, a tag over them or an arrow to them, and the match
+const PROJ_V = new THREE.Vector3;
 function project(p)
 {
-    const c = cam, fw = (camLook || p).subtract(c.pos).normalize(), rt = fw.cross(vec3(0, 1, 0)).normalize(), up = rt.cross(fw);
-    const d = p.subtract(c.pos), z = d.dot(fw), W = mainCanvasSize.x, H = mainCanvasSize.y, t = tan((c.fov || .78)/2);
-    if (z <= .1) return null;
-    return {x: W/2*(1 + d.dot(rt)/(z*t*W/H)), y: H/2*(1 - d.dot(up)/(z*t))};
+    // (behind the camera: none)
+    const c = cam, fw = (camLook || p).subtract(c.pos);
+    if (p.subtract(c.pos).dot(fw) <= .1*fw.length()) return null;
+    const v = PROJ_V.set(p.x, p.y, p.z).project(camera);
+    return {x: (v.x + 1)/2*mainCanvasSize.x, y: (1 - v.y)/2*mainCanvasSize.y};
 }
 const fmtT = t=> '0:' + String(max(0, ceil(t))).padStart(2, '0');
 function drawMatch(W, H, top, bottom)
@@ -11987,6 +12015,8 @@ const DEV_KNOBS = [
     ['VIEW AND WORLD'],
     ['Field of view', .6, 1.6, .02, ()=> FOV_K, v=> FOV_K = v],
     ['Camera distance', .5, 2, .05, ()=> CAMD_K, v=> CAMD_K = v],
+    ['Camera height (°, up looks down more)', -15, 45, 1, ()=> CAM_TILT, v=> CAM_TILT = v],
+    ['Camera pan (up/down)', -.3, .3, .01, ()=> CAM_PAN, v=> CAM_PAN = v],
     ['Day length (s)', 30, 600, 10, ()=> DAY_LEN, v=> DAY_LEN = v],
     ['Time of day', 0, .99, .01, ()=> dayT, v=> dayT = v, true]];
 const DEV_DEFAULTS = {};
@@ -12098,7 +12128,11 @@ function drawFrame()
     for (const d of ALL_DOTS) d.end();
     updateLogo(); animateChunks();
     camera.position.set(cam.pos.x, cam.pos.y, cam.pos.z);
-    camera.fov = cam.fov*180/PI; camera.updateProjectionMatrix();
+    camera.fov = cam.fov*180/PI;
+    // (the level view's framing, and the pan: the picture slid up or down, a lens shift)
+    const shY = cam.shiftY || 0, cwW = mainCanvasSize.x, cwH = mainCanvasSize.y;
+    if (abs(shY) > 1e-4) camera.setViewOffset(cwW, cwH, 0, -shY*cwH/2, cwW, cwH);
+    else { if (camera.view?.enabled) camera.clearViewOffset(); camera.updateProjectionMatrix(); }
     camera.lookAt(cam.look.x, cam.look.y, cam.look.z);
     sky.position.copy(camera.position);
     const c = SHADOW.center, r = SHADOW.range*.55, d = SUN_OFF.copy(SUN_DIR).normalize().multiplyScalar(150);

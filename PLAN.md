@@ -1043,6 +1043,28 @@ The rider is reworked after `art/bluecow-rider-concept.png`, at its level of det
   - **Normal runs:** big lines at about 0.5, 2.3 and 4.2 km.
   - **Sims:** 24.2 km with flips and tricks, 9.2 km on the turbo and 12.2 km on the high line, all with 0 crashes. Score per km is back to about 270k.
 
+## A level SIDE view, and the camera's height and pan in ?dev: done (Three.js version)
+- **The problem.** SIDE looked down on the rider instead of straight across like a 2D game, and by a lot on steep ground: 8–22° on ordinary trail, and up to 32° after a drop-in. It added up from:
+  - its own pitch;
+  - the framing aiming below the rider (to show the trail ahead), with the camera placed from that lowered aim;
+  - the camera's floor keeping it above the trail's height, even when it stands 40–50 m out over the valley;
+  - the lift that keeps the rider in sight.
+- **Now SIDE is level** (pitch 0):
+  - **Aim:** the camera stands about level with the rider (`riderY`) and is aimed at exactly the view's angle, however high it has had to stand.
+  - **Framing:** the rest is done by sliding the picture, a lens shift (`camera.setViewOffset`, `cam.shiftY`). It never puts the rider more than about a quarter of the way down from the top.
+  - **Floor:** the trail's height is no floor for a camera that is out over the valley (`offTrail`).
+  - **Easing:** the level view eases in and out with the view (`levelR`).
+  - **Unchanged:** the other views (3/4, CHASE, HIGH), the drop-in and crash close-ups, and the title and garage. The title is pixel-identical.
+- **`?dev`, VIEW AND WORLD:**
+  - **Camera height (°)** (−15 … 45): added to whichever view is chosen. Up swings the camera over the rider to look down; down drops it below the rider, looking up. In SIDE it is exactly the angle seen.
+  - **Camera pan** (−.3 … .3 of the screen): slides the picture up or down with no change of angle.
+- **The rival's tag** in two-player is placed through three's own projection, so it allows for the slide.
+- **Checked:**
+  - **SIDE pitch:** 0° on the same spots where it was 7.9–21.8° down, in portrait and landscape.
+  - **3/4:** the same as before (−17.3°).
+  - **Camera height:** −15, 20 and 45 give exactly those angles.
+  - **Camera pan** at ±.3 slides the picture without changing the angle.
+
 ## Next: proposals
 - **More fun:**
   - pumping (hold on a downslope for speed);

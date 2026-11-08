@@ -944,6 +944,10 @@ The rider is reworked after `art/bluecow-rider-concept.png`, at its level of det
   - **Ride:** a 1.4 km ride's CPU per frame has a median of 0.8 ms and a 99th percentile of 5.1 ms (render left out).
   - **Reference frame:** the 647 m frame used to show a hole in the hillside where a chunk wasn't built yet; it's complete now.
 - **The meter (`?perf=1`):** shows the shader and mesh counts, and marks chunk uploads, new shaders and range rebuilds. Any hiccup left on a phone can then be named.
+- **Fix: fork lines buried in the hill.**
+  - **The problem:** building chunks further ahead could build one over a fork that was still being laid out. A fork's lines are only made when it closes, so the ground wasn't cut for them, and a rider on the low line rode inside the hill (2.4–5 m under it on seed 1).
+  - **The fix:** a chunk now first makes sure no fork that starts before its end is still open (`trackCover`), and the trail is laid out 1250 m ahead (was 950) so that's rarely needed mid-ride. The trail itself is unchanged.
+  - **Checked:** riding the low, high and pro lines on 6 seeds found no chunk built over an open fork and no moment on a line with the ground as built over the rider.
 
 ## Next: proposals
 - **More fun:**

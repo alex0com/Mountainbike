@@ -6328,8 +6328,13 @@ function trackInit(s)
     addRun(40, .38);
 }
 const trackEnsure = x=> { while (genX() < x) { genSection(); perfMark(2); } };
+// laid out at least to x, and no fork that starts before it (and a little past) still being laid out: a fork's lines
+// are only made when it closes, and the ground under them is cut from those lines, so no chunk is built over one
+// that is still open
+const trackCover = x=> { trackEnsure(x); while (openSplit && openSplit.x0 < x + 30) { genSection(); perfMark(2); } };
 // how far ahead of the rider the track is laid out: past the longest block of lines beyond where the ground is built
-const TRACK_AHEAD = 950;
+// (far enough that the furthest chunk built, a good 500 m ahead of the camera, has any fork in it closed already)
+const TRACK_AHEAD = 1250;
 
 // let go of what is far behind the rider
 function trackPrune(x)
@@ -6838,6 +6843,7 @@ function updateChunks(camX, force, more=0)
             let i = max(0, a);
             while (i <= b && chunks.has(i)) ++i;
             if (i > b) { if (!ran) textAhead(camX); break; }
+            trackCover((i + 1)*CH + DX);
             const ch = newChunk(i);
             chunkJob = {ch, kind: 'start', steps: buildChunk(ch)};
         }
@@ -6856,6 +6862,7 @@ function updateChunks(camX, force, more=0)
 // a chunk built all at once (while the run is being made ready)
 function buildChunkNow(i)
 {
+    trackCover((i + 1)*CH + DX);
     const steps = buildChunk(newChunk(i));
     while (!steps.next().done);
 }

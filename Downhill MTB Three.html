@@ -5056,7 +5056,7 @@ let ORB_V = 13;   // the launch speed air orbs are laid out for, measured from r
 
 let seed = 1, rnd, NA, NB, NC, NV;
 let ys = [], gapF = [], rails = [], rocks = [], orbs = [], signs = [], feats = [], gaps = [], pendingArcs = [];
-let genBase = 0, genGrade = 0, nextSignX = 500, lastLaunch = null, nextBooterX = 200, nextCanyonX = 900, nextMegaX = 380;
+let genBase = 0, genGrade = 0, nextSignX = 500, lastLaunch = null, nextMegaX = 380;
 // line blocks: the trail splits into lines across the face of the mountain, reached by berms, each with its own
 // features, and they all come back together. PRO is up on the ridge, HIGH along the hillside behind the trail,
 // LOW down the slope in front; the main trail carries on between them.
@@ -5068,7 +5068,7 @@ const LINES = {
 // the lanes from the top of the hill down, the main trail as 0
 const LANES = [2, 1, 0, -1];
 const offeredLanes = s=> LANES.filter(l=> l == 0 || s.lines[l]);
-let splits = [], openSplit = null, lastSplitEnd = 0, nextSplitGap = 0, ride = null, noSign = [], paces = [], nextDropX = 450;
+let splits = [], openSplit = null, lastSplitEnd = 0, nextSplitGap = 0, ride = null, noSign = [], paces = [];
 // ravines the trail bridges, creeks it splashes through, rock arches over it
 let gullies = [], arches = [];
 
@@ -5266,13 +5266,26 @@ function addKicker(H, Lr, type='kicker')
 
 // a big kicker onto a long steep landing that falls away under the flight: the most air on the mountain.
 // The landing is laid out for a fast rider rolling off the lip, so anyone from a cruise to flat out comes down on its slope.
-function addBooter(d) { return addJump(2.2 + rnd()*.6 + d*.4, 7 + rnd()*1.5, .55 + rnd()*.12 + d*.08, 'booter', 17); }
+function addBooter(d) { return addJump(1.8 + rnd()*1.4 + d*.4, 7 + rnd()*2, .5 + rnd()*.2 + d*.05, 'booter', 17); }
 // the mega booter at the end of a set of battery cells: supercharged, the rider leaves its lip at SEND_V, and its
 // landing runs on far enough down the mountain for that flight; a rider who missed a cell lands high on the same slope
 function addMegaBooter(d)
 {
     const f = addJump(2.4 + rnd()*.4, 7.5 + rnd(), .55, 'booter', SEND_V, .5, SEND_V + 1, 30);
     f.mega = true; f.sendV = SEND_V;
+    return f;
+}
+// a tabletop: a kicker onto a flat-topped table, its landing falling away off the far end. Come up short and the
+// table is rolled; clear it and the landing is the slope beyond, laid out for the fastest rider
+function addTable(d)
+{
+    const f = addKicker(1 + rnd()*.6, 4 + rnd()*1.5, 'kicker'), a = atan(f.lipSlope), T = 4 + rnd()*6, G = .45 + rnd()*.15;
+    genBase = f.lipY; genGrade = .04;
+    addRun(T, .04, 0);
+    addRun(8, G, 0);
+    extendLanding(f.x1, f.lipY, a, G);
+    Object.assign(f, {x2: genX(), orbV: 15, table: T});
+    addRun(16, gradeTarget(d), 0);
     return f;
 }
 // a kicker with its own landing, steeper than the trail, laid along the flight off it
@@ -5297,8 +5310,8 @@ function addDropIn(d)
 {
     addRun(12, min(genGrade, .3), 0);
     const x0 = genX();
-    addRun(34, .05, 0);
-    const lipX = genX(), lipY = ys[ys.length - 1], F = 10 + rnd()*6 + d*8, G = 1 + rnd()*.15, v = 7 + rnd();
+    addRun(10 + rnd()*24, .05, 0);
+    const lipX = genX(), lipY = ys[ys.length - 1], F = 6 + rnd()*12 + d*6, G = .85 + rnd()*.35, v = 7 + rnd();
     // the landing reaches past a rider who came off the lip a little fast and popped as well
     let x = 0, y = 0, vx = v + 2, vy = POP;
     for (let t = 0; t < 6 && y > -F - G*x; t += 1/60) { x += vx/60; vy -= airG(vy)/60; y += vy/60; }
@@ -5317,7 +5330,7 @@ function addDropIn(d)
 // stays on the trail rides on under it
 function addWallDown(d)
 {
-    const G = clampV(genGrade, .4, .5), L = 34 + rnd()*8 + d*6, lenA = 7, lenC = 6, x0 = genX() + 14, x1 = x0 + L;
+    const G = clampV(genGrade, .4, .5), L = 24 + rnd()*24 + d*4, lenA = 7, lenC = 6, x0 = genX() + 14, x1 = x0 + L;
     addRun(14 + L, G, 0);
     const xs = [x0, x0 + lenA, x1 - lenC, x1], ya = groundY(x0) + 1.2, yb = ya - (G - .18)*lenA, yc = yb - (G - .26)*(L - lenA - lenC);
     const yy = [ya, yb, yc, yc - (G - .4)*lenC], group = {segs: [], down: true}, set = orbSet('sprocket');
@@ -5340,30 +5353,6 @@ function addWallDown(d)
     lastLaunch = {x1, lipY: top.y1, lipSlope: top.slope};
     return group;
 }
-// a big line: every so often the mountain's biggest features one after another, a drop-in, a canyon gap, a wall ride
-// down a sandstone fin and a booter, ridden like the rest of the mountain (nothing slows the rider, every landing is
-// laid out for the fastest), with plain trail after each landing to get set for the next
-let bigLines = [];
-// (each feature ends in some plain trail of its own: this makes it 30 to 45 m in all)
-const lineGap = d=> addRun(12 + rnd()*12, gradeTarget(d), 0);
-function addBigLine(d)
-{
-    const L = {x0: genX(), x1: 0};
-    pendingArcs.push(addDropIn(d));
-    lineGap(d);
-    pendingArcs.push(addCanyon(d));
-    lineGap(d);
-    addWallDown(d);
-    lineGap(d);
-    addRun(14, min(genGrade, .35), 0);
-    pendingArcs.push(lastLaunch = addBooter(d));
-    L.x1 = genX();
-    bigLines.push(L);
-    // (nothing the stretch before put out across it: a cow, a fallen tree)
-    cows = cows.filter(c=> c.x < L.x0 - 60 || c.x > L.x1);
-    rocks = rocks.filter(r=> r.type != 'tree' || r.x < L.x0 - 60 || r.x > L.x1);
-    return L;
-}
 // where a flight from (x, y) comes down on the ground laid out so far, or on its slope carried on past the end
 function flightLand(x, y, vx, vy)
 {
@@ -5382,20 +5371,20 @@ function extendLanding(lipX, lipY, a, G, v=V_FLY, spare=14, pop=POP)
     for (let k = 0; k < 40 && flightLand(lipX, lipY, v*cos(a), v*sin(a) + pop) > genX() - spare; ++k) addRun(10, G, 0);
 }
 // a step-down: a small kicker off a ledge onto a landing a few metres lower, no chasm between
-const addStepDown = d=> addJump(1 + rnd()*.4, 4.5 + rnd(), .5 + rnd()*.1, 'stepdown', 14, 3 + rnd()*3 + d*2);
+const addStepDown = d=> addJump(1 + rnd()*.4, 4.5 + rnd(), .5 + rnd()*.1, 'stepdown', 14, 2 + rnd()*5 + d*2);
 
 // drop stairs: three or four ledges stepping down the mountain, ridden at a steady pace, a little drop off each
 function addStairs(d)
 {
-    const n = 3 + (rnd() < .4 + d*.4 ? 1 : 0), v = 11 + rnd()*2, x0 = genX();
+    const n = 2 + (rnd()*5 | 0), v = 11 + rnd()*2, x0 = genX(), ledge = 5 + rnd()*6, face = 1 + rnd()*1.6;
     addRun(16, .12, 0);
     const f = {type: 'stairs', x0, n, lips: [], airs: 0};
     for (let k = 0; k < n; ++k)
     {
-        if (k) addRun(7.5 + rnd()*2, .1, 0);
+        if (k) addRun(ledge + rnd()*1.5, .1, 0);
         f.lips.push(genX());
         // the face: the next point of ground is this much lower
-        genBase -= 1.5 + rnd()*1.2 + d*.6;
+        genBase -= face*(.8 + rnd()*.4) + d*.6;
     }
     // a steep landing off the last one
     genGrade = .5;
@@ -5414,7 +5403,7 @@ function addStairs(d)
 // keeps their speed and flies on down the landing, laid out for the fastest
 function addCanyon(d)
 {
-    const v = 15 + rnd()*3;
+    const v = 14 + rnd()*5;
     addRun(10, min(genGrade, .3), 0);
     const z0 = genX();
     addRun(26, .2, 0);
@@ -5422,7 +5411,7 @@ function addCanyon(d)
     paces.push({x0: z0, x1: f.x1 + .2, v, hold: true, up: true, f});
     const drop = 3 + rnd()*3, G = .55, a = atan(f.lipSlope), vx = v*cos(a), vy = v*sin(a);
     const clears = W=> { const t = (W + 3)/vx; return vy*t - .5*G_AIR*t*t > -drop - 3*G + .8; };
-    let W = 26;
+    let W = 18 + rnd()*12;
     while (W > 10 && !clears(W)) W -= .5;
     const n = round(W/DX), floorY = f.lipY - drop - 45;
     for (let k = 1; k <= n; ++k) pushY(floorY, 1);
@@ -5445,7 +5434,7 @@ function addDeck(d)
 {
     // held at one grade on the way in, so no crest throws the bike under the deck
     addRun(20, genGrade, 0);
-    const len = 16 + rnd()*10, x0 = genX() + 1.5, G = .55 + rnd()*.1 + d*.05;
+    const len = 12 + rnd()*22, x0 = genX() + 1.5, G = .45 + rnd()*.25 + d*.05;
     addRun(len + 1.5, G, 0);
     const r = {x0, x1: x0 + len, y0: groundY(x0) + .15, slope: -.06, deck: true, mount: true};
     r.y1 = railY(r, r.x1);
@@ -5476,20 +5465,21 @@ const vFloor = x=> { const p = paceAt(x); return p ? p.v*.85 : VMIN + 2*flow; };
 // a little lip then a drop onto a steep landing
 function addCliff(d)
 {
-    const f = addKicker(.4, 3, 'cliff');
-    f.D = 3 + rnd()*4 + d*5;
+    const f = addKicker(.3 + rnd()*.5, 3, 'cliff');
+    f.D = 2 + rnd()*10 + d*5;
     genBase -= f.D;
     genGrade = .85;
     addRun(18 + f.D*1.5, .55);
+    if (f.D > 6) extendLanding(f.x1, f.lipY, atan(f.lipSlope), .55);
     return f;
 }
 
 // a kicker over a chasm onto a landing below; the slowest rider always carries it
 function addGap(d)
 {
-    const f = addKicker(1.3 + rnd()*.4, 5, 'gap');
-    const drop = 1.2 + rnd()*2.5 + d*2.5, landGrade = .55;
-    let W = 5 + rnd()*4 + d*6;
+    const f = addKicker(1.2 + rnd()*.6, 5, 'gap');
+    const drop = .8 + rnd()*4.2 + d*2.5, landGrade = .55;
+    let W = 4 + rnd()*8 + d*6;
     const a = atan(f.lipSlope), v = VMIN - .6, vx = v*cos(a), vy = v*sin(a);
     const clears = W=>
     {
@@ -5508,33 +5498,32 @@ function addGap(d)
 }
 
 // a rock or two, or a log, on a straight stretch
-function addRocks(d)
+function addRocks(d, kind=['boulder', 'cluster', 'two', 'log', 'tree'][rnd()*5 | 0])
 {
     // held at one grade, so no crest throws the bike up into them, with room before them for a flight off
     // the last crest to come down, even on pedal power
-    const start = genX(), tree = rnd() < .55, count = tree ? 1 : rnd() < .45 + d*.35 ? 2 : 1, len = tree ? 44 : 34;
+    const start = genX(), len = kind == 'tree' ? 44 : kind == 'two' ? 78 : 34;
     addRun(len, genGrade);
+    const rock = (x, big)=> rocks.push({type: 'rock', x, w: .65 + rnd()*.25, h: (big ? .9 + rnd()*.45 : .6 + rnd()*.35) + d*.15, y: groundY(x), rot: rnd()*TAU});
+    // a cluster sits close, so one jump clears it all
+    const cluster = x=> { for (let k = 0, n = 2 + (rnd() < .35 ? 1 : 0); k < n; ++k) rnd() < .25 ? rocks.push({type: 'log', x: x + k*3, w: .3, h: .5, y: groundY(x + k*3)}) : rock(x + k*(2.6 + rnd()*.8), false); };
     // or a tree come down across the trail: too big to roll over, it has to be jumped
     // (further along the straight than a rock: a flight off a crest at today's speeds carries a long way)
-    if (tree) { const x = start + 28; rocks.push({type: 'tree', x, w: .5, h: .85 + rnd()*.25 + d*.1, y: groundY(x), rot: rnd() - .5}); }
-    else for (let k = 0; k < count; ++k)
-    {
-        // a pair sits close, so one jump clears both
-        const x = start + 18 + k*(3.6 + rnd()*1.4), log = rnd() < .3;
-        rocks.push(log ? {type: 'log', x, w: .3, h: .5, y: groundY(x)} :
-            {type: 'rock', x, w: .65 + rnd()*.25, h: .7 + rnd()*.35 + d*.15, y: groundY(x), rot: rnd()*TAU});
-    }
+    if (kind == 'tree') { const x = start + 28; rocks.push({type: 'tree', x, w: .5, h: .85 + rnd()*.25 + d*.1, y: groundY(x), rot: rnd() - .5}); }
+    else if (kind == 'log') rocks.push({type: 'log', x: start + 18, w: .3, h: .5, y: groundY(start + 18)});
+    else if (kind == 'boulder') rock(start + 18, true);
+    else if (kind == 'cluster') cluster(start + 18);
+    // two clusters, far enough apart to land between them and jump again
+    else { cluster(start + 18); cluster(start + 54 + rnd()*8); }
     feats.push({type: 'rocks', x0: start, x1: genX()});
 }
 
-// a grind rail that starts at the ground and holds a gentler line than the slope, so it ends up in the air
-function addRail(d)
+// a grind rail (a skinny) from x0, len long, falling at k of the slope beneath it, so it rises into the air as it goes:
+// from the ground, or from a height y0 (the end of the one before); never below the ground along the way
+function placeRail(x0, len, k, y0)
 {
-    const len = 16 + rnd()*14 + d*8, x0 = genX() + 5;
-    addRun(len + 14, min(.6, gradeTarget(d) + .1), 0);
-    const g = groundSlope(x0 + 2), slope = min(-.06, g*.55);
-    const r = {x0, x1: x0 + len, y0: groundY(x0) + .32, slope};
-    // never below the ground along the way
+    const g = groundSlope(x0 + 2), slope = min(-.06, g*k);
+    const r = {x0, x1: x0 + len, y0: y0 ?? groundY(x0) + .32, slope};
     let lift = 0;
     for (let x = x0; x <= r.x1; x += 1) lift = max(lift, groundY(x) + .25 - railY(r, x));
     r.y0 += lift;
@@ -5544,6 +5533,24 @@ function addRail(d)
     feats.push({type: 'rail', x0: x0 - 3, x1: r.x1 + 3, rail: r});
     const set = orbSet('sprocket');
     for (let x = x0 + 4; x < r.x1 - 1; x += 3) addOrb({x, y: railY(r, x) + 1.1, got: false, air: false}, set);
+    return r;
+}
+// skinnies, in their shapes: a short low one along the ground, a long one that climbs high above the slope, a kinked
+// one (two end to end, the second falling more steeply), or a line of two or three with gaps to hop between, each
+// starting a little lower than the last ended
+function addRail(d, kind=['low', 'high', 'kink', 'line'][rnd()*4 | 0])
+{
+    const parts = kind == 'low' ? [[10 + rnd()*6, .75, 0]] : kind == 'high' ? [[22 + rnd()*12, .45, 0]]
+        : kind == 'kink' ? [[10 + rnd()*8, .45, 0], [8 + rnd()*8, .8, 0]] : [...Array(2 + (rnd() < .4 ? 1 : 0))].map(()=> [8 + rnd()*6, .55, 1 + rnd()*2]);
+    const x0 = genX() + 5, total = parts.reduce((s, p)=> s + p[0] + p[2], 0);
+    addRun(total + 14, min(.6, gradeTarget(d) + .1), 0);
+    let x = x0, r = null;
+    for (const [len, k, gap] of parts)
+    {
+        r = placeRail(x, len, k, r && (kind == 'kink' ? r.y1 : r.y1 - .2 - rnd()*.3));
+        x = r.x1 + gap;
+    }
+    lastLaunch = {x1: r.x1, lipY: r.y1, lipSlope: r.slope};
 }
 
 // ---------- wall rides: a long climb up a rocky mountainside beside the trail, then a huck back down. A jump anywhere
@@ -5551,12 +5558,12 @@ function addRail(d)
 // and back into the hill, to a kicker on the summit. Off the kicker (a tap there pops it higher) the rider hucks the
 // height they have climbed, down onto a long, steep landing laid out for it. The climb scores by the height gained,
 // the huck by the drop, and the air is big enough for tricks
-let WALL_LEAN = -.4, WALL_H = 12, WALL_LEN = 90, WALL_EVERY = 500;
+let WALL_LEAN = -.4, WALL_H = 12, WALL_LEN = 90;
 const WALL_Z = -3.35, WALL_TAP = 6, WALL_DEPTH = .3;
-let walls = [], nextWallX = 650;
+let walls = [];
 function addWallRide(d)
 {
-    const G = clampV(genGrade, .26, .38), H = WALL_H*(.85 + rnd()*.3) + d*2, L = WALL_LEN*(.85 + rnd()*.3);
+    const G = clampV(genGrade, .26, .38), H = WALL_H*(.65 + rnd()*.85) + d*2, L = WALL_LEN*(.55 + rnd()*.8);
     const lenA = L*.26, lenC = 9, lenB = L - lenA - lenC, x0 = genX() + 16, x1 = x0 + L;
     // the trail held at one grade under the whole climb
     addRun(16 + L, G, 0);
@@ -5746,6 +5753,8 @@ const cowOnTrail = c=> (c.state == 'walk' || c.state == 'stand') && abs(c.z) < 1
 const cowTop = c=> groundY(c.x) + COW_TOP;
 // near enough across the trail to the rider to meet them: a rider out on a fork's line passes it by
 const COW_REACH = 1.3;
+// how far before a chasm no cow stands: the longest bounce off one, at full speed off a high landing
+const COW_CLEAR = 140;
 function updateCows(dt)
 {
     for (const c of cows)
@@ -5932,18 +5941,20 @@ function launchReach(f)
 function addBridge(d)
 {
     addRun(6, min(genGrade, .3), 0);
-    const hw = 8 + rnd()*5, x0 = genX();
-    addRun(hw*2, min(.24, gradeTarget(d)), 0);
-    const g = {xc: x0 + hw, hw, depth: 7 + rnd()*5 + d*4, bridge: true, x0, x1: genX()};
+    const hw = 5 + rnd()*11, x0 = genX();
+    addRun(hw*2, min(.2 + rnd()*.14, gradeTarget(d)), 0);
+    const g = {xc: x0 + hw, hw, depth: 5 + rnd()*11 + d*4, bridge: true, x0, x1: genX()};
     gullies.push(g);
     feats.push({type: 'bridge', x0, x1: g.x1, g});
     addRun(10, gradeTarget(d), 0);
 }
 // a creek across the trail: the trail dips through the water
-function addCreek(d)
+function addCreek(d, jump=rnd() < .4)
 {
     addRun(8, gradeTarget(d), 0);
-    const hw = 4.5 + rnd()*2, x0 = genX(), depth = .8 + rnd()*.4, n = round(hw*2/DX);
+    // (or a little lip before a wider one, to jump it: CREEK GAP)
+    if (jump) { const k = addKicker(.7 + rnd()*.4, 3.5, 'kicker'); k.orbV = 14; pendingArcs.push(k); }
+    const hw = jump ? 5.5 + rnd()*2.5 : 3 + rnd()*4, x0 = genX(), depth = .6 + rnd()*.8, n = round(hw*2/DX);
     for (let k = 1; k <= n; ++k)
     {
         const x = genX() + DX;
@@ -5960,7 +5971,7 @@ function addCreek(d)
 // whoops: a run of rollers to pump, or to hop crest to crest
 function addWhoops(d)
 {
-    const n = 4 + (rnd()*3 | 0), L = 8.5 + rnd()*1.5, A = .45 + rnd()*.2 + d*.12, g = gradeTarget(d);
+    const n = 3 + (rnd()*6 | 0), L = 6 + rnd()*6, A = (.04 + rnd()*.04)*L + d*.08, g = gradeTarget(d);
     addRun(14, g, 0);
     const steps = round(n*L/DX), s0 = genX();
     for (let k = 1; k <= steps; ++k)
@@ -5974,6 +5985,83 @@ function addWhoops(d)
     const cx = s0 + (n - .5)*L;
     lastLaunch = {x1: cx, lipY: groundY(cx), lipSlope: -g};
     addRun(8, g, 0);
+}
+
+// ---------- the mix: every kind of feature, each in its own sizes and shapes (see the builders), laid out in an order
+// that never repeats. A bag holds each kind as many times as its weight and is drawn from without putting back, so every
+// kind comes up each time round, the rare ones too, in a different order each time, and never the same family twice
+// running; when it is empty it is filled and shaken again. Each kind: its weight, how far down the mountain it starts,
+// whether it can go on the main trail beside a block of lines, its family, and what it lays
+const FEATURES = {
+    roller:   [2, 0,   true,  'kicker', d=> pendingArcs.push(lastLaunch = addKicker(.8 + rnd()*.6, 4 + rnd()*1.5))],
+    table:    [2, 120, true,  'kicker', d=> pendingArcs.push(lastLaunch = addTable(d))],
+    jump:     [2, 120, true,  'kicker', d=> pendingArcs.push(lastLaunch = addJump(1.3 + rnd()*1.1, 5 + rnd()*2.5, .4 + rnd()*.2, 'kicker', 15))],
+    stepdown: [1, 300, true,  'kicker', d=> pendingArcs.push(lastLaunch = addStepDown(d))],
+    booter:   [2, 200, true,  'booter', d=> { addRun(14, min(genGrade, .35), 0); pendingArcs.push(lastLaunch = addBooter(d)); }],
+    gap:      [2, 280, false, 'gap',    d=> pendingArcs.push(lastLaunch = addGap(d))],
+    canyon:   [1, 600, false, 'gap',    d=> pendingArcs.push(lastLaunch = addCanyon(d))],
+    dropin:   [1, 400, false, 'drop',   d=> pendingArcs.push(lastLaunch = addDropIn(d))],
+    cliff:    [2, 150, true,  'drop',   d=> pendingArcs.push(lastLaunch = addCliff(d))],
+    stairs:   [2, 300, true,  'stairs', d=> addStairs(d)],
+    deck:     [2, 300, true,  'shore',  d=> addDeck(d)],
+    skinny:   [4, 200, true,  'shore',  d=> addRail(d)],
+    rocks:    [4, 0,   true,  'rocks',  d=> addRocks(d)],
+    bridge:   [3, 160, false, 'water',  d=> addBridge(d)],
+    creek:    [3, 160, true,  'water',  d=> addCreek(d)],
+    whoops:   [2, 160, true,  'whoops', d=> addWhoops(d)],
+    wallup:   [2, 500, false, 'wall',   d=> addWallRide(d)],
+    walldown: [1, 500, false, 'wall',   d=> addWallDown(d)],
+    breather: [1, 0,   true,  'rest',   d=> breather()]};
+// a long rolling stretch to ride, sometimes under a rock arch
+function breather()
+{
+    const a0 = genX();
+    addRun(30 + rnd()*30, gradeTarget(clamp01(a0/6000)), .3, 18);
+    if (rnd() < .55 && !openSplit) arches.push({x: a0 + 10 + rnd()*6, s: .95 + rnd()*.25, rot: rnd()});
+}
+// sets: now and then a few features close together on a theme, any of its kinds in any order
+const SETS = {
+    'JUMP LINE':    {pool: ['roller', 'table', 'jump', 'stepdown'], n: [3, 4]},
+    'TECH':         {pool: ['rocks', 'skinny', 'stairs', 'whoops', 'creek'], n: [2, 4]},
+    'BIG MOUNTAIN': {pool: ['dropin', 'canyon', 'booter', 'cliff', 'gap', 'walldown'], n: [2, 3]},
+    'NORTH SHORE':  {pool: ['deck', 'skinny', 'bridge', 'stairs'], n: [2, 3]}};
+let featureBag = [], lastFamily = '', featLog = [];
+// clear of the flight before it, then the feature, and a note of it (for the tests)
+function layFeature(kind, d, set, first)
+{
+    const reach = launchReach(lastLaunch);
+    if (reach > genX() - 4) addRun(reach - genX() + 10, genGrade);
+    featLog.push({x: genX(), kind, set, first});
+    if (featLog.length > 4000) featLog.shift();
+    lastFamily = FEATURES[kind][3];
+    const g0 = gaps.length;
+    FEATURES[kind][4](d);
+    // (no blue cow in the run up to a chasm: bounced high off one, a rider can fly a long way)
+    for (let i = g0; i < gaps.length; ++i) { const g = gaps[i]; cows = cows.filter(c=> c.x < g.x1 - COW_CLEAR || c.x > g.x2); }
+}
+// the next kind out of the bag that fits here
+function drawFeature(x)
+{
+    if (!featureBag.length)
+    {
+        for (const [k, f] of Object.entries(FEATURES)) for (let n = 0; n < f[0]; ++n) featureBag.push(k);
+        for (let i = featureBag.length; i > 1; --i) { const j = rnd()*i | 0; [featureBag[i - 1], featureBag[j]] = [featureBag[j], featureBag[i - 1]]; }
+    }
+    const fits = k=> { const f = FEATURES[k]; return x >= f[1] && (f[2] || !openSplit) && f[3] != lastFamily; };
+    const i = featureBag.findIndex(fits);
+    return i < 0 ? (openSplit || x < 150 ? 'rocks' : 'breather') : featureBag.splice(i, 1)[0];
+}
+// a set: a theme, then two to four of its kinds, any order, with only a little trail between them
+function laySet(d)
+{
+    const names = Object.keys(SETS), name = names[rnd()*names.length | 0], S = SETS[name], pool = [...S.pool];
+    const n = min(pool.length, S.n[0] + (rnd()*(S.n[1] - S.n[0] + 1) | 0));
+    for (let k = 0; k < n; ++k)
+    {
+        const kind = pool.splice(rnd()*pool.length | 0, 1)[0];
+        if (k) addRun(8 + rnd()*8, gradeTarget(d), 0);
+        layFeature(kind, d, name, !k);
+    }
 }
 
 // ---------- the generator
@@ -5990,8 +6078,14 @@ function openFork(d)
     if (x0 > 500 && rnd() < .4 + clamp01(x0/6000)*.35) kinds.push('pro');
     if (rnd() < .7) kinds.push('high');
     if (rnd() < .7 || !kinds.length) kinds.push('low');
-    // (long enough for each line's feature to land a rider who rides it fast, and climb back after)
-    openSplit = {x0, kinds, len: kinds.includes('pro') ? 400 + rnd()*40 : 330 + rnd()*50};
+    // which feature each line carries: any of them, the line's own the likeliest (the pro line a drop-in, the high
+    // line a step-down, the low line a chute and a gap)
+    const designs = {};
+    for (const k of kinds) { let pick = rnd(), i = 0; while (i < 3 && (pick -= LINE_W8[k][i]) > 0) ++i; designs[k] = LINE_DESIGNS[i]; }
+    // (long enough for each line's feature to land a rider who rides it fast, and climb back after: a drop-in or a
+    // chute, whose landings run on a long way for the fastest rider, needs a longer, steeper stretch)
+    const big = kinds.some(k=> designs[k] == 'dropin' || designs[k] == 'chute');
+    openSplit = {x0, kinds, designs, big, len: (kinds.includes('pro') ? 400 + rnd()*40 : 330 + rnd()*50) + (big ? 60 : 0)};
     // nothing laid out already where the lines turn off: no cow, no fallen tree across them
     clearForkEnd(x0 - 25, x0 + FORK_END, true);
 }
@@ -6011,8 +6105,8 @@ function closeFork(d)
     s.lines = {};
     for (const k of s.kinds) { const b = buildLine(s, k); s.lines[b.lane] = b; }
     splits.push(s); noSign.push({x0: s.x0 - 26, x1: s.x1 + 8});
-    clearForkEnd(s.x1 - FORK_END, s.x1 + 25, false);
-    lastSplitEnd = s.x1; nextSplitGap = 40 + rnd()*60; openSplit = null;
+    clearForkEnd(s.x1 - FORK_END, s.x1 + FORK_OUT, false);
+    lastSplitEnd = s.x1; nextSplitGap = 550 + rnd()*550; openSplit = null;
 }
 // a line: the main trail smoothed and swung up the hill or down the slope, with its own features built on top
 function buildLine(sp, kind)
@@ -6039,9 +6133,11 @@ function buildLine(sp, kind)
         }
     }
     for (let k = 1; k < n; ++k) lane[k] = min(lane[k], lane[k - 1] - .07*DX);
-    // its features, made smaller until they fit between the turn off and the turn back; a plain line if none do
+    // its feature, the one picked for it when the fork opened, made smaller until it fits between the turn off and
+    // the turn back; failing that, another; a plain line if none do
     let plan = null;
-    for (let t = 0, sc = 1; t < 6 && !plan; ++t, sc *= .82) plan = lineFeatures(b, lane, kind, sc);
+    const tries = [sp.designs?.[kind] ?? 'stepdown', ...LINE_DESIGNS.filter(g=> g != sp.designs?.[kind]).sort((a, c)=> LINE_W8[kind][LINE_DESIGNS.indexOf(c)] - LINE_W8[kind][LINE_DESIGNS.indexOf(a)])];
+    for (const design of tries) for (let t = 0, sc = 1; t < 5 && !plan; ++t, sc *= .82) plan = lineFeatures(b, lane, kind, sc, design);
     // a line up the hill never sinks below the main trail beside it, where the hill would hide it from the camera:
     // its floor is a metre over the highest of the trail nearby, and never rises going down the mountain, so a line
     // held up on it still falls all the way; a drop-in onto it just has a shorter face
@@ -6068,7 +6164,7 @@ function buildLine(sp, kind)
             f.line = b; f.lipY = brY(b, f.x1); f.lipSlope = (brY(b, f.x1) - brY(b, f.x1 - DX))/DX;
             if (f.type == 'gap') { f.landY = brY(b, f.x2 + .5); gaps.push(f); }
             feats.push(f);
-            orbArc(f);
+            if (f.type != 'whoops') orbArc(f);
         }
         for (const p of plan.paces) { p.line = b; paces.push(p); }
         for (const z of plan.brakes) { z.line = b; brakeZones.push(z); }
@@ -6087,7 +6183,7 @@ function buildLine(sp, kind)
 const brGap = (b, x)=> b.gap[clampV(round((x - b.x0)/DX), 0, b.gap.length - 1)];
 // a line's own features, laid along it as an offset from its smoothed path that starts and ends at nothing:
 // flatter stretches raise it, drops and steep landings lower it, and a last stretch brings it back, always downhill
-function lineFeatures(b, lane, kind, sc)
+function lineFeatures(b, lane, kind, sc, design)
 {
     const n = lane.length, off = new Float32Array(n), add = new Float32Array(n), gap = new Uint8Array(n);
     const ka = ceil((b.T + 8)/DX), kb = n - 1 - ceil((b.T + 8)/DX), feats = [], paces = [], brakes = [];
@@ -6156,13 +6252,13 @@ function lineFeatures(b, lane, kind, sc)
         }
         return true;
     };
-    if (kind == 'pro')
+    if (design == 'dropin')
     {
         // a slow traverse along the ridge onto a ledge, then a drop-in off it onto a long steep landing
         run(6, .22);
         const l0 = k;
-        run((40 + rnd()*10)*sc, .03);
-        const lip = k - 1, v = 7 + rnd(), F = max(5, o + 1 + rnd()*3*sc), G = clampV(fall + .6, .75, 1);
+        run((25 + rnd()*30)*sc, .03);
+        const lip = k - 1, v = 7 + rnd(), F = max(5, o + 1 + rnd()*7*sc), G = clampV(fall + .6, .75, 1);
         o -= F;
         const xl = landing(slopeAt(lip), v + 2, POP, F, G), xf = landingFar(slopeAt(lip), POP, F, G, xl + 10, .42);
         run(xl + 10, G, false);
@@ -6172,14 +6268,14 @@ function lineFeatures(b, lane, kind, sc)
         brakes.push({x0: X(l0) - 10, x1: X(lip) + .5});
         what = 'DROP-IN ' + round(F) + 'm';
     }
-    else if (kind == 'high')
+    else if (design == 'stepdown')
     {
         // a flatter traverse up the hillside over the rollers, then a steady pace onto a kicker off a step down
         // onto a long landing
         run(30, max(.04, fall - .18));
         const p0 = k;
         run(14, max(.04, fall - .15));
-        const s0 = k, lip = kick(.9 + rnd()*.4, 4.5, max(.04, fall - .15)), S = (2.5 + rnd()*2)*sc + .5, v = 14 + rnd()*2, G = clampV(fall + .2, .4, .55);
+        const s0 = k, lip = kick(.8 + rnd()*.7, 4.5, max(.04, fall - .15)), S = (1.5 + rnd()*4)*sc + .5, v = 14 + rnd()*2, G = clampV(fall + .2, .4, .55);
         o -= S;
         const xl = landing(slopeAt(lip), v + 2, POP, S, G);
         run(xl + 8, G, false);
@@ -6187,10 +6283,20 @@ function lineFeatures(b, lane, kind, sc)
         paces.push({x0: X(p0), x1: X(lip) + .2, v});
         what = 'STEP-DOWN';
     }
+    else if (design == 'rollers')
+    {
+        // a run of rollers along the path, to pump or to hop crest to crest
+        run(20, max(.04, fall - .1));
+        const s0 = k, n = 4 + (rnd()*5 | 0), L = 7 + rnd()*4, A = (.05 + rnd()*.03)*L*sc, e = min(kb - 60, k + round(n*L/DX));
+        if (e - s0 < 20) return null;
+        for (; k < e; ++k) { off[k] = o; add[k] = A*(1 - cos(TAU*(k - s0)*DX/L))/2; }
+        feats.push({type: 'whoops', x0: X(s0), x1: X(k), n, airs: 0});
+        what = 'ROLLERS';
+    }
     else
     {
         // a steep fast chute, then the speed set onto a kicker over a chasm
-        run((22 + rnd()*8)*sc, .6);
+        run((16 + rnd()*20)*sc, .6);
         const p0 = k;
         run(16, .2);
         const v = 15 + rnd()*2, s0 = k, lip = kick(1.6 + rnd()*.3, 6, .2), drop = 1.5, G = clampV(fall + .25, .45, .6);
@@ -6203,7 +6309,7 @@ function lineFeatures(b, lane, kind, sc)
             const t = (W + 3)/vx;
             return Y(lip) + vy*t - .5*G_AIR*t*t > lane[j] + o - drop - (G - bg(j))*3 + .8;
         };
-        let W = 20*sc + 4;
+        let W = (12 + rnd()*14)*sc + 4;
         while (W > 6 && !clears(W)) W -= .5;
         if (W <= 6) return null;
         const g0 = k;
@@ -6234,8 +6340,7 @@ function genSection()
 // before it, with no crest, feature or cow, so no flight can come down right in front of it
 let nextTreeX = 900;
 const extraFree = (x, room)=> !gapAt(x) && !feats.some(f=> x > f.x0 - room && x < (f.x2 ?? f.x1) + room) && !rocks.some(r=> abs(r.x - x) < room + 6)
-    && !rails.some(r=> x > r.x0 - room && x < r.x1 + room) && !walls.some(g=> x > g.x0 - room - 14 && x < g.x1 + room) && abs(groundSlope(x)) < 1.2
-    && !bigLines.some(L=> x > L.x0 - 40 && x < L.x1 + 20);
+    && !rails.some(r=> x > r.x0 - room && x < r.x1 + room) && !walls.some(g=> x > g.x0 - room - 14 && x < g.x1 + room) && abs(groundSlope(x)) < 1.2;
 function gentleBefore(x)
 {
     for (let k = 0; k < 35; ++k) if (groundSlope(x - k*2) - groundSlope(x - k*2 - 2) < -.07) return false;
@@ -6244,6 +6349,11 @@ function gentleBefore(x)
 // a fork about here: anywhere along one (from a little before to a little after), or only at its ends, where the
 // lines run close by the main trail
 const FORK_END = 66;
+// the features a fork's line can carry, and how likely each is on each line
+const LINE_DESIGNS = ['dropin', 'stepdown', 'chute', 'rollers'];
+const LINE_W8 = {pro: [.55, .15, .2, .1], high: [.2, .4, .2, .2], low: [.15, .25, .4, .2]};
+// (and no fallen tree for this far past where the lines rejoin: a rider merging back at full speed gets a second to settle)
+const FORK_OUT = 55;
 function forkAt(x, ends)
 {
     const near = (x0, x1)=> ends ? x > x0 - 25 && x < x0 + FORK_END || x1 !== undefined && x > x1 - FORK_END && x < x1 + 25 : x > x0 - 25 && (x1 === undefined || x < x1 + 25);
@@ -6251,11 +6361,14 @@ function forkAt(x, ends)
 }
 function placeExtras(a, b)
 {
-    // (a cow with a clear run after it, for the flight off its back, and no fallen tree near)
+    // (a cow with a clear run after it, for the flight off its back, no chasm for as far as a bounce can carry, and
+    // no fallen tree near)
     for (let x = max(a, nextCowX); x < b - 6; x += 5)
-        if (x > 220 && [0, 15, 30, 45].every(d=> extraFree(x + d, 6)) && !forkAt(x, false) && !rocks.some(r=> r.x > x - 30 && r.x < x + 60)) { addCow(x); nextCowX = x + COW_EVERY*(.55 + rnd()*.95); break; }
+        if (x > 220 && [0, 15, 30, 45].every(d=> extraFree(x + d, 6)) && !forkAt(x, false) && !rocks.some(r=> r.x > x - 30 && r.x < x + 60)
+            && !gaps.some(g=> g.x2 > x && g.x1 < x + COW_CLEAR)) { addCow(x); nextCowX = x + COW_EVERY*(.55 + rnd()*.95); break; }
     for (let x = max(a, nextTreeX); x < b - 6; x += 5)
-        if ([0, 10, 20, 30, 40, 50, 60, 70].every(d=> extraFree(x - d, 10)) && gentleBefore(x) && !forkAt(x, true) && !cows.some(c=> c.x > x - 90 && c.x < x + 30))
+        if ([0, 10, 20, 30, 40, 50, 60, 70].every(d=> extraFree(x - d, 10)) && gentleBefore(x) && !forkAt(x, true) && !splits.some(s=> x > s.x1 && x < s.x1 + FORK_OUT)
+            && !cows.some(c=> c.x > x - 90 && c.x < x + 30))
         {
             rocks.push({type: 'tree', x, w: .5, h: .85 + rnd()*.3, y: groundY(x), rot: rnd() - .5});
             nextTreeX = x + TREE_EVERY*(.6 + rnd()*.8);
@@ -6266,96 +6379,30 @@ function genSection0()
 {
     const x = genX(), d = clamp01(x/6000), start = genX();
     if (openSplit) { if (x > openSplit.x0 + openSplit.len - 70) { closeFork(d); return; } }
-    // (no block of lines opens with a big line due: it comes first)
-    else if (x > 260 && x > lastSplitEnd + nextSplitGap && x < nextDropX - 120) { openFork(d); return; }
-    addRun(openSplit ? 8 + rnd()*10 : mix(40, 20, d) + rnd()*28, gradeTarget(d), rnd() < .55 ? .12 + rnd()*.22 : 0, 14 + rnd()*16);
+    else if (x > 260 && x > lastSplitEnd + nextSplitGap) { openFork(d); return; }
+    // (beside a fork carrying a drop-in or a chute the main trail falls steeply, and the lines with it)
+    addRun(openSplit ? 8 + rnd()*10 : mix(20, 8, d) + rnd()*14, openSplit?.big ? max(.45, gradeTarget(d)) : gradeTarget(d), rnd() < .55 ? .12 + rnd()*.22 : 0, 14 + rnd()*16);
     // a rock arch over the run in, where no jump can still be in the air
     if (!openSplit && genX() - start > 24 && rnd() < .2 && launchReach(lastLaunch) < start + 2) arches.push({x: start + 9, s: .95 + rnd()*.25, rot: rnd()});
     if (rnd() < .5) orbLine(start + 6, 5 + (rnd()*5 | 0), 2.4);
-    const r = rnd();
     if (x < 120) pendingArcs.push(lastLaunch = addKicker(1.15, 4.5));
-    // a wall ride along a rocky outcrop every so often, on the main trail, before anything else that is due
-    else if (x > nextWallX && !openSplit)
+    // the mega booter when it is due, its run in laid with a set of blue battery cells: all of them supercharge the
+    // bike for a huge send
+    else if (x > nextMegaX && !openSplit)
     {
         const reach = launchReach(lastLaunch);
         if (reach > genX() - 4) addRun(reach - genX() + 10, genGrade);
-        if (rnd() < .4) addWallDown(d); else addWallRide(d);
-        nextWallX = genX() + WALL_EVERY*(.75 + rnd()*.6);
+        addRun(36, min(genGrade, .3), 0);
+        orbLine(genX() - 32, 6, 4.4, 'cell');
+        pendingArcs.push(lastLaunch = addMegaBooter(d));
+        nextMegaX = genX() + 700 + rnd()*400;
     }
-    // a big line every so often (a drop-in, a canyon gap, a wall ride down a fin and a booter), clear of the flight before it
-    // (not in a block of lines: a drop-in's face would come through on every line beside it)
-    else if (x > nextDropX && !openSplit)
-    {
-        const reach = launchReach(lastLaunch);
-        if (reach > genX() - 4) addRun(reach - genX() + 10, genGrade);
-        addBigLine(d);
-        nextDropX = genX() + 550 + rnd()*350;
-        nextBooterX = max(nextBooterX, genX() + 100);
-        nextWallX = max(nextWallX, genX() + 300);
-        nextCanyonX = max(nextCanyonX, genX() + 400);
-    }
-    // a mega booter comes up when it is due, as soon as the trail is not split into lines
-    else if (x > nextBooterX || x > nextMegaX && !openSplit)
-    {
-        const reach = launchReach(lastLaunch);
-        if (reach > genX() - 4) addRun(reach - genX() + 10, genGrade);
-        // now and then the run in is laid with a set of blue battery cells: all of them supercharge the bike for a huge send
-        const mega = x > nextMegaX && !openSplit;
-        if (mega)
-        {
-            addRun(36, min(genGrade, .3), 0);
-            orbLine(genX() - 32, 6, 4.4, 'cell');
-            nextMegaX = genX() + 450 + rnd()*400;
-        }
-        else addRun(14, min(genGrade, .35), 0);
-        pendingArcs.push(lastLaunch = mega ? addMegaBooter(d) : addBooter(d));
-        nextBooterX = genX() + 150 + rnd()*190;
-    }
-    // the bigger set pieces, a little way down the mountain: step-downs, drop stairs, decks and now and then a canyon
-    else if (x > 300 && rnd() < .24 + d*.12)
-    {
-        const q = rnd(), reach = launchReach(lastLaunch);
-        if (reach > genX() - 4) addRun(reach - genX() + 10, genGrade);
-        if (q < .2 && x > nextCanyonX && !openSplit) { pendingArcs.push(lastLaunch = addCanyon(d)); nextCanyonX = genX() + 700 + rnd()*500; }
-        else if (q < .5 || x < 500) pendingArcs.push(lastLaunch = addStepDown(d));
-        else if (q < .75) addStairs(d);
-        else addDeck(d);
-    }
-    else if (r < .2)
-    {
-        // the bigger ones come with a landing of their own, so they carry real air
-        const big = rnd() < .45 + d*.3;
-        pendingArcs.push(lastLaunch = big ? addJump(1.5 + rnd()*.4, 5.5 + rnd(), .42 + rnd()*.08, 'kicker', 15) : addKicker(1.1 + rnd()*.3, 4.5));
-    }
-    else if (r < .32) pendingArcs.push(lastLaunch = addCliff(d));
-    else if (r < .45 && x > 280 && !openSplit)
-    {
-        const reach = launchReach(lastLaunch);
-        if (reach > genX() - 4) addRun(reach - genX() + 10, genGrade);
-        pendingArcs.push(lastLaunch = addGap(d));
-    }
-    else if (r < .64)
-    {
-        const reach = launchReach(lastLaunch);
-        if (reach > genX() - 4) addRun(reach - genX() + 8, genGrade);
-        addRocks(d);
-    }
-    else if (r < .7 && x > 160 && !openSplit) addBridge(d);
-    else if (r < .76 && x > 160) addCreek(d);
-    else if (r < .83 && x > 160) addWhoops(d);
-    else if (r < .93 && x > 200)
-    {
-        addRail(d);
-        const rl = rails[rails.length - 1];
-        lastLaunch = {x1: rl.x1, lipY: rl.y1, lipSlope: rl.slope};
-    }
-    else
-    {
-        // a long rolling stretch, sometimes under a rock arch
-        const a0 = genX();
-        addRun(24 + rnd()*20, gradeTarget(d), .3, 18);
-        if (rnd() < .55 && !openSplit) arches.push({x: a0 + 10 + rnd()*6, s: .95 + rnd()*.25, rot: rnd()});
-    }
+    // (beside a block of lines the main trail is ridden by no one, a line being picked for the rider: it stays plain,
+    // and the mix is kept for the trail that is ridden)
+    else if (openSplit) {}
+    // now and then a set, otherwise the next out of the bag
+    else if (x > 600 && rnd() < .2) laySet(d);
+    else layFeature(drawFeature(x), d);
     // lay out the arcs whose landings now exist
     for (let i = pendingArcs.length; i--;)
         if (genX() > pendingArcs[i].x1 + 45) orbArc(pendingArcs.splice(i, 1)[0]);
@@ -6370,9 +6417,7 @@ function trackInit(s)
     NA = makeNoise(rnd); NB = makeNoise(rnd); NC = makeNoise(rnd); NV = makeNoise(rnd);
     ys = []; gapF = []; rails = []; rocks = []; orbs = []; signs = []; feats = []; gaps = []; pendingArcs = [];
     splits = []; openSplit = null; lastSplitEnd = 0; nextSplitGap = 0; ride = null; noSign = []; gullies = []; arches = [];
-    // (?bigline: a big line soon after the start, no fork before it)
-    if (/[?&]bigline\b/.test(location.search)) nextSplitGap = 900;
-    nextSignX = 500; lastLaunch = null; nextBooterX = 200; nextDropX = /[?&]bigline\b/.test(location.search) ? 240 : 450; bigLines = []; nextCanyonX = 900; nextMegaX = 380; paces = []; brakeZones = []; walls = []; nextWallX = 650; cows = []; nextCowX = 260;
+    nextSignX = 500; lastLaunch = null; featureBag = []; lastFamily = ''; featLog = []; nextMegaX = 450 + rnd()*300; paces = []; brakeZones = []; walls = []; cows = []; nextCowX = 260;
     // the summit: the back of the peak rising from the left, a flat top to stand on, then the drop in
     genBase = -14; genGrade = -.6;
     pushY(genBase);
@@ -6395,7 +6440,7 @@ function trackPrune(x)
 {
     const keep = o=> (o.x1 ?? o.x) > x;
     rails = rails.filter(keep); rocks = rocks.filter(keep); walls = walls.filter(g=> g.x1 > x); cows = cows.filter(c=> c.x > x - 40); feats = feats.filter(f=> (f.x2 ?? f.x1) > x);
-    gaps = gaps.filter(f=> f.x2 > x); signs = signs.filter(keep); bigLines = bigLines.filter(L=> L.x1 > x - 40);
+    gaps = gaps.filter(f=> f.x2 > x); signs = signs.filter(keep);
     orbs = orbs.filter(o=> o.x > x);
     splits = splits.filter(s=> s.x1 > x - 60); noSign = noSign.filter(f=> f.x1 > x);
     gullies = gullies.filter(g=> g.x1 > x - 80); arches = arches.filter(a=> a.x > x - 80);
@@ -10226,14 +10271,16 @@ function updateFork(pxWas)
 // ---------- creeks, bridges and whoops as the rider meets them, and a word for the big set pieces as they come up
 const FEAT_WORDS = {dropin: ['DROP-IN', 'brake to drop in slow, or send it'], canyon: ['CANYON GAP', 'the trail sets your speed'],
     stairs: ['DROP STAIRS', 'drop off every ledge'], deck: ['DROP DECK', 'roll it out and drop off the end']};
-// (the dev panel's NEXT BIG LINE: straight to 70 m before the next one, laid out and built)
-function goToLine()
+// (the dev panel's NEXT SET: straight to 70 m before the next set of features, laid out and built)
+function goToSet()
 {
     if (state != 'ride') { if (state != 'title') newRun(nextSeed()); finishLoad(); startRide(); }
-    let L = bigLines.find(L=> L.x0 > px + 30);
-    for (let k = 0; k < 30 && !L; ++k) { trackEnsure(genX() + 300); L = bigLines.find(L=> L.x0 > px + 30); }
+    // (the start of the next set ahead: one the rider is in the middle of is passed over)
+    const next = ()=> featLog.find(f=> f.first && f.x > px + 75);
+    let L = next();
+    for (let k = 0; k < 30 && !L; ++k) { trackEnsure(genX() + 300); L = next(); }
     if (!L) return;
-    const x = L.x0 - 70;
+    const x = L.x - 70;
     trackEnsure(x + TRACK_AHEAD); placeRider(x); state = 'ride'; sp = 16;
     camX = x; updateChunks(camX, true);
 }
@@ -11908,9 +11955,9 @@ window.__mtb = {
     endRun: ()=> endRun(),
     // the wall rides laid out so far, and the rider's wall state, for the wall ride tests
     walls: ()=> walls.map(g=> ({x0: g.x0, x1: g.x1, segs: g.segs.map(r=> [+r.x0.toFixed(1), +r.x1.toFixed(1)])})),
-    // the big lines laid out so far, for the tests
-    bigLines: ()=> bigLines.map(L=> ({x0: L.x0|0, x1: L.x1|0})),
-    goLine: ()=> goToLine(),
+    // the features laid out so far (kind, set and where), for the tests
+    features: ()=> featLog.map(f=> ({x: f.x|0, kind: f.kind, set: f.set})),
+    goSet: ()=> goToSet(),
     cows: ()=> cows.map(c=> ({x: +c.x.toFixed(1), z: +c.z.toFixed(2), state: c.state})),
     trees: ()=> rocks.filter(r=> r.type == 'tree').map(r=> ({x: r.x, h: r.h, hit: !!r.hit, cleared: !!r.cleared})),
     wallState: ()=> ({on: !!wallGroup, seg: grinding?.wall ? grinding.i : -1, best: bestWall, rides: wallRides, px, py, state, grounded}),
@@ -12007,7 +12054,6 @@ const DEV_KNOBS = [
     ['WALL RIDES (new trail)'],
     ['Climb height (m)', 4, 24, .5, ()=> WALL_H, v=> WALL_H = v],
     ['Climb length (m)', 40, 200, 5, ()=> WALL_LEN, v=> WALL_LEN = v],
-    ['One every (m)', 150, 1200, 25, ()=> WALL_EVERY, v=> WALL_EVERY = v],
     ['Lean into the wall', -1.4, 0, .05, ()=> WALL_LEAN, v=> WALL_LEAN = v],
     ['OBSTACLES (new trail)'],
     ['Cow every (m)', 30, 400, 10, ()=> COW_EVERY, v=> COW_EVERY = v],
@@ -12075,13 +12121,13 @@ function devPanel()
     now.style.cssText = 'opacity:.75;margin:6px 0 2px;font-size:11px';
     body.insertBefore(now, body.children[3] || null);
     setInterval(()=> { if (!el.classList.contains('shut')) now.textContent = `drawn at ${renderer.domElement.width}×${renderer.domElement.height} · ${pixelRatio.toFixed(2)}× · quality ${quality} · ${averageFPS.toFixed(0)} fps`; }, 500);
-    body.insertAdjacentHTML('beforeend', `<div><button data-act="run">NEW RUN</button><button data-act="line">NEXT BIG LINE</button><button data-act="reset">RESET ALL</button><button data-act="copy">COPY</button></div>`);
+    body.insertAdjacentHTML('beforeend', `<div><button data-act="run">NEW RUN</button><button data-act="set">NEXT SET</button><button data-act="reset">RESET ALL</button><button data-act="copy">COPY</button></div>`);
     el.addEventListener('click', e=>
     {
         const act = e.target.dataset?.act;
         if (act == 'toggle') { el.classList.toggle('shut'); e.target.textContent = el.classList.contains('shut') ? 'DEV ▸' : 'DEV ▾'; }
         else if (act == 'run') { newRun(nextSeed()); startRide(); }
-        else if (act == 'line') goToLine();
+        else if (act == 'set') goToSet();
         else if (act == 'reset') { for (const k of DEV_KNOBS) if (k.length > 1 && !k[6]) knobSet(k, DEV_DEFAULTS[k[0]]); devSave(); rows.forEach(f=> f()); }
         else if (act == 'copy') { const t = localStorage.getItem('bcr.dev') || '{}'; navigator.clipboard?.writeText(t).catch(()=> {}); e.target.textContent = 'COPIED'; setTimeout(()=> e.target.textContent = 'COPY', 1200); }
     });

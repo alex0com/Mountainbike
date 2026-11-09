@@ -1065,6 +1065,98 @@ The rider is reworked after `art/bluecow-rider-concept.png`, at its level of det
   - **Camera height:** −15, 20 and 45 give exactly those angles.
   - **Camera pan** at ±.3 slides the picture without changing the angle.
 
+## Varied features: a shuffle bag, sizes and shapes, random sets: done (Three.js version)
+- **The problem.** The mountain felt the same all the way down: scheduled features came first (a wall ride every 375–675 m, a big line every 550–900 m covering half the trail, a booter every 150–340 m), and the random mix only got a turn when nothing was due. Per 10 km: 11 booters and 10 wall rides, but no bridges, whoops or plain gaps, and half a skinny. Most builders also had narrow, fixed sizes, and each fork line always carried the same feature.
+- **The picker: a shuffle bag** (`FEATURES`, `drawFeature`, `layFeature`).
+  - **The catalog:** every kind with a weight, how far down the mountain it starts, whether it can go beside a fork, its family and its builder.
+  - **The bag** holds each kind as many times as its weight and is shuffled with the seeded dice. Each feature section draws the next one that fits: past its start, and not the same family as the last (kickers, drops, gaps, water, shore, walls...). Every kind comes up each time round the bag, in a different order each time.
+  - **Weights** lean toward the compact kinds, so the trail is busier:
+
+    | Kinds | Weight each |
+    |---|---|
+    | skinnies, rocks | 4 |
+    | bridges, creeks | 3 |
+    | roller, tabletop, jump, booter, gap, cliff, stairs, deck, whoops, climbing wall | 2 |
+    | step-down, canyon, drop-in, downhill wall, breather | 1 |
+
+  - **Gone:** the wall, big-line and booter schedules, `addBigLine`, `?bigline`, NEXT BIG LINE and the wall "One every" knob. The mega booter keeps its own schedule, every 700–1100 m.
+  - **Closer together:** the plain run before a feature is 8–34 m (was 20–68), and every feature is still placed clear of the fastest popped flight before it (`launchReach`).
+- **Sizes and shapes.**
+  - **Kickers:**
+    - a small roller kicker;
+    - a new **tabletop** (`addTable`): a kicker onto a flat 4–10 m table, with the landing falling away off its end, so coming up short just rolls the table;
+    - a jump with its own landing;
+    - a step-down with a 2–7 m knuckle.
+  - **Booters:** 1.8–3.2 m high.
+  - **Gaps:** 4–12 m wide (more further down), 0.8–5 m deep.
+  - **Canyons:** set speed 14–19.
+  - **Drop-ins:** ledge 10–34 m, face 6–18 m.
+  - **Cliffs:** 2–12 m.
+  - **Stairs:** 2–6 ledges.
+  - **Decks:** 12–34 m runways.
+  - **Whoops:** 3–8 rollers, 6–12 m apart.
+  - **Bridges:** 10–32 m spans over ravines 5–16 m deep.
+  - **Creeks:** of different widths, and 40% of them a **creek jump** (a small lip before a wider creek).
+  - **Wall rides:** climbing walls 0.55–1.35× as long and 8–18 m high; downhill fins 24–48 m.
+  - **Skinnies** (`addRail`, `placeRail`), in four shapes:
+    - a short low one along the ground;
+    - a long high one;
+    - a **kinked** one (two end to end, the second steeper);
+    - a **skinny line** of 2–3 with 1–3 m gaps to hop, each a little lower than the last.
+  - **Rocks** (`addRocks`): a boulder, a cluster of 2–3 cleared in one hop, two clusters about 40 m apart, a log or a fallen tree.
+  - **Breather:** a long rolling stretch, sometimes under a rock arch.
+- **Sets** (`SETS`, `laySet`): about 1 section in 5 past 600 m lays a set instead of a single. A set has a theme and 2–4 different kinds from its pool, in random order, with only 8–16 m between them:
+  - **JUMP LINE:** roller, tabletop, jump, step-down.
+  - **TECH:** rocks, skinny, stairs, whoops, creek.
+  - **BIG MOUNTAIN:** drop-in, canyon, booter, cliff, gap, downhill fin.
+  - **NORTH SHORE:** deck, skinny, bridge, stairs.
+- **Forks.**
+  - **Line designs:** each line's feature is picked when the fork opens, with the line's own the likeliest but any possible: a drop-in, a step-down, a chute and gap, or a new **rollers** design. Pro is 55% drop-in, high 40% step-down, low 40% chute.
+  - **Room for the big ones:** a fork carrying a drop-in or chute is 60 m longer, and the trail beside it falls at 0.45 or more, so those lines have the fall to land the fastest rider and climb back. Without this they never fit: the trail beside a fork is plain now, and often held flat to make up for the drops before it. If a design can't fit after shrinking it, the others are tried in turn.
+  - **Plain beside a fork:** the main trail there is never ridden (a side line is always picked), so it stays plain and the bag is kept for the trail that is.
+  - **Spacing:** forks come every 550–1100 m (was 250–700 m), about 30% of the run.
+- **Safety with features closer together:**
+  - **Fallen trees** are kept 55 m clear of where fork lines rejoin the trail (`FORK_OUT`, was 25 m). A rider merging back at 33 m/s hit one 30 m after the merge on seed 6.
+  - **Blue cows:** none stands in the 140 m before a chasm (`COW_CLEAR`). A high bounce off one carried riders 78–92 m into a gap on seeds 2 and 13.
+- **`?dev` NEXT SET** jumps to the start of the next set. The test hook `features()` lists what was laid (x, kind, set).
+- **Checked:**
+  - **Mix** (6 seeds × 10 km):
+    - 35 main-trail features per 10 km plus a line feature at each of 7 forks;
+    - one main-trail feature every 198 m;
+    - every kind present, none above 13% (skinnies), the same family never twice running outside a set;
+    - set members per 10 km: TECH 3.8, BIG MOUNTAIN 3.2, JUMP LINE 2.3, NORTH SHORE 2.2.
+  - **Sizes seen:**
+
+    | Feature | Range seen |
+    |---|---|
+    | gaps | 5.5–25 m |
+    | skinnies | 8–34 m |
+    | bridges | 11–30 m |
+    | creeks | 6–16 m |
+    | walls | 36–102 m |
+    | whoops | 3–7 rollers |
+    | stairs | 2–6 ledges |
+    | decks | 18–37 m |
+    | tables | 5–10 m |
+
+  - **Fork lines** (6 seeds): every design is built on every line kind. Only two lines fell back from their pick, both step-downs built as rollers.
+  - **Busier**, compared with the previous version (flips and tricks, 8 seeds × 4 km):
+
+    | Per km | Before | Now |
+    |---|---|---|
+    | Airs | 5.2 | 8.9 |
+    | Sprockets | 70 | 105 |
+    | Score | 309k | 312k |
+
+  - **Sims:** 130 km with 0 crashes:
+    - flips and tricks, 32.6 km;
+    - turbo on two autopilot salts, 49 km;
+    - the high lines, 24.3 km;
+    - the low lines, 24.4 km.
+  - **Wall rides:** every one on 8 seeds was ridden onto when the autopilot took it.
+  - **NEXT SET:** steps from one set to the next.
+  - **Screenshots** (SIDE): the skinny line, kinked rail, long bridge, creek jump, rock cluster, tabletop and whoops.
+
 ## Next: proposals
 - **More fun:**
   - pumping (hold on a downslope for speed);

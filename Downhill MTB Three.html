@@ -5187,7 +5187,8 @@ function biomeInit(s)
         if (k < first.length) b = BIOMES.indexOf(first[k]);
         else do b = r()*BIOMES.length | 0; while (b == prev || BIOMES[b] == 'snow' && zoneB[k] < SNOW_FROM);
         zoneSeq.push(BIOMES[b]); prev = b;
-        zoneB.push(zoneB[k] + (k ? 1500 + r()*1100 : 1000 + r()*500));
+        // (each country lasts at least 1500 m)
+        zoneB.push(zoneB[k] + 1500 + r()*(k ? 1100 : 500));
     }
     // the look of the mountains this run
     MT = {
@@ -8751,11 +8752,13 @@ let kitI = 0, bikeI = 0, bike = BIKES[0];
 let PACK = 0;
 function setPack(v) { PACK = v ? 1 : 0; try { localStorage.setItem('bcr.pack', PACK); } catch(e) {} }
 try { PACK = localStorage.getItem('bcr.pack') == '1' ? 1 : 0; } catch(e) {}
-function setKit(i)
+// the kit a new rider starts in
+const KIT_DEFAULT = KITS.findIndex(k=> k[0] == 'ELECTRIC CITRUS');
+function setKit(i, save=true)
 {
     kitI = (i + KITS.length) % KITS.length;
     Object.assign(PAL, PAL_BASE, KITS[kitI][1]);
-    try { localStorage.setItem('bcr.kit', kitI); } catch(e) {}
+    if (save) try { localStorage.setItem('bcr.kit2', kitI); } catch(e) {}
 }
 function setBike(i)
 {
@@ -8763,9 +8766,11 @@ function setBike(i)
     try { localStorage.setItem('bcr.bike', bikeI); } catch(e) {}
 }
 {
-    let k = 0, b = 0;
-    try { k = +(localStorage.getItem('bcr.kit') ?? 0) || 0; b = +(localStorage.getItem('bcr.bike') ?? 0) || 0; } catch(e) {}
-    setKit(k); setBike(b);
+    // (the kit is kept only once picked in the garage, under a new name: the old one was saved on every start, picked
+    // or not, so a rider who never chose one starts in the new default)
+    let k = KIT_DEFAULT, b = 0;
+    try { const s = localStorage.getItem('bcr.kit2'); if (s != null) k = +s || 0; b = +(localStorage.getItem('bcr.bike') ?? 0) || 0; } catch(e) {}
+    setKit(k, false); setBike(b);
 }
 
 function buildRiderMeshes()
@@ -10601,80 +10606,127 @@ function drawHUD()
     camButtons(W, top, bw, bh);
 
     // the combo in progress, with the time left to keep it going. On a tall screen the rider is in the middle, so
-    // all the scoring goes smaller into the band below, clear of the buttons at the sides
-    const tall = W < H, band = H*.68, sc = tall ? .75 : 1, wide = tall ? W - 190 : W - 30;
-    const mo = inMatch() && !tall ? 58 : 0, comboY = tall ? band : H*.16 + mo;
-    if (combo && state == 'ride')
-    {
-        const s = comboNames.slice(-3).join(' + ');
-        txt(s, W/2, comboY, fitSize(s, 24*sc, wide), '#ffd23a', 'center', 900);
-        txt(fmt(comboPts) + (combo > 1 ? '  x' + min(combo, 10) : ''), W/2, comboY + 28*sc, 20*sc, '#fff', 'center', 900);
-        if (grounded)
-        {
-            const w = 120*clamp01(comboT/2.2);
-            rrect(W/2 - 60, comboY + 46*sc, 120, 5, 2.5, 'rgba(10,14,24,.4)');
-            rrect(W/2 - 60, comboY + 46*sc, w, 5, 2.5, '#ffd23a');
-        }
-    }
-    if (state == 'ride') drawAirTricks(W, comboY + 54*sc, sc, wide);
+    // all the scoring goes smaller into the band below, clear of the buttons at the sides. On a wide one everything
+    // said while riding goes on one small line along the bottom, out of the way of the riding
+    const tall = W < H, band = H*.68, sc = .75, wide = W - 190;
     drawSwipes();
-    // each trick pops up as it lands
-    // below the combo, newest on top, older ones sliding down
-    const popY = tall ? band + 74 : max(H*.3, H*.16 + 74) + mo;
-    trickPops.forEach((p, i)=>
+    if (!tall) drawTicker(W, bottom);
+    else
     {
-        const k = trickPops.length - 1 - i;
-        if (k > 2) return;
-        const a = clamp01(min(p.t*8, (1.6 - p.t)*3)), y = popY + k*22*sc;
-        ctx.globalAlpha = a;
-        const s = p.name + '  +' + p.pts;
-        txt(s, W/2, y, fitSize(s, 18*sc*(1 + .3*max(0, 1 - p.t*6)), wide, 900), '#bff4ff', 'center', 900);
-        ctx.globalAlpha = 1;
-    });
-    if (bankMsg)
-    {
-        const a = clamp01(min(bankMsg.t*6, (2.2 - bankMsg.t)*3)), pop = 1 + .3*max(0, 1 - bankMsg.t*5), by = tall ? band - 4 : H*.25 + mo;
-        ctx.globalAlpha = a;
-        txt(bankMsg.title, W/2, by, 30*sc*pop, '#ffd23a', 'center', 900);
-        txt('+' + fmt(bankMsg.total), W/2, by + 32*sc, 22*sc, '#fff', 'center', 900);
-        ctx.globalAlpha = 1;
-    }
-    messages.forEach((m, i)=>
-    {
-        ctx.globalAlpha = clamp01(min(m.t*5, (m.dur - m.t)*3));
-        const my = W > H ? H*.64 : H*.8, step = tall ? 42 : 56;
-        txt(m.title, W/2, my + i*step, fitSize(m.title, 30*sc, wide), m.css ||= m.color.toString(), 'center', 900);
-        if (m.sub) txt(m.sub, W/2, my + i*step + 26*sc, fitSize(m.sub, 15*sc, wide, 700), '#fff', 'center', 700);
-        ctx.globalAlpha = 1;
-    });
-
-    // first runs: show the controls as they are needed
-    if (state == 'ride' && (tutorial < 3 || !everSwiped && swipeTutorial < 3))
-    {
-        let hint = '';
-        if (!everJumped && hintT > 1.5) hint = 'TAP TO JUMP';
-        else if (!everFlipped && !grounded && !grinding && airT > .2) hint = 'HOLD TO BACKFLIP';
-        else if (!everSwiped && hintT > 20 && !grounded && !grinding && airT > .2) hint = 'SWIPE IN THE AIR FOR TRICKS';
-        else if (everFlipped && hintT < 60 && !grounded && !grinding && airT > .2) hint = 'SECOND FINGER: HOLD TO FRONT FLIP';
+        if (combo && state == 'ride')
+        {
+            const s = comboNames.slice(-3).join(' + ');
+            txt(s, W/2, band, fitSize(s, 24*sc, wide), '#ffd23a', 'center', 900);
+            txt(fmt(comboPts) + (combo > 1 ? '  x' + min(combo, 10) : ''), W/2, band + 28*sc, 20*sc, '#fff', 'center', 900);
+            if (grounded)
+            {
+                const w = 120*clamp01(comboT/2.2);
+                rrect(W/2 - 60, band + 46*sc, 120, 5, 2.5, 'rgba(10,14,24,.4)');
+                rrect(W/2 - 60, band + 46*sc, w, 5, 2.5, '#ffd23a');
+            }
+        }
+        if (state == 'ride') drawAirTricks(W, band + 54*sc, sc, wide);
+        // each trick pops up as it lands, below the combo, newest on top, older ones sliding down
+        trickPops.forEach((p, i)=>
+        {
+            const k = trickPops.length - 1 - i;
+            if (k > 2) return;
+            const a = clamp01(min(p.t*8, (1.6 - p.t)*3)), y = band + 74 + k*22*sc;
+            ctx.globalAlpha = a;
+            const s = p.name + '  +' + p.pts;
+            txt(s, W/2, y, fitSize(s, 18*sc*(1 + .3*max(0, 1 - p.t*6)), wide, 900), '#bff4ff', 'center', 900);
+            ctx.globalAlpha = 1;
+        });
+        if (bankMsg)
+        {
+            const a = clamp01(min(bankMsg.t*6, (2.2 - bankMsg.t)*3)), pop = 1 + .3*max(0, 1 - bankMsg.t*5), by = band - 4;
+            ctx.globalAlpha = a;
+            txt(bankMsg.title, W/2, by, 30*sc*pop, '#ffd23a', 'center', 900);
+            txt('+' + fmt(bankMsg.total), W/2, by + 32*sc, 22*sc, '#fff', 'center', 900);
+            ctx.globalAlpha = 1;
+        }
+        messages.forEach((m, i)=>
+        {
+            ctx.globalAlpha = clamp01(min(m.t*5, (m.dur - m.t)*3));
+            const my = H*.8, step = 42;
+            txt(m.title, W/2, my + i*step, fitSize(m.title, 30*sc, wide), m.css ||= m.color.toString(), 'center', 900);
+            if (m.sub) txt(m.sub, W/2, my + i*step + 26*sc, fitSize(m.sub, 15*sc, wide, 700), '#fff', 'center', 700);
+            ctx.globalAlpha = 1;
+        });
+        // first runs: show the controls as they are needed
+        const hint = tutorialHint();
         if (hint) txt(hint, W/2, bottom - 40, fitSize(hint, 20, W - 30), 'rgba(255,255,255,' + (.75 + .25*sin(time*6)) + ')', 'center', 900);
+        if (state == 'crash' && crashT > .6 && !mp.rec)
+            txt('TAP FOR YOUR SCORE CARD', W/2, bottom - 44, fitSize('TAP FOR YOUR SCORE CARD', 22, W - 30), 'rgba(255,255,255,' + clamp01((crashT - .6)*4)*(.65 + .35*sin(time*5)) + ')', 'center', 900);
     }
-    if (state == 'crash' && crashT > .6 && !mp.rec)
-        txt('TAP FOR YOUR SCORE CARD', W/2, bottom - (W > H ? 30 : 44), fitSize('TAP FOR YOUR SCORE CARD', 22, W - 30), 'rgba(255,255,255,' + clamp01((crashT - .6)*4)*(.65 + .35*sin(time*5)) + ')', 'center', 900);
     if (state == 'results' && resultsT > .4) drawResults(W, H);
     ctx.restore();
 }
 
 // the tricks in this air so far and the one under way, scored when the wheels touch
-function drawAirTricks(W, y, sc, wide)
+function airTricksText()
 {
-    if (grounded || grinding) return;
+    if (grounded || grinding) return '';
     const parts = [], n = abs(rot) > TAU*.7 ? max(1, round(abs(rot)/TAU)) : 0;
     if (n) parts.push((n > 1 ? n + 'x ' : '') + (rot > 0 ? 'BACKFLIP' : 'FRONTFLIP'));
     for (const t of stylesDone) parts.push(t.name);
     if (style) parts.push(style.name + '...');
-    if (!parts.length) return;
-    const s = parts.join('  +  ');
-    txt(s, W/2, y, fitSize(s, 18*sc, wide), '#9dffb0', 'center', 900);
+    return parts.join('  +  ');
+}
+function drawAirTricks(W, y, sc, wide)
+{
+    const s = airTricksText();
+    if (s) txt(s, W/2, y, fitSize(s, 18*sc, wide), '#9dffb0', 'center', 900);
+}
+// first runs: the control to try next, as it is needed
+function tutorialHint()
+{
+    if (state != 'ride' || !(tutorial < 3 || !everSwiped && swipeTutorial < 3)) return '';
+    if (!everJumped && hintT > 1.5) return 'TAP TO JUMP';
+    if (!everFlipped && !grounded && !grinding && airT > .2) return 'HOLD TO BACKFLIP';
+    if (!everSwiped && hintT > 20 && !grounded && !grinding && airT > .2) return 'SWIPE IN THE AIR FOR TRICKS';
+    if (everFlipped && hintT < 60 && !grounded && !grinding && airT > .2) return 'SECOND FINGER: HOLD TO FRONT FLIP';
+    return '';
+}
+// on a wide screen, everything said while riding on one small line along the bottom, below the buttons. It leads with
+// a first-run hint, then a combo just banked, the tricks in this air or the combo under way (a thin bar under the
+// line for the time left to keep it going), and the latest callout follows on the same line
+const TICK = [], TICK_SEP = '   ·   ';
+function drawTicker(W, bottom)
+{
+    TICK.length = 0;
+    const hint = tutorialHint(), air = state == 'ride' ? airTricksText() : '';
+    let bar = -1;
+    // (each piece: its text, colour and how faded in it is)
+    if (hint) TICK.push(hint, '#fff', .75 + .25*sin(time*6));
+    if (state == 'crash' && crashT > .6 && !mp.rec) TICK.push('TAP FOR YOUR SCORE CARD', '#fff', clamp01((crashT - .6)*4)*(.65 + .35*sin(time*5)));
+    if (bankMsg) TICK.push(bankMsg.title + '  +' + fmt(bankMsg.total), '#ffd23a', clamp01(min(bankMsg.t*6, (2.2 - bankMsg.t)*3)));
+    else if (air) TICK.push(air, '#9dffb0', 1);
+    else if (combo && state == 'ride')
+    {
+        TICK.push(comboNames.slice(-3).join(' + ') + '  ' + fmt(comboPts) + (combo > 1 ? '  x' + min(combo, 10) : ''), '#ffd23a', 1);
+        if (grounded) bar = clamp01(comboT/2.2);
+    }
+    const m = messages[messages.length - 1];
+    if (m) TICK.push(m.title + (m.sub ? '  ' + m.sub : ''), m.css ||= m.color.toString(), clamp01(min(m.t*5, (m.dur - m.t)*3)));
+    if (!TICK.length) return;
+    // one small size for the whole line, smaller still if it would not fit
+    const maxW = W - 60, y = bottom - 2;
+    ctx.font = '800 14px ' + FONT;
+    let w = 0;
+    for (let i = 0; i < TICK.length; i += 3) w += ctx.measureText(TICK[i]).width + (i ? ctx.measureText(TICK_SEP).width : 0);
+    const size = max(10, 14*min(1, maxW/w));
+    ctx.font = '800 ' + size + 'px ' + FONT;
+    let x = W/2 - min(w*size/14, maxW)/2;
+    for (let i = 0; i < TICK.length; i += 3)
+    {
+        if (i) { txt(TICK_SEP, x, y, size, 'rgba(255,255,255,.5)', 'left', 800); x += ctx.measureText(TICK_SEP).width; }
+        ctx.globalAlpha = TICK[i + 2];
+        txt(TICK[i], x, y, size, TICK[i + 1], 'left', 800);
+        ctx.globalAlpha = 1;
+        x += ctx.measureText(TICK[i]).width;
+    }
+    if (bar >= 0) { rrect(W/2 - 40, y + 10, 80, 3, 1.5, 'rgba(10,14,24,.4)'); rrect(W/2 - 40, y + 10, 80*bar, 3, 1.5, '#ffd23a'); }
 }
 // each swipe leaves a short fading streak with an arrow head, so the player sees it was taken
 function drawSwipes()

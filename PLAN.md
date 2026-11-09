@@ -1163,7 +1163,7 @@ The rider is reworked after `art/bluecow-rider-concept.png`, at its level of det
   - then always the Autumn Woods, the Snowfields and the Red Rock, in that order;
   - after that, any country but the one just ridden, as before.
 
-  The scenery has its own random stream, so the trail and its features are the same for a seed as before. Only the country changes, and with it the snow's extra rolling resistance. The lap is about 6.5–8.5 km (`lapDone(x)`: past the start of the fifth country).
+  The scenery has its own random stream, so the trail and its features are the same for a seed as before. Only the country changes, and with it the snow's extra rolling resistance. The lap is about 7–9 km (`lapDone(x)`: past the start of the fifth country).
 - **Nothing dark or stormy on the first lap:**
   - **Daylight:** it stays full day (`DAY_HOLD`, .42) until the lap is ridden. This replaces "no dusk in the first minute" (`NIGHT_AFTER`).
   - **Clear sky:** the Snowfields have no falling snow, and the alpine night snow waits for the lap too. Falling snow is the game's only weather.
@@ -1186,6 +1186,23 @@ The rider is reworked after `art/bluecow-rider-concept.png`, at its level of det
   - **Not after a sharp flattening:** no tree just after the trail flattens sharply (more than 0.2 of grade over 20 m, within 30 m before it; `gentleBefore`). A hop begun on the steep part comes down short on the flatter ground: the autopilot hopped 16 m before one and landed 1.6 m short of it.
   - **Spacing:** to keep them coming, tried every 170 m (was 260). They now come about 9 per 10 km (was 13.5), the rest of the trail being taken by features and their flights.
 - **Sims** (8 km each, through the first lap and past it): 145.5 km over 18 seeds with 0 crashes (flips and tricks 48.4 km, turbo 32.4, high lines 32.4, low lines 32.3).
+
+## Longer first trail, one line of text in landscape, Electric Citrus to start: done (Three.js version)
+- **Every trail lasts at least 1500 m.** The others already did (1500–2600 m); the first one was 1000–1500 m and is now 1500–2000 m. Over 8 seeds the shortest was 1505 m.
+- **Landscape: one small line along the bottom** (`drawTicker`), below the BRAKE and TURBO buttons, at 14 px and shrinking to 10 px if it would not fit. It takes over everything that was spread over the middle of the screen. Portrait is unchanged.
+  - **The line leads with the first that applies:**
+    1. a first-run hint (`tutorialHint`);
+    2. TAP FOR YOUR SCORE CARD after a crash;
+    3. a combo just banked;
+    4. the tricks in this air (`airTricksText`);
+    5. the combo under way, with a thin bar under the line for the time left.
+  - **Then the latest callout** (BLUE COW!, WALL RIDE!, SEND IT!...) follows on the same line after a dot.
+  - **The separate trick pops** are left out: the combo already names each trick.
+- **Electric Citrus is the default kit.** The kit is now saved under `bcr.kit2`, and only when picked in the garage. The old `bcr.kit` was written on every start, picked or not, so a rider who never chose starts in Electric Citrus. A kit chosen before is asked for once more.
+- **Checked:**
+  - **Kit:** with an old saved kit the rider starts in Electric Citrus; a garage pick (FIRE) is kept after a reload.
+  - **Screenshots:** landscape with tricks in the air, a combo, a banked combo and a callout on the line; portrait as before.
+  - **Sims:** 80.7 km with 0 crashes and no page errors (flips and tricks 48.4 km, turbo 32.3, both 8 km a seed).
 
 ## Next: proposals
 - **More fun:**

@@ -14,7 +14,7 @@ try { playwright = require('playwright'); }
 catch { playwright = require(path.join(execSync('npm root -g').toString().trim(), 'playwright')); }
 const args = process.argv.slice(2), opt = (k, d)=> { const i = args.indexOf('--' + k); return i < 0 ? d : args[i + 1]; };
 const here = path.dirname(fileURLToPath(import.meta.url));
-const game = pathToFileURL(opt('game') || path.join(here, '..', 'Downhill MTB 3D.html')).href;
+const game = pathToFileURL(opt('game') || path.join(here, '..', 'Downhill MTB Three.html')).href;
 const out = opt('out', 'sound.wav'), seconds = +opt('seconds', 44), parts = opt('parts', 'loops jingles thumps');
 
 const browser = await playwright.chromium.launch({args: ['--use-gl=swiftshader', '--enable-unsafe-swiftshader', '--mute-audio']});

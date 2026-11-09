@@ -1204,6 +1204,41 @@ The rider is reworked after `art/bluecow-rider-concept.png`, at its level of det
   - **Screenshots:** landscape with tricks in the air, a combo, a banked combo and a callout on the line; portrait as before.
   - **Sims:** 80.7 km with 0 crashes and no page errors (flips and tricks 48.4 km, turbo 32.3, both 8 km a seed).
 
+## Softer sounds for long sessions: done (Three.js version)
+- **Sprockets: a soft tick** (`JINGLES.orb`). One muffled triangle tick, about 22 ms, dropping in pitch as it sounds, in place of the coin's two notes (about 200 ms). Its pitch still steps up a little along a run.
+- **Cows: shorter and quieter** (`moo`):
+
+  | Moo | Was (length, loudness) | Now |
+  |---|---|---|
+  | Walking out onto the trail | 1.2 s, 0.35 | 0.6 s, 0.16 |
+  | Running off after a bounce | 1.4 s, 0.55 | 0.7 s, 0.24 |
+  | The title logo smack | 1.7 s, 0.5 | 0.8 s, 0.22 |
+  | The rider's groans | 0.55 s, 0.22 | 0.45 s, 0.15 |
+
+- **Jingles, all of them** (`voice`, `blip`, `note`, `makeFx`):
+  - a round triangle tone by default in place of the thin pulse wave, under a lower low-pass (2400 Hz, was 4000);
+  - notes eased in over 12 ms (was 4), so none clicks;
+  - their bus at 3.2 (was 4.5).
+- **Jingles, one by one:**
+  - the high ones an octave or so lower (`perfect`, `ready`, `go`, `click`, `line`);
+  - the long ones cut short: `bank` 6 notes to 4, `chain` 13 to 4, and the turbo and send fanfares to 2–3 notes;
+  - the battery cell is two soft notes a fifth apart in place of the zap;
+  - the crash wah-wah a little quieter and duller.
+- **Thumps** (`SFX`): every sample about a third quieter.
+- **Loops** (`soundLoopsSet`): the rail grind 0.1 → 0.06, the skid 0.18 → 0.11, the wind's top level 0.18 → 0.14.
+- **`tools/listen.mjs`** now renders the Three.js game by default (it still pointed at the older 3D file).
+- **Checked** (44 s previews, before against after):
+
+  | Part | Before | After |
+  |---|---|---|
+  | Jingles, RMS | −32.8 dBFS | −37.1 dBFS |
+  | Jingles, energy above 3 kHz | 5.6% | 0.03% |
+  | A row of 8 sprockets, RMS | −26.3 dB | −41.2 dB |
+  | Thumps, RMS | −44.9 dBFS | −48.7 dBFS |
+
+  - **Loops:** the preview rides steadily with no skid or grind, so it doesn't show their change.
+  - **No errors:** all 17 jingles, 9 thumps and a moo played in a headless page with no page errors; a 4 km sim ran clean.
+
 ## Next: proposals
 - **More fun:**
   - pumping (hold on a downslope for speed);

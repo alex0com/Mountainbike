@@ -11088,7 +11088,7 @@ function drawResults(W, H)
 }
 
 // ============================================================================
-// SOUND - the tyres and the air going by, soft and low; arcade blips and jingles for pickups, boosts, tricks and
+// SOUND - the tyres and the air going by, soft and low; swishes, ticks and soft tones for pickups, boosts, tricks and
 // crashes; and thumps for landings. No music: rendering it brought phone browsers down
 // ============================================================================
 let au, fx, soundOn = true;
@@ -11104,100 +11104,74 @@ const SFX = {
     clank:    new Sound([.16,.05,520,.003,.02,.14,1,1.4,,,,,,,,,.03,.5,.1,,-900]),
     bonk:     new Sound([.45,.05,170,.004,.05,.3,1,2,-12,,,,,3,,,.04,.5,,,-500])};
 
-// ---------- the arcade voice: pulse waves, the sound of the old machines, softened a little through a low pass
 const midiHz = m=> 440*2**((m - 69)/12);
-const WAVES = new WeakMap;
-// a pulse wave, high for this much of each cycle: .5 a square, .25 and .125 thinner and brighter
-function pulseWave(ac, duty)
+// ---------- the natural voice: no tunes and no arcade blips. Two things only: a breath of filtered noise (a swish, a
+// tick, a rush of air) and a soft sine tone like a struck wooden bar, alone or as a chord struck at once
+const NOISE = new WeakMap;
+function noiseBuf(ac)
 {
-    let w = WAVES.get(ac);
-    if (!w) WAVES.set(ac, w = {});
-    if (!w[duty])
+    let b = NOISE.get(ac);
+    if (!b)
     {
-        const n = 48, re = new Float32Array(n), im = new Float32Array(n);
-        for (let k = 1; k < n; ++k) { re[k] = sin(TAU*k*duty)/(PI*k); im[k] = (1 - cos(TAU*k*duty))/(PI*k); }
-        w[duty] = ac.createPeriodicWave(re, im);
+        b = ac.createBuffer(1, ac.sampleRate, ac.sampleRate);
+        const d = b.getChannelData(0);
+        for (let i = 0; i < d.length; ++i) d[i] = Math.random()*2 - 1;
+        NOISE.set(ac, b);
     }
-    return w[duty];
+    return b;
 }
-// the oscillator and low pass under a note, from t to end, perhaps sliding in pitch to another note and perhaps with
-// a vibrato (in cents) that grows in; gives the gain to shape it with
-function voice(dest, midi, t, end, {wave='tri', cut=2400, to, glide=end, vib=0}={})
+// a breath of noise through a band that slides from f0 to f1: eased in over att, dying away by len
+function puff(dest, t, len, vol, f0, f1=f0, q=1.2, att=min(.03, len*.3))
 {
-    const ac = dest.context, o = ac.createOscillator(), f = ac.createBiquadFilter(), g = ac.createGain();
-    if (wave == 'tri') o.type = 'triangle'; else o.setPeriodicWave(pulseWave(ac, wave));
-    o.frequency.setValueAtTime(midiHz(midi), t);
-    if (to !== undefined) o.frequency.exponentialRampToValueAtTime(midiHz(to), glide);
-    if (vib)
+    const ac = dest.context, src = ac.createBufferSource(), f = ac.createBiquadFilter(), g = ac.createGain();
+    src.buffer = noiseBuf(ac); src.loop = true;
+    f.type = 'bandpass'; f.Q.value = q;
+    f.frequency.setValueAtTime(f0, t); f.frequency.exponentialRampToValueAtTime(f1, t + len);
+    g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(vol, t + att); g.gain.exponentialRampToValueAtTime(.0005, t + len);
+    src.connect(f); f.connect(g); g.connect(dest);
+    src.start(t, Math.random()*.5); src.stop(t + len + .02);
+}
+// a soft struck tone: a sine with a faint octave over it that dies sooner, eased in and ringing away
+function ping(dest, midi, t, len, vol)
+{
+    const ac = dest.context;
+    for (const [k, v, l] of [[1, vol, len], [2, vol*.18, len*.4]])
     {
-        const lfo = ac.createOscillator(), depth = ac.createGain();
-        lfo.frequency.value = 6.5;
-        depth.gain.setValueAtTime(0, t); depth.gain.linearRampToValueAtTime(vib, t + min(.25, (end - t)*.6));
-        lfo.connect(depth); depth.connect(o.detune); lfo.start(t); lfo.stop(end + .02);
+        const o = ac.createOscillator(), g = ac.createGain();
+        o.frequency.value = midiHz(midi)*k;
+        g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(v, t + .008); g.gain.exponentialRampToValueAtTime(.0004, t + l);
+        o.connect(g); g.connect(dest);
+        o.start(t); o.stop(t + l + .02);
     }
-    f.type = 'lowpass'; f.frequency.value = cut;
-    o.connect(f); f.connect(g); g.connect(dest);
-    o.start(t); o.stop(end + .02);
-    return g.gain;
 }
-// a note: struck, held and let go
-function note(dest, midi, t, len, vol, opt={})
-{
-    const r = opt.release ?? .05, gain = voice(dest, midi, t, t + len + r, {...opt, glide: t + len});
-    gain.setValueAtTime(0, t); gain.linearRampToValueAtTime(vol, t + .012);
-    gain.setValueAtTime(vol, t + max(.012, len - .01)); gain.linearRampToValueAtTime(0, t + len + r);
-}
-// a blip: struck, and dying away as it sounds
-function blip(dest, midi, t, len, vol, opt={})
-{
-    // (eased in, so it never clicks)
-    const gain = voice(dest, midi, t, t + len, opt), att = min(.012, len*.3);
-    gain.setValueAtTime(0, t); gain.linearRampToValueAtTime(vol, t + att);
-    gain.exponentialRampToValueAtTime(vol*.45, t + max(att + .001, len*.5)); gain.exponentialRampToValueAtTime(.0005, t + len);
-}
-// a spare tyre picked up: a rubbery boing
-function boing(dest, t, vol)
-{
-    const ac = dest.context, o = ac.createOscillator(), wob = ac.createOscillator(), wg = ac.createGain(), g = ac.createGain();
-    o.frequency.setValueAtTime(300, t);
-    o.frequency.exponentialRampToValueAtTime(140, t + .3);
-    wob.frequency.value = 16; wg.gain.value = 18;
-    wob.connect(wg); wg.connect(o.frequency);
-    g.gain.setValueAtTime(0, t);
-    g.gain.linearRampToValueAtTime(vol, t + .01);
-    g.gain.setTargetAtTime(0, t + .05, .08);
-    o.connect(g); g.connect(dest);
-    o.start(t); wob.start(t); o.stop(t + .6); wob.stop(t + .6);
-}
-// the jingles, in the tune's key of F minor (the fanfares in its relative major, Ab): each plays into d from time t,
-// v telling it which one (a streak, a direction)
+const chord = (d, t, notes, len, vol)=> { for (const n of notes) ping(d, n, t, len, vol/notes.length**.5); };
+// each plays into d from time t, v telling it which one (a streak, a direction)
 const COIN = [60, 63, 65, 68, 70, 72, 75, 77];
-// (soft and round, for long sessions: triangle tones under a low pass, eased in, the frequent ones short and low)
 const JINGLES = {
-    // a sprocket: a soft tick, muffled and very short, its pitch dropping as it sounds and stepping up a little along
-    // a run of them
-    orb:      (d, t, v)=> { const n = COIN[v % 8]; blip(d, n + 12, t, .035, .05, {to: n + 5, cut: 1800}); },
-    // a battery cell: two soft notes rising a fifth
-    cell:     (d, t, v)=> { const n = [63, 65, 67, 68, 70, 72][v % 6]; blip(d, n, t, .08, .05); blip(d, n + 7, t + .07, .16, .045); },
-    jump:     (d, t)=> blip(d, 56, t, .14, .05, {to: 68, wave: .5, cut: 1800}),
-    // a trick starting: a quick fwip, pitched by the way it was swiped
-    whoosh:   (d, t, v)=> blip(d, 60 + v, t, .11, .035, {to: 74 + v, cut: 2200}),
-    trick:    (d, t)=> { blip(d, 68, t, .08, .06); blip(d, 75, t + .08, .22, .055); },
-    trickBig: (d, t)=> [68, 72, 75].forEach((n, i)=> blip(d, n, t + i*.07, i == 2 ? .3 : .08, .06)),
-    bank:     (d, t)=> { [68, 72, 75].forEach((n, i)=> blip(d, n, t + i*.065, .09, .055)); blip(d, 80, t + .2, .35, .05); },
-    perfect:  (d, t)=> { blip(d, 75, t, .06, .05); blip(d, 80, t + .07, .16, .05); },
-    line:     (d, t)=> [65, 68, 73].forEach((n, i)=> blip(d, n, t + i*.07, i == 2 ? .3 : .08, .055)),
-    go:       (d, t)=> { blip(d, 63, t, .1, .06); blip(d, 75, t + .13, .35, .06); },
-    ready:    (d, t)=> [70, 75].forEach((n, i)=> blip(d, n, t + i*.09, i ? .2 : .08, .05)),
-    // pedal power: a short climb up the chord
-    chain:    (d, t)=> [56, 63, 68, 72].forEach((n, i)=> blip(d, n, t + i*.06, i == 3 ? .3 : .08, .055)),
-    // the turbo: a motor winding up, and a little rise as it kicks in; a send the same, bigger
-    turbo:    (d, t)=> { note(d, 41, t, .45, .05, {to: 65, wave: .25, cut: 1200, vib: 25, release: .1}); [68, 75].forEach((n, i)=> blip(d, n, t + .45 + i*.07, i ? .3 : .08, .05)); },
-    send:     (d, t)=> { note(d, 41, t, .6, .055, {to: 72, wave: .25, cut: 1300, vib: 25, release: .1}); [68, 72, 75].forEach((n, i)=> blip(d, n, t + .6 + i*.07, i == 2 ? .35 : .08, .05)); },
-    tyre:     (d, t)=> { boing(d, t, .08); blip(d, 75, t + .07, .14, .035); },
-    // a crash: the wah, wah, wahhh of losing a life
-    crash:    (d, t)=> { note(d, 61, t + .2, .2, .035, {wave: .5, cut: 1100}); note(d, 60, t + .45, .2, .035, {wave: .5, cut: 1100}); note(d, 59, t + .7, .5, .035, {to: 53, wave: .5, cut: 1100, vib: 40, release: .15}); },
-    click:    (d, t)=> blip(d, 77, t, .03, .035)};
+    // a sprocket: a soft dry tick, a touch brighter along a run of them
+    orb:      (d, t, v)=> puff(d, t, .03, .09, 1500 + 60*(v % 8), 1100, 2.5, .003),
+    // a battery cell: one soft tone, a step higher with each of a set
+    cell:     (d, t, v)=> ping(d, [63, 65, 67, 68, 70, 72][v % 6], t, .22, .05),
+    // a jump: the tyres leaving the dirt, a short low swish
+    jump:     (d, t)=> puff(d, t, .13, .12, 350, 900, .9),
+    // a trick starting: a quick swish of air, a little higher or lower by the way it was swiped
+    whoosh:   (d, t, v)=> puff(d, t, .16, .065, 700 + 40*v, 1900 + 60*v, 1),
+    trick:    (d, t)=> ping(d, 68, t, .25, .05),
+    trickBig: (d, t)=> chord(d, t, [63, 70], .35, .055),
+    bank:     (d, t)=> chord(d, t, [56, 63, 68], .5, .05),
+    perfect:  (d, t)=> ping(d, 75, t, .18, .035),
+    line:     (d, t)=> chord(d, t, [61, 68], .4, .055),
+    go:       (d, t)=> chord(d, t, [56, 63], .45, .055),
+    ready:    (d, t)=> ping(d, 70, t, .3, .045),
+    // pedal power: a rush of air and a low tone
+    chain:    (d, t)=> { puff(d, t, .3, .05, 400, 1400, .8, .12); ping(d, 56, t + .1, .4, .05); },
+    // the turbo: the motor's rush winding up; a send the same, longer
+    turbo:    (d, t)=> puff(d, t, .6, .14, 250, 1800, .9, .35),
+    send:     (d, t)=> puff(d, t, .8, .15, 250, 2200, .9, .5),
+    tyre:     (d, t)=> puff(d, t, .15, .06, 300, 500, 1),
+    // a crash: a low breath of dust settling (the thump is its own sample)
+    crash:    (d, t)=> puff(d, t + .1, .7, .1, 500, 120, .7, .1),
+    click:    (d, t)=> puff(d, t, .02, .06, 1800, 1400, 2.5, .002)};
 function jingle(name, v=0, m=fx, t)
 {
     if (!m) return;

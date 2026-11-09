@@ -1239,6 +1239,28 @@ The rider is reworked after `art/bluecow-rider-concept.png`, at its level of det
   - **Loops:** the preview rides steadily with no skid or grind, so it doesn't show their change.
   - **No errors:** all 17 jingles, 9 thumps and a moo played in a headless page with no page errors; a 4 km sim ran clean.
 
+## No more arcade sound: swishes, ticks and soft tones: done (Three.js version)
+- **The problem.** Even softened, the pickups and tricks still sounded like an 80s arcade machine: they were still little tunes of pitched blips (arpeggios, fanfares, a wah-wah crash, a rising jump note).
+- **The arcade voice is gone** (`voice`, `blip`, `note`, `boing`, the pulse waves). In its place, two natural sounds:
+  - **`puff`:** a breath of noise through a band that slides (a swish, a tick, a rush of air);
+  - **`ping`:** a soft sine tone like a struck wooden bar, alone or as a chord struck at once (`chord`). No melodies, no arpeggios.
+- **What each is now:**
+
+  | Sound | Now |
+  |---|---|
+  | Sprocket | a dry tick of noise (30 ms), a touch brighter along a run |
+  | Battery cell | one soft tone, a step higher with each of a set |
+  | Jump | a short low swish, the tyres leaving the dirt |
+  | Trick starting | a quick swish of air |
+  | Trick landed, perfect landing, turbo ready | one soft tone |
+  | Big trick, combo banked, a line ridden, the start | a soft two- or three-note chord, struck once |
+  | Pedal power | a rush of air and a low tone |
+  | Turbo and send | the motor's rush winding up (0.6–0.8 s), no fanfare |
+  | Crash | a low breath of dust settling under the thump, no wah-wah |
+  | Menu click | a tiny tick |
+
+- **Checked:** every sound and a moo play with no page errors; a 4 km sim runs clean; previews rendered with `tools/listen.mjs`.
+
 ## Next: proposals
 - **More fun:**
   - pumping (hold on a downslope for speed);

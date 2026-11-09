@@ -5168,17 +5168,24 @@ function wideY(x)
 // biomes in zones down the mountain, a random order and length each run, blended over 160 m at each change.
 // Each lasts a minute or two of riding; the snowfields never come before about a minute and a half of it.
 const SNOW_FROM = 2080;
+// the first lap of countries (its first a tree-lined one, either of the two); night and falling snow wait till it is ridden
+const FIRST_LAP = ['forest', 'autumn', 'snow', 'desert'];
+const lapDone = x=> x >= zoneB[FIRST_LAP.length];
 let zoneB = [0], zoneSeq = ['snow'], MT = {};
 function biomeInit(s)
 {
     // its own random stream, so the trail itself is the same for a seed whatever the scenery does
     const r = mulberry(s*104729 + 77);
     zoneSeq = []; zoneB = [0];
+    // the first lap: a tree-lined trail (the pine forest or the alpine meadows), then the autumn woods, the snowfields
+    // and the red rock, in that order; after it any country but the one just ridden
+    const first = [r() < .5 ? 'forest' : 'alpine', ...FIRST_LAP.slice(1)];
     let prev = -1;
     for (let k = 0; k < 400; ++k)
     {
         let b;
-        do b = r()*BIOMES.length | 0; while (b == prev || BIOMES[b] == 'snow' && zoneB[k] < SNOW_FROM);
+        if (k < first.length) b = BIOMES.indexOf(first[k]);
+        else do b = r()*BIOMES.length | 0; while (b == prev || BIOMES[b] == 'snow' && zoneB[k] < SNOW_FROM);
         zoneSeq.push(BIOMES[b]); prev = b;
         zoneB.push(zoneB[k] + (k ? 1500 + r()*1100 : 1000 + r()*500));
     }
@@ -6344,6 +6351,8 @@ const extraFree = (x, room)=> !gapAt(x) && !feats.some(f=> x > f.x0 - room && x 
 function gentleBefore(x)
 {
     for (let k = 0; k < 35; ++k) if (groundSlope(x - k*2) - groundSlope(x - k*2 - 2) < -.07) return false;
+    // (nor a sharp flattening just before it: a hop begun on the steep part comes down short on the flatter ground)
+    for (let k = 0; k < 6; ++k) if (groundSlope(x - k*2) - groundSlope(x - k*2 - 20) > .2) return false;
     return true;
 }
 // a fork about here: anywhere along one (from a little before to a little after), or only at its ends, where the
@@ -6354,6 +6363,8 @@ const LINE_DESIGNS = ['dropin', 'stepdown', 'chute', 'rollers'];
 const LINE_W8 = {pro: [.55, .15, .2, .1], high: [.2, .4, .2, .2], low: [.15, .25, .4, .2]};
 // (and no fallen tree for this far past where the lines rejoin: a rider merging back at full speed gets a second to settle)
 const FORK_OUT = 55;
+// how far past where the fastest flight off a lip comes down a fallen tree can lie
+const TREE_AFTER_LAND = 40;
 function forkAt(x, ends)
 {
     const near = (x0, x1)=> ends ? x > x0 - 25 && x < x0 + FORK_END || x1 !== undefined && x > x1 - FORK_END && x < x1 + 25 : x > x0 - 25 && (x1 === undefined || x < x1 + 25);
@@ -6366,8 +6377,13 @@ function placeExtras(a, b)
     for (let x = max(a, nextCowX); x < b - 6; x += 5)
         if (x > 220 && [0, 15, 30, 45].every(d=> extraFree(x + d, 6)) && !forkAt(x, false) && !rocks.some(r=> r.x > x - 30 && r.x < x + 60)
             && !gaps.some(g=> g.x2 > x && g.x1 < x + COW_CLEAR)) { addCow(x); nextCowX = x + COW_EVERY*(.55 + rnd()*.95); break; }
+    // (and no fallen tree where a flight off a lip before it comes down, or soon after: a rider landing fast needs a
+    // moment to hop it)
+    const flights = [];
+    for (const f of feats) if (f.lipSlope !== undefined && !f.line && f.x1 > a - 400 && f.x1 < b) flights.push([f.x1, launchReach(f) + TREE_AFTER_LAND]);
     for (let x = max(a, nextTreeX); x < b - 6; x += 5)
         if ([0, 10, 20, 30, 40, 50, 60, 70].every(d=> extraFree(x - d, 10)) && gentleBefore(x) && !forkAt(x, true) && !splits.some(s=> x > s.x1 && x < s.x1 + FORK_OUT)
+            && !flights.some(([x1, land])=> x > x1 && x < land)
             && !cows.some(c=> c.x > x - 90 && c.x < x + 30))
         {
             rocks.push({type: 'tree', x, w: .5, h: .85 + rnd()*.3, y: groundY(x), rot: rnd() - .5});
@@ -7631,7 +7647,7 @@ let flow = 0, flowLevel = 0, flowShown = 0;
 let CHAIN_WINDOW = 2.6, HANG = .2;
 // handles for tuning (?dev): flip speed, landing forgiveness, how square a nailed landing is, the size of the surges
 // and the pump, the view's width and distance, and how often cows and fallen trees come up
-let FLIP_K = 1, LAND_K = 1, NAIL_ERR = .14, SURGE_K = 1, PUMP_K = 1, FOV_K = 1, CAMD_K = 1, COW_EVERY = 100, TREE_EVERY = 260;
+let FLIP_K = 1, LAND_K = 1, NAIL_ERR = .14, SURGE_K = 1, PUMP_K = 1, FOV_K = 1, CAMD_K = 1, COW_EVERY = 100, TREE_EVERY = 170;
 // and the camera's height round the rider (degrees more, or less, looking down than the view's own) and its pan (the
 // picture slid up or down, as a share of the screen's height)
 let CAM_TILT = 0, CAM_PAN = 0;
@@ -9254,9 +9270,10 @@ function drawTurboGlow()
 // ============================================================================
 // GAME - runs, the camera, the day passing, orbs, dust and spray
 // ============================================================================
-// a day lasts this long; a run starts in the morning and the sun stays up for at least its first minute
-let DAY_LEN = 210;
-const DAY_START = .05, DUSK = .55, NIGHT_AFTER = 60;
+// a day lasts this long; a run starts in the morning and it stays full day until the first lap of countries is ridden.
+// The dark part (from dusk to dawn) goes by in NIGHT_LEN seconds, so a night is short
+let DAY_LEN = 210, NIGHT_LEN = 20, dayFree = false;
+const DAY_START = .05, DAY_HOLD = .42, DARK0 = .6, DARK1 = .97;
 let camZ = 0, camB = 0, zap, splashFx, groundedWas = true, camX = 0, camY = 0, camD = 30, camShake = 0, airZoom = 0;
 let dust, sparks, snowFall, flare, best = {dist: 0, score: 0, combo: 0}, resultsT = 0, isBest = false;
 let dayT = .05, night = 0, skyColors = [], stars = [], hintT = 0, everJumped = false, everFlipped = false;
@@ -9683,11 +9700,11 @@ const DROP_VIEW = {yaw: [-.5, -.55], pitch: [.06, .05], lead: [.02, .02], up: [0
 const CRASH_VIEW = {yaw: [.5, .45], pitch: [.24, .22], lead: [0, 0], up: [0, 0], dist: [10, 8.5], follow: .3, fixed: 1};
 let dropCam = 0, dropDist = 15, camLift = 0, sendCam = 0, camLook = null;
 const CAM_ORDER = Object.keys(CAM_VIEWS), CAM_ZOOMS = [['NEAR', .78], ['MID', 1], ['FAR', 1.32]];
-// side on and far back in portrait, three quarter at mid zoom in landscape
-let camView = {p: 'SIDE', l: '3/4', zp: 2, zl: 1}, camP;
-try { Object.assign(camView, JSON.parse(localStorage.getItem('dhside.cam2')) || {}); } catch(e) {}
+// side on at mid zoom, in portrait and landscape (kept under a new name, so a view saved before starts afresh)
+let camView = {p: 'SIDE', l: 'SIDE', zp: 1, zl: 1}, camP;
+try { Object.assign(camView, JSON.parse(localStorage.getItem('dhside.cam3')) || {}); } catch(e) {}
 const camPortrait = ()=> mainCanvasSize.x < mainCanvasSize.y;
-function camSave() { try { localStorage.setItem('dhside.cam2', JSON.stringify(camView)); } catch(e) {} }
+function camSave() { try { localStorage.setItem('dhside.cam3', JSON.stringify(camView)); } catch(e) {} }
 function camNextView()
 {
     const k = camPortrait() ? 'p' : 'l';
@@ -9943,8 +9960,9 @@ const col3 = c=> new Color(c[0], c[1], c[2]);
 const SUN_DIR = new THREE.Vector3(-.3, 1, .5);
 function updateSky(dt)
 {
-    if (state == 'ride') dayT = (dayT + dt/DAY_LEN) % 1;
-    if (state == 'ride' && runTime < NIGHT_AFTER) dayT = min(dayT, DUSK);
+    if (state == 'ride') dayT = (dayT + dt*(dayT > DARK0 && dayT < DARK1 ? (DARK1 - DARK0)/NIGHT_LEN : 1/DAY_LEN)) % 1;
+    // (a time of day set by hand in ?dev or a test stays as set)
+    if (state == 'ride' && !dayFree && !lapDone(px)) dayT = min(dayT, DAY_HOLD);
     let k = 0;
     while (k < DAY.length - 2 && DAY[k + 1][0] <= dayT) ++k;
     const a = DAY[k], b = DAY[k + 1], t = sstep((dayT - a[0])/(b[0] - a[0]));
@@ -10104,8 +10122,9 @@ function updateEffects(dt)
     setV(splashFx.rotation3D, 0, head, .3);
     setW3(zap.pos3D, px - .7*RS*cos(ang), (grounded ? baseY + bermY : py) + .45, pz);
     setV(zap.rotation3D, 0, head, PI*.5 + ang);
-    // snow falls in snow country, and lightly in the alpine at night
-    snowFall.emitRate = 70*bw.snow + (runTime > 90 ? 25*bw.alpine*night : 0);
+    // snow falls in snow country, and lightly in the alpine at night, once the first lap is ridden (the first time
+    // through, the snowfields are under a clear sky)
+    snowFall.emitRate = lapDone(px) ? 70*bw.snow + 25*bw.alpine*night : 0;
     setW3(snowFall.pos3D, camX + 6, camY + 22, camZ);
 }
 // the dust's colours, on dirt and on snow: start pair, end pair (faded out)
@@ -11999,7 +12018,7 @@ window.__mtb = {
     wreck: ()=> ({rag: {...rag}, crashT, crashCam, pts: ragdoll?.pts.map(p=> ({x: p.x, y: p.y, z: p.z, vx: p.vx, vy: p.vy, g: terrainAt(p.x, p.z)})), pieces: pieces.map(p=> ({key: p.key, x: p.x, y: p.y, z: p.z, g: terrainAt(p.x, p.z)}))}),
     ground: x=> rideY(x), state: ()=> ({px, py, vx, vy, airT, grounded, run: state}),
     teleport: x=> { trackEnsure(x + TRACK_AHEAD); placeRider(x); state = 'ride'; sp = 16; },
-    setDay: t=> dayT = t,
+    setDay: t=> { dayT = t; dayFree = true; },
     feats: ()=> feats.map(f=> ({type: f.type, x0: f.x0, x1: f.x1, x2: f.x2, carved: f.carved, apexes: f.apexes?.length, line: f.line?.kind, mega: f.mega})),
     newRun: s=> newRun(s),
     camTune: (view, o)=> Object.assign(CAM_VIEWS[view], o),
@@ -12064,7 +12083,8 @@ const DEV_KNOBS = [
     ['Camera height (°, up looks down more)', -15, 45, 1, ()=> CAM_TILT, v=> CAM_TILT = v],
     ['Camera pan (up/down)', -.3, .3, .01, ()=> CAM_PAN, v=> CAM_PAN = v],
     ['Day length (s)', 30, 600, 10, ()=> DAY_LEN, v=> DAY_LEN = v],
-    ['Time of day', 0, .99, .01, ()=> dayT, v=> dayT = v, true]];
+    ['Night length (s)', 5, 120, 5, ()=> NIGHT_LEN, v=> NIGHT_LEN = v],
+    ['Time of day', 0, .99, .01, ()=> dayT, v=> { dayT = v; dayFree = true; }, true]];
 const DEV_DEFAULTS = {};
 // a knob's value, a slider's or a switch's
 const knobGet = k=> k[1] == 'check' ? +k[2]() : k[4](), knobSet = (k, v)=> k[1] == 'check' ? k[3](v) : k[5](v);

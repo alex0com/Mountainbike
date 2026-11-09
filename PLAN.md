@@ -1157,6 +1157,36 @@ The rider is reworked after `art/bluecow-rider-concept.png`, at its level of det
   - **NEXT SET:** steps from one set to the next.
   - **Screenshots** (SIDE): the skinny line, kinked rail, long bridge, creek jump, rock cluster, tabletop and whoops.
 
+## The first lap of trails, a short night, and SIDE at MID to start: done (Three.js version)
+- **The first lap** (`FIRST_LAP`, `biomeInit`):
+  - every run starts on a tree-lined trail, the Pine Forest or the Alpine Meadows (a coin flip per seed);
+  - then always the Autumn Woods, the Snowfields and the Red Rock, in that order;
+  - after that, any country but the one just ridden, as before.
+
+  The scenery has its own random stream, so the trail and its features are the same for a seed as before. Only the country changes, and with it the snow's extra rolling resistance. The lap is about 6.5–8.5 km (`lapDone(x)`: past the start of the fifth country).
+- **Nothing dark or stormy on the first lap:**
+  - **Daylight:** it stays full day (`DAY_HOLD`, .42) until the lap is ridden. This replaces "no dusk in the first minute" (`NIGHT_AFTER`).
+  - **Clear sky:** the Snowfields have no falling snow, and the alpine night snow waits for the lap too. Falling snow is the game's only weather.
+  - **Set by hand:** a time of day set in `?dev` or by a test (`setDay`) is left as set (`dayFree`).
+- **A short night:**
+  - dusk to dawn (`DARK0`–`DARK1` of the day) now passes in `NIGHT_LEN` seconds, 20 by default, with about 12 s properly dark (was about 70 s);
+  - the rest of the day runs at the old pace (`DAY_LEN` 210 s), so after the lap there's a night about every 2½ minutes;
+  - `?dev` has a "Night length (s)" slider (5–120).
+- **The camera starts SIDE at MID** in portrait and landscape (was SIDE at FAR in portrait, 3/4 at MID in landscape). Views are now saved under `dhside.cam3`, so a view saved before starts afresh once; a change after that is remembered as before.
+- **Checked:**
+  - **Trail order** (8 seeds): a tree trail, Autumn, Snow, Desert every time; the lap ends at 6.6–8.5 km.
+  - **A 10-minute ride** (seed 1):
+    - full day and no falling snow on the Snowfields through the lap (0–6.6 km, about 4 minutes);
+    - then a sunset, about 12 s of night, and day again;
+    - nights at about 270, 420 and 575 s;
+    - snow falling in the Snowfields after the lap.
+  - **Camera:** a fresh start in portrait and landscape, and one with an old saved view, all start SIDE at MID.
+- **Fallen trees placed fairer** (found on longer 8 km sims; the same crashes were on main):
+  - **Not in a landing zone:** no tree between a lip on the main trail and 40 m past where its fastest flight comes down (`TREE_AFTER_LAND`). On seed 13 a rider landing off a canyon came down a second before one.
+  - **Not after a sharp flattening:** no tree just after the trail flattens sharply (more than 0.2 of grade over 20 m, within 30 m before it; `gentleBefore`). A hop begun on the steep part comes down short on the flatter ground: the autopilot hopped 16 m before one and landed 1.6 m short of it.
+  - **Spacing:** to keep them coming, tried every 170 m (was 260). They now come about 9 per 10 km (was 13.5), the rest of the trail being taken by features and their flights.
+- **Sims** (8 km each, through the first lap and past it): 145.5 km over 18 seeds with 0 crashes (flips and tricks 48.4 km, turbo 32.4, high lines 32.4, low lines 32.3).
+
 ## Next: proposals
 - **More fun:**
   - pumping (hold on a downslope for speed);

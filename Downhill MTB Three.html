@@ -4402,7 +4402,9 @@ const frameRate = 60;
 let time = 0, frame = 0, timeDelta = 1/frameRate, paused = false, averageFPS = 0;
 window.setPaused = p=> { paused = !!p; };
 THREE.ColorManagement.enabled = false;
-const renderer = new THREE.WebGLRenderer({antialias: true, powerPreference: 'high-performance'});
+// (not smoothed itself: the scene is drawn into a smoothed target and copied to the screen, see the ink; smoothing the
+// screen's own buffer as well would be the same work twice)
+const renderer = new THREE.WebGLRenderer({antialias: false, powerPreference: 'high-performance'});
 renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
 renderer.toneMapping = THREE.NoToneMapping;
 renderer.shadowMap.enabled = true;
@@ -4419,12 +4421,12 @@ function fitCanvases()
     const w = max(1, innerWidth), h = max(1, innerHeight), hud = min(window.devicePixelRatio || 1, 2), key = w + 'x' + h + '@' + pixelRatio;
     mainCanvasSize.set(w, h);
     if (key == sizeKey) return;
-    sizeKey = key;
+    sizeKey = key; pauseDrawn = false;
     renderer.setPixelRatio(pixelRatio);
     renderer.setSize(w, h, false);
     mainCanvas.width = round(w*hud); mainCanvas.height = round(h*hud);
     camera.aspect = w/h;
-    if (ink) ink.size(w*pixelRatio, h*pixelRatio);
+    if (ink) { ink.setSamples(inkSamples()); ink.size(w*pixelRatio, h*pixelRatio); }
 }
 
 // ---------- the scene, the camera, the sky and the light. The camera the game moves is plain numbers: where it is,
@@ -4456,7 +4458,8 @@ const sky = new THREE.Mesh(new THREE.SphereGeometry(5000, 32, 16), new THREE.Sha
     vertexShader: 'varying vec3 d; void main() { d = position; gl_Position = projectionMatrix*modelViewMatrix*vec4(position, 1.); gl_Position.z = gl_Position.w*.99999; }',
     fragmentShader: 'uniform vec3 top, hor, bot; varying vec3 d; void main() { float y = normalize(d).y; gl_FragColor = vec4(mix(hor, y < 0. ? bot : top, abs(y)), 1.); }',
     side: THREE.BackSide, depthWrite: false, fog: false}));
-sky.renderOrder = -1; sky.frustumCulled = false;
+// (drawn after everything solid, at the far plane: where the ground covers it, it is never drawn at all)
+sky.renderOrder = 1000; sky.frustumCulled = false;
 scene.add(sky);
 const setSky = (top, hor, bot)=> { top.three(sky.material.uniforms.top.value); hor.three(sky.material.uniforms.hor.value); bot.three(sky.material.uniforms.bot.value); };
 
@@ -4526,11 +4529,13 @@ function matFor(color=WHITE, o={})
 
 // the ink: dark lines where the depth of the scene jumps or folds, fading out into the distance, and the colours a
 // touch richer. The scene is drawn into a target with its depth, then onto the screen through this pass
-const INK_FRAGMENT = `uniform sampler2D tColor, tDepth; uniform vec2 res; uniform float near, far; varying vec2 vUv;
+const INK_FRAGMENT = `uniform sampler2D tColor, tDepth; uniform vec2 res; uniform float near, far, celK; varying vec2 vUv;
 float depthAt(vec2 uv) { float z = texture2D(tDepth, uv).x*2. - 1.; return 2.*near*far/(far + near - z*(far - near)); }
 void main()
 {
     vec4 c = texture2D(tColor, vUv);
+    // (the smooth look: the picture as drawn)
+    if (celK <= 0.) { gl_FragColor = vec4(c.rgb, 1.); return; }
     vec2 o = 1./res;
     float d = depthAt(vUv);
     float dx = abs(depthAt(vUv + vec2(o.x, 0)) + depthAt(vUv - vec2(o.x, 0)) - 2.*d);
@@ -4545,19 +4550,25 @@ function makeInk(samples=4)
 {
     const target = new THREE.WebGLRenderTarget(1, 1, {depthTexture: new THREE.DepthTexture(1, 1), samples});
     const mat = new THREE.ShaderMaterial({
-        uniforms: {tColor: {value: target.texture}, tDepth: {value: target.depthTexture}, res: {value: new THREE.Vector2(1, 1)}, near: {value: .3}, far: {value: 6000}},
+        uniforms: {tColor: {value: target.texture}, tDepth: {value: target.depthTexture}, res: {value: new THREE.Vector2(1, 1)}, near: {value: .3}, far: {value: 6000}, celK: CEL},
         vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0., 1.); }',
         fragmentShader: INK_FRAGMENT, depthTest: false, depthWrite: false});
     const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat), quadScene = new THREE.Scene();
     quad.frustumCulled = false; quadScene.add(quad);
     return {samples, target, mat, quadScene, quadCam: new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1),
-        size(w, h) { target.setSize(max(1, round(w)), max(1, round(h))); mat.uniforms.res.value.set(max(1, round(w)), max(1, round(h))); }};
+        size(w, h) { target.setSize(max(1, round(w)), max(1, round(h))); mat.uniforms.res.value.set(max(1, round(w)), max(1, round(h))); },
+        // how many samples smooth each pixel: the target is made again the next time it is drawn into
+        setSamples(n) { if (n == this.samples) return; this.samples = target.samples = n; target.dispose(); }};
 }
+// both looks are drawn through the target (the smooth one copied to the screen as it is), so the smoothing is done
+// once, there. Four samples a pixel; on a phone two once the pixels are small (they show no difference there, and
+// it is half the memory to move), and none at the bottom of the quality ladder
+const inkSamples = ()=> quality < 3 ? 0 : PHONE && pixelRatio >= 1.75 ? 2 : 4;
 function setCel(on, keep=true)
 {
     celOn = on; CEL.value = on ? 1 : 0;
     if (keep) try { localStorage.setItem('bcr.cel', on ? '1' : '0'); } catch(e) {}
-    if (on && !ink) { ink = makeInk(QUALITY_START >= 3 ? 4 : 0); sizeKey = ''; }
+    if (!ink) { ink = makeInk(inkSamples()); sizeKey = ''; }
 }
 const PHONE = /iPhone|iPad|Android/i.test(navigator.userAgent) || navigator.maxTouchPoints > 1 && /Mac/.test(navigator.platform || '');
 
@@ -6333,7 +6344,20 @@ function lineFeatures(b, lane, kind, sc, design)
         paces.push({x0: X(p0), x1: X(lip) + .2, v, hold: true, up: true});
         what = 'CHUTE + GAP';
     }
+    const k2 = k;
     if (!recover()) return null;
+    // the long way back to the trail after it is not left plain: a run of gentle rollers along it, to pump or hop
+    // (no lips, nothing to land: they only shape the ground), clear of the feature's landing and of the turn back
+    if (design != 'rollers')
+    {
+        const a = k2 + round(18/DX), b = kb - round(26/DX);
+        if ((b - a)*DX > 44)
+        {
+            const L = 7.5 + rnd()*3, n = min(6, floor((b - a)*DX/L)), A = (.035 + rnd()*.02)*L, e = a + round(n*L/DX);
+            for (let j = a; j < e; ++j) add[j] += A*(1 - cos(TAU*(j - a)*DX/L))/2;
+            feats.push({type: 'whoops', x0: X(a), x1: X(e), n, airs: 0});
+        }
+    }
     return {off, add, gap, feats, paces, brakes, what};
 }
 
@@ -7986,10 +8010,10 @@ function land(gy)
     // nailed: square to the slope, along it, and not too hard: all the speed kept, and a surge for it, the bigger
     // the longer the chain behind it; clean keeps most of it; sketchy loses some and breaks the chain
     nailed = !hard && airT > .45 && abs(err) < NAIL_ERR && miss < .5;
-    if (hard) { showMessage('HARD LANDING', '', hsl(.07,.9,.6)); ++hardLandings; addFlow(-.1); }
+    if (hard) { showMessage('HARD LANDING', '', hsl(.07,.9,.6)); ++hardLandings; addFlow(-.1); buzz(30); }
     else if (nailed)
     {
-        ++landsNailed; addFlow(.12);
+        ++landsNailed; addFlow(.12); buzz(10);
         surge(1.4 + .22*min(chain, 8));
         punchV -= .9 + .12*min(chain, 8);
         dustBurst(px, py, 40);
@@ -8019,6 +8043,8 @@ function finishTrick()
     const p = styleT/style.dur;
     // a short hop that came down before the trick got going just drops it
     if (p < .4 && airT < .4) { style = undefined; trickQueued = null; return true; }
+    // and one only just thrown, a flick too late before the ground: the rider lets go of it, with nothing lost
+    if (p < .25) { style = undefined; trickQueued = null; return true; }
     if (p < .4) { crash(style.fail || 'FEET OFF THE PEDALS', {kind: 'twist'}); return false; }
     if (p >= .8) stylesDone.push(style);
     else { showMessage('SKETCHY!', 'finish the trick before landing', hsl(.08,.9,.6)); sfx('landHard'); ++sketchy; addFlow(-.25); }
@@ -8261,6 +8287,7 @@ function gainSprockets(n, total)
 function shieldSave(reason)
 {
     const grace = shieldGraceT > 0;
+    buzz([30, 40, 30]);
     recoverRide();
     flow = flowTarget = surgeA = 0; flowLevel = 0; chain = chainT = 0;
     combo = comboPts = 0; comboNames = []; comboKeys = [];
@@ -8299,6 +8326,7 @@ function crash(reason, hit={})
     if (state != 'ride') return;
     if (GOD) { godSave(reason); return; }
     if (carried >= SHIELD_AT || shieldGraceT > 0) { shieldSave(reason); return; }
+    buzz([50, 50, 80]);
     state = 'crash'; crashT = 0; crashReason = reason;
     flow = flowTarget = surgeA = 0; flowLevel = 0; chain = chainT = 0; wallGroup = wallSeg = null;
     window.__lastCrash = {reason, px: +px.toFixed(1), ride: ride ? ride.lane : 0, z: +riderZ().toFixed(1), turbo: +turboT.toFixed(2), tk: takeoffKind, tkx: +takeoffX.toFixed(1), rot: +(rot*57).toFixed(0), ang: +(ang*57).toFixed(0), slope: +(atan(rideSlope(px))*57).toFixed(0), airT: +airT.toFixed(2), sp: +sp.toFixed(1), vx: +vx.toFixed(1), vy: +vy.toFixed(1), style: style?.name, styleT: +styleT.toFixed(2), flightT: window.__flightT, grounded, frame};
@@ -9379,7 +9407,12 @@ function warmRender()
     const off = [];
     scene.traverse(o=> { if (o.frustumCulled && (o.isMesh || o.isPoints)) { o.frustumCulled = false; off.push(o); } });
     WARMING = true;
-    try { drawFrame(); drawFrame(); }
+    try
+    {
+        drawFrame(); drawFrame();
+        // (and once with the headlamp the other way, lit or not, for the shaders of night and of day)
+        headlampLight.visible = !headlampLight.visible; drawFrame(); headlampLight.visible = !headlampLight.visible; drawFrame();
+    }
     finally { WARMING = false; for (const o of off) o.frustumCulled = true; }
 }
 // the card while it is made ready
@@ -9798,7 +9831,10 @@ function gameUpdatePost()
     // (and up a wall ride and off its summit: framed on the rider, high above the trail)
     sendR = ramp(sendR, state == 'ride' && (superFlight || !!wallGroup), 1.2, 1.2, dt); sendCam = sstep(sendR);
     airR = ramp(airR, state == 'ride' && !grounded && !grinding && airT > .4, 1.4, 1.6, dt); airZoom = sstep(airR);
-    const hs = (portrait ? 12 : 30) + speed*(portrait ? .28 : .36) + airZoom*5 + sendCam*(portrait ? 3 : 8);
+    // (flat out it opens further still, and lets the rider sit nearer the edge behind: more of the trail ahead in
+    // view, for the time to see what is coming)
+    const fastK = state == 'ride' ? clamp01((speed - 22)/9) : 0;
+    const hs = (portrait ? 12 : 30) + speed*(portrait ? .28 : .36) + fastK*(portrait ? 4.5 : 6) + airZoom*5 + sendCam*(portrait ? 3 : 8);
     const hf = 2*atan(tan(vfov/2)*aspect), fit = hs/(2*tan(hf/2));
     // a fixed view is set back by its own distance, the others far enough to fit the trail across the screen;
     // eased between the two through a change of view
@@ -9817,8 +9853,8 @@ function gameUpdatePost()
     for (let i = 0; i < 6; ++i)
     {
         const dz = rz0 - wz(fx + ahead0, camZ), depth = max(2, D - (ahead0*sa + dz*ca)*ce), r = abs(-ahead0*ca + dz*sa)/(depth*th);
-        if (r <= .6) break;
-        ahead0 *= max(.5, .6/r);
+        if (r <= .6 + .12*fastK) break;
+        ahead0 *= max(.5, (.6 + .12*fastK)/r);
     }
     camAhead = spring(camAhead, ahead0, CS.ahead, 2.2, dt);
     const tx = fx + camAhead;
@@ -9918,6 +9954,9 @@ function gameUpdatePost()
     cam.lookAt(look);
     camLook = look;
     SHADOW.center = state == 'title' ? vec3(LOGO_X, groundY(LOGO_X), wz(LOGO_X, 0)) : vec3(fx + 6, fy, wz(fx, camZ - 3));
+    // (on a phone, side on, the shadows reach only as far as the view does: the same map over less ground, and fewer
+    // trees drawn into it)
+    SHADOW.range = PHONE && state != 'title' && camViewName() == 'SIDE' ? 45*CAM_ZOOMS[camView[portrait ? 'zp' : 'zl']][1] : 55;
     updateChunks(camX, false, Cw.lead > .6 ? 140 : 0);
     updateRings(cam.pos, camY, camX);
     updateSky(dt);
@@ -9985,6 +10024,9 @@ function updateSky(dt)
     new Color(top[0]*.5 + .07, top[1]*.5 + .07, top[2]*.5 + .1).three(hemi.color);
     new Color(bot[0]*.5 + .04, bot[1]*.5 + .04, bot[2]*.5 + .05).three(hemi.groundColor);
     if (flare) flare.intensity = .7*(1 - night)*clamp01(height*4);
+    // (by day it is not there at all, so no pixel works out a light of no brightness; the shaders for both, with it
+    // and without, are made while the run is made ready, so dusk brings no new ones)
+    headlampLight.visible = night > .005;
     headlampLight.intensity = night*1.6*PI;
     const hx = cos(ang)*1.2, lamp = W3(px + hx, (grounded ? baseY : py) + 1.3, pz + 1.2);
     headlampLight.position.set(lamp.x, lamp.y, lamp.z);
@@ -10379,8 +10421,40 @@ function readInput(dt)
     if (secondHeld) secondT += dt;
 }
 
+// ---------- a pause: the ride held still when the game is hidden (a call, a notification, another tab) or the
+// pause button or P is pressed, with a tap to carry on and a short count back in so the rider is not dropped straight
+// into a jump. Not in a match (the rival rides on), and not while a test holds the clock
+// (pausedT: under 0 riding, 0 held waiting for a tap, over 0 counting back in)
+const PAUSE_COUNT = 1.5;
+let pausedT = -1, pauseDrawn = false;
+function pauseGame()
+{
+    if (pausedT >= 0 || state != 'ride' || paused || loadJob || inMatch()) return;
+    pausedT = 0; pauseDrawn = false;
+    mainP = secondP = swipeP = null; mainHeld = secondHeld = brakeHeld = false; ptStart.clear(); swipeDone.clear(); holds.clear();
+    try { audioContext?.suspend?.(); } catch(e) {}
+}
+function resumeGame()
+{
+    if (pausedT != 0) return;
+    pausedT = PAUSE_COUNT;
+    try { audioContext?.resume?.(); } catch(e) {}
+}
+function drawPause(W, H)
+{
+    ctx.fillStyle = 'rgba(8,12,22,.5)'; ctx.fillRect(0, 0, W, H);
+    if (pausedT > 0) { txt('' + ceil(pausedT/PAUSE_COUNT*3), W/2, H*.42, 84, '#ffd23a', 'center', 900); return; }
+    txt('PAUSED', W/2, H*.4, fitSize('PAUSED', 44, W - 40), '#fff', 'center', 900);
+    txt('tap to carry on', W/2, H*.4 + 44, 17, 'rgba(255,255,255,' + (.7 + .3*sin(performance.now()/260)) + ')', 'center', 800);
+}
+document.addEventListener('visibilitychange', ()=> { if (document.hidden) pauseGame(); });
+// ---------- a buzz in the hand, where the phone can (Android; an iPhone has no way to): a pattern in milliseconds
+function buzz(pattern) { try { navigator.vibrate?.(pattern); } catch(e) {} }
+
 function tapScreen(key=false)
 {
+    // held: a tap carries on (and none does anything during the count back in)
+    if (pausedT >= 0) { resumeGame(); return true; }
     // on the menu a tap on the scene runs the rider into the logo again (a key starts the ride)
     if (state == 'title') { if (key) startRide(); else if (menu == 'main') titleReplay(); return true; }
     // a crash takes two taps to leave, so none is lost by accident: the first shows the score card, the next rides again
@@ -10391,6 +10465,7 @@ addEventListener('pointerdown', e=>
 {
     audioUnlock();
     if (loadJob) return;
+    if (pausedT >= 0) { resumeGame(); return; }
     for (const b of buttons)
         if (e.clientX >= b.x && e.clientX <= b.x + b.w && e.clientY >= b.y && e.clientY <= b.y + b.h)
         {
@@ -10473,6 +10548,8 @@ addEventListener('keydown', e=>
     keys[e.code] = true;
     audioUnlock();
     if (loadJob) return;
+    if (e.code == 'KeyP' || e.code == 'Escape' && state == 'ride') { pausedT < 0 ? pauseGame() : resumeGame(); return; }
+    if (pausedT >= 0) { resumeGame(); return; }
     if (e.code == 'KeyT' || e.code == 'KeyE') fireTurbo();
     else if (e.code in SWIPE_KEYS) keySwipe(SWIPE_KEYS[e.code]);
     else if (MAIN_KEYS.includes(e.code) || e.code == 'Enter') { if (!tapScreen(true)) pressMain(); }
@@ -10492,7 +10569,7 @@ addEventListener('keyup', e=>
     else if (SECOND_KEYS.includes(e.code)) releaseSecond();
     else if (BRAKE_KEYS.includes(e.code)) brakeHeld = false;
 });
-addEventListener('blur', ()=> { mainP = secondP = swipeP = null; mainHeld = secondHeld = brakeHeld = false; ptStart.clear(); swipeDone.clear(); holds.clear(); });
+addEventListener('blur', ()=> { pauseGame(); mainP = secondP = swipeP = null; mainHeld = secondHeld = brakeHeld = false; ptStart.clear(); swipeDone.clear(); holds.clear(); });
 
 function showMessage(title, sub, color)
 {
@@ -10515,8 +10592,11 @@ function updateMessages(dt)
 // ---------- drawing on the 2D canvas in css pixels
 const FONT = 'system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif';
 let ctx;
+// (sizes in whole pixels: a size never used before makes the browser build a new font, and text that pops or is fitted
+// to a width would otherwise ask for a new one every frame)
 function txt(s, x, y, size, color='#fff', align='center', weight=800)
 {
+    size = max(1, round(size));
     ctx.font = weight + ' ' + size + 'px ' + FONT;
     ctx.textAlign = align; ctx.textBaseline = 'middle';
     ctx.lineJoin = 'round';
@@ -10528,9 +10608,10 @@ function txt(s, x, y, size, color='#fff', align='center', weight=800)
 }
 function fitSize(s, size, maxW, weight=900)
 {
+    size = max(1, round(size));
     ctx.font = weight + ' ' + size + 'px ' + FONT;
     const w = ctx.measureText(s).width;
-    return w > maxW ? size*maxW/w : size;
+    return w > maxW ? max(1, floor(size*maxW/w)) : size;
 }
 function rrect(x, y, w, h, r, fill, stroke)
 {
@@ -10604,6 +10685,8 @@ function drawHUD()
     const bw = 58, bh = 38;
     button(W - 12 - bw, top, bw, bh, soundOn ? 'SND' : 'MUTE', toggleSound, !soundOn);
     camButtons(W, top, bw, bh);
+    if (state == 'ride' && !inMatch() && pausedT < 0) button(W - 12 - bw, top + bh + 7, bw, 30, 'II', pauseGame, false, 13);
+    if (state == 'ride' && pausedT < 0) drawHazard(W, H, top, bottom);
 
     // the combo in progress, with the time left to keep it going. On a tall screen the rider is in the middle, so
     // all the scoring goes smaller into the band below, clear of the buttons at the sides. On a wide one everything
@@ -10715,9 +10798,9 @@ function drawTicker(W, bottom)
     ctx.font = '800 14px ' + FONT;
     let w = 0;
     for (let i = 0; i < TICK.length; i += 3) w += ctx.measureText(TICK[i]).width + (i ? ctx.measureText(TICK_SEP).width : 0);
-    const size = max(10, 14*min(1, maxW/w));
+    const size = max(10, floor(14*min(1, maxW/w)));
     ctx.font = '800 ' + size + 'px ' + FONT;
-    let x = W/2 - min(w*size/14, maxW)/2;
+    let x = W/2 - w*size/14/2;
     for (let i = 0; i < TICK.length; i += 3)
     {
         if (i) { txt(TICK_SEP, x, y, size, 'rgba(255,255,255,.5)', 'left', 800); x += ctx.measureText(TICK_SEP).width; }
@@ -11492,7 +11575,7 @@ function gameInit()
 {
     setSky(hsl(.6,.55,.42), hsl(.57,.35,.8), hsl(.3,.2,.4));
     SHADOW.size = quality >= 3 ? 2048 : quality >= 1 ? 1024 : 512;
-    if (celOn) setCel(true, false);
+    setCel(celOn, false);
     buildRiderMeshes();
     buildSceneMeshes();
     loadLogo();
@@ -11919,6 +12002,34 @@ function project(p)
     return {x: (v.x + 1)/2*mainCanvasSize.x, y: (1 - v.y)/2*mainCanvasSize.y};
 }
 const fmtT = t=> '0:' + String(max(0, ceil(t))).padStart(2, '0');
+// ---------- what is coming that cannot be seen yet: a rock, a fallen tree, a cow or a chasm's lip on the rider's way,
+// near enough to need a jump soon but still off the screen ahead, marked at the screen's edge where the trail leaves
+// it. Gone the moment the thing itself is in view; nothing when the way is clear
+const HAZARD_T = 1.3;
+function drawHazard(W, H, top, bottom)
+{
+    if (!grounded && !grinding && airT > .3) return;
+    const reach = max(12, sp*HAZARD_T), branch = onBranch(px);
+    let hx = 1e9, hz = 0;
+    const see = (x, z)=> { if (x > px + 4 && x < px + reach && x < hx) { hx = x; hz = z; } };
+    if (!branch)
+    {
+        for (const r of rocks) if (!r.smashed && !r.cleared) see(r.x, 0);
+        for (const c of cows) if (cowOnTrail(c)) see(c.x, c.z);
+    }
+    for (const g of gaps) if (onLine(g, g.x1 - 1)) see(g.x1 - 1, riderZ());
+    if (hx > 1e8) return;
+    const p = project(vec3(hx, rideY(hx) + .6, wz(hx, hz)));
+    if (p && p.x < W - 6) return;
+    // (where the trail leaves the screen: the height of the thing itself if it can be worked out, else the rider's)
+    const y = clampV(p ? p.y : H/2, top + 130, bottom - 130), x = W - 20, a = .65 + .35*sin(time*14), s = 13;
+    ctx.globalAlpha = a;
+    ctx.beginPath(); ctx.moveTo(x - s, y - s); ctx.lineTo(x + s*.7, y); ctx.lineTo(x - s, y + s); ctx.closePath();
+    ctx.fillStyle = '#ffb020'; ctx.fill();
+    ctx.lineWidth = 2.5; ctx.strokeStyle = 'rgba(10,14,24,.7)'; ctx.stroke();
+    ctx.globalAlpha = 1;
+    txt('!', x - s*.45, y + 1, 15, '#1a1206', 'center', 900);
+}
 function drawMatch(W, H, top, bottom)
 {
     // a room open, waiting: its code and a share button
@@ -12236,15 +12347,11 @@ function drawFrame()
     if (sc.right != r) { sc.left = sc.bottom = -r; sc.right = sc.top = r; sc.near = 1; sc.far = 400; sc.updateProjectionMatrix(); }
     sunLight.castShadow = SHADOW.on;
     setShadowMapSize(SHADOW.size);
-    if (celOn && ink)
-    {
-        renderer.setRenderTarget(ink.target);
-        renderer.render(scene, camera);
-        renderer.setRenderTarget(null);
-        ink.mat.uniforms.near.value = camera.near; ink.mat.uniforms.far.value = camera.far;
-        renderer.render(ink.quadScene, ink.quadCam);
-    }
-    else renderer.render(scene, camera);
+    renderer.setRenderTarget(ink.target);
+    renderer.render(scene, camera);
+    renderer.setRenderTarget(null);
+    ink.mat.uniforms.near.value = camera.near; ink.mat.uniforms.far.value = camera.far;
+    renderer.render(ink.quadScene, ink.quadCam);
 }
 // the sun's flare: a glow where it is and a few rings along the line through the middle of the screen
 function drawFlare(W, H)
@@ -12300,7 +12407,9 @@ function runFrame(dt)
             return;
         }
     }
-    if (!paused)
+    if (pausedT > 0 && (pausedT -= dt) <= 0) { pausedT = -1; qualityReset(1.5); }
+    if (pausedT >= 0 && state != 'ride') pausedT = -1;
+    if (!paused && pausedT < 0)
     {
         timeDelta = dt*slowMoK(dt); time += timeDelta; ++frame;
         UPDATE();
@@ -12310,12 +12419,15 @@ function runFrame(dt)
         if (PERF) PERF.upd += performance.now() - te;
         UPDATE_POST();
     }
+    // (held waiting for a tap: the picture as it stands stays up, and nothing more is drawn, to rest the phone)
+    if (pausedT == 0 && pauseDrawn) return;
     drawFrame();
     const hud = mainCanvas.width/max(1, mainCanvasSize.x);
     mainContext.setTransform(hud, 0, 0, hud, 0, 0);
     mainContext.clearRect(0, 0, mainCanvasSize.x, mainCanvasSize.y);
     drawFlare(mainCanvasSize.x, mainCanvasSize.y);
     PERF ? perfRenderPost() : gameRenderPost();
+    if (pausedT >= 0) { ctx = mainContext; drawPause(mainCanvasSize.x, mainCanvasSize.y); pauseDrawn = pausedT == 0; }
 }
 fitCanvases();
 if (DEV) devPanel();

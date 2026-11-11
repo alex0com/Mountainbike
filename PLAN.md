@@ -1261,6 +1261,45 @@ The rider is reworked after `art/bluecow-rider-concept.png`, at its level of det
 
 - **Checked:** every sound and a moo play with no page errors; a 4 km sim runs clean; previews rendered with `tools/listen.mjs`.
 
+## Optimization pass: mobile speed and gameplay: done (Three.js version)
+- **What was measured first.** Game logic and HUD take about 1.1 ms a frame and stay flat out to 60 km, so on phones the cost is per-pixel GPU work plus occasional hitches. A frame is 56–71 draw calls and 80–160k triangles, the shadow pass 37% of the triangles.
+- **Speed, with the picture unchanged** (day, night with the headlamp, the smooth look and an autumn spot are pixel-identical before and after):
+  - **Smoothed once, not twice:** the WebGL context is made without anti-aliasing. Both looks are drawn through the ink target, which is smoothed; the smooth look is copied to the screen as it is (`celK` in the ink pass).
+  - **No headlamp by day:** `headlampLight.visible` is off until night, so no pixel works out a light of zero brightness. The shaders for both are made in the loading warm-up (`warmRender`); the count didn't change through a forced dusk.
+  - **Sky drawn last** (`renderOrder` 1000), so the part behind the ground is never drawn.
+  - **HUD text in whole pixels** (`txt`, `fitSize`): text that pops or is fitted to a width asked the browser for a new font nearly every frame. This was the biggest source of hitches.
+- **Speed, small trade-offs on phones only** (`PHONE`):
+  - **Smoothing:** 2 samples a pixel once the pixel ratio is 1.75 or more (`inkSamples`), 4 below.
+  - **Shadow reach in SIDE:** 45 m × the zoom (was 55 m).
+- **Gameplay:**
+  - **Pause** (`pauseGame`, `resumeGame`): automatic when the page is hidden or loses focus; a small II button under SND; P and Escape. A tap carries on after a 3-2-1 (1.5 s). The scene isn't redrawn while held. Not in a match.
+  - **Vibration** (`buzz`, where the phone supports it): nailed landing, hard landing, sprocket save, crash. There is no setting to turn it off yet.
+  - **More of the trail ahead at speed:** above 22 m/s the view opens further and the rider sits nearer the edge behind (`fastK`).
+  - **Hazard marker** (`drawHazard`): an amber chevron at the right edge for a rock, fallen tree, cow or chasm lip within 1.3 s that is still off screen.
+  - **Tricks:** one under 25% done at landing is dropped with no penalty (was a crash). 25–40% still crashes, 40–80% is sketchy, 80%+ counts.
+  - **Fork lines:** the long way back after a line's feature carries gentle rollers (`lineFeatures`).
+- **Checked:**
+
+  | Measure | Before | After |
+  |---|---|---|
+  | Frames over 3 ms in 9,000 | 31 | 18 |
+  | HUD hitches (worst) | 11 frames (11.6 ms) | 2 frames (3.3 ms) |
+  | Worst frame | 13.4 ms | 11.9 ms |
+  | Garbage a frame | 133 KB | 125 KB |
+  | Trail in view ahead, portrait SIDE/MID | 0.74 s | 0.86 s |
+  | Trail in view ahead, landscape SIDE/MID | 1.18 s | 1.32 s |
+  | Features on fork lines | 1 per ~390 m | 1 per 253 m |
+
+  - **Sims:** 145.5 km over 18 seeds with 0 crashes (flips and tricks, turbo, high lines, low lines, 8 km a seed).
+  - **Pause:** the key, the button and a hidden page each hold the rider's position; a tap counts back in.
+  - **Tricks:** landings at 10%, 30%, 50% and 90% give dropped, crash, sketchy and counted.
+- **Not done or not reached:**
+  - **Garbage:** the target of under 70 KB a frame was dropped. Most of it is number boxing in code that already uses scratch values, not objects that can be reused.
+  - **Worst frame:** still about 12 ms here (target 6); what is left looks like garbage collection.
+  - **View ahead in portrait:** 0.86 s by sight, short of the 1.0 s target without zooming out past FAR; the marker covers the rest.
+  - **No new shaders over a long ride through night and water:** this check was cut short and has not been run.
+  - **GPU speed on a real phone** can't be timed here: `?perf=1` shows the frame meter on the device.
+
 ## Next: proposals
 - **More fun:**
   - pumping (hold on a downslope for speed);

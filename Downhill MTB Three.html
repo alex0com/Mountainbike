@@ -4700,6 +4700,39 @@ function buildTorus(d=1, w=.3, sides=16, tube=8, smooth=true)
     for (let j = 0; j <= tube; ++j) { const a = j/tube*TAU; P.push([r + w/2*cos(a), w/2*sin(a)]); }
     return buildLathe(P, sides, smooth, false);
 }
+// a faceted solid skinned over rings of points (each ring the same number of points, in order round it), the two
+// ends closed. Each face is turned to look away from the middle of its stretch, so the rings can be given either way
+// round. The shaped parts of the rider and the bike are made this way
+function buildSkin(rings, color)
+{
+    const m = new MeshData(), n = rings[0].length;
+    const centre = pts=> pts.reduce((s, p)=> s.add(p), vec3()).scale(1/pts.length);
+    const face = (pts, mid)=>
+    {
+        const nrm = pts[1].subtract(pts[0]).cross(pts[2].subtract(pts[0]));
+        if (nrm.lengthSquared() < 1e-14) return;
+        const q = nrm.dot(centre(pts).subtract(mid)) >= 0 ? pts : [...pts].reverse();
+        m.addTriangles(q, q.length == 4 ? [0, 1, 2, 0, 2, 3] : [0, 1, 2]);
+    };
+    for (let s = 0; s + 1 < rings.length; ++s)
+    {
+        const mid = centre([...rings[s], ...rings[s + 1]]);
+        for (let k = 0; k < n; ++k) face([rings[s][k], rings[s][(k + 1) % n], rings[s + 1][(k + 1) % n], rings[s + 1][k]], mid);
+    }
+    for (const [r, o] of [[rings[0], rings[1]], [rings[rings.length - 1], rings[rings.length - 2]]])
+    {
+        const c = centre(r), mid = centre(o);
+        for (let k = 0; k < n; ++k) face([c, r[k], r[(k + 1) % n]], mid);
+    }
+    if (color) m.setColor(color);
+    return m;
+}
+// rings for it from flat outlines: one across the bike at x (points [forward, up]), one at a height y (points [x, z])
+// and one at z (points [x, y])
+const ringX = (x, pts, k=1)=> pts.map(p=> vec3(x, p[1]*k, -p[0]*k));
+const ringY = (y, pts, k=1)=> pts.map(p=> vec3(p[0]*k, y, p[1]*k));
+const ringZ = (z, pts, k=1)=> pts.map(p=> vec3(p[0]*k, p[1]*k, z));
+
 // 3D text: the letters drawn small in a bold face, each dot of them a block, the blocks along a row run together;
 // it reads like the blocky lettering painted on a sign. size is the height of a line, depth how far it stands out
 function buildText3D(s, size=1, depth=.2)
@@ -4913,6 +4946,8 @@ class Batch
     constructor(data, o={})
     {
         this.cap = 256; this.n = 0;
+        // (small parts can do without a shadow of their own: one less thing drawn into the shadow map)
+        this.shadow = o.shadow !== false;
         this.geo = data.geometry();
         this.mat = litMaterial({vertexColors: true, ...o});
         this.make();
@@ -4923,7 +4958,7 @@ class Batch
         this.mesh = new THREE.InstancedMesh(this.geo, this.mat, this.cap);
         this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
         this.mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(this.cap*3), 3).setUsage(THREE.DynamicDrawUsage);
-        this.mesh.castShadow = this.mesh.receiveShadow = true;
+        this.mesh.castShadow = this.shadow; this.mesh.receiveShadow = true;
         this.mesh.frustumCulled = false;
         scene.add(this.mesh);
     }
@@ -8735,7 +8770,12 @@ function drawRagdoll(pts = ragdoll.pts)
 // BIKE AND RIDER - drawn from parts each frame so the suspension, cranks, legs
 // and arms can move; poses for riding, tucking and the style tricks
 // ============================================================================
-let meshTube, meshLimb, meshPlate, meshBall, meshBox, meshTyre, meshRim, meshSpokes, meshDisc, meshRing, meshSprocket, meshHelmet, meshCell, meshCellRing;
+let meshTube, meshLimb, meshPlate, meshBall, meshBox, meshSprocket, meshHelmet, meshCell, meshCellRing;
+// the shaped parts: bars to lay along a line (a chamfered section, and one that tapers), and the bike's own pieces
+let meshLidTrim, meshGoggles, meshGlove, meshShoe, meshTorso, meshBackNo;
+let meshBar8, meshTaper4, meshWheel, meshRotor, meshCassette, meshChainring, meshSaddle, meshCrown, meshPedal, meshMudguard;
+// the small parts (bolts, hoses, pins, coils) are drawn only when the rider is near enough to see them
+let FINE = true;
 const CELL_CORE = hsl(.52,1,.68), CELL_RING = hsl(.5,1,.8);
 // the Bluecow racer, after the concept sheet: a royal blue bike with a gold fork and black parts; a two-tone blue
 // jersey, black pants, pads, gloves, shoes and pack, a blue lid with a white star and orange mirror goggles
@@ -8804,34 +8844,154 @@ function setBike(i)
 function buildRiderMeshes()
 {
     // (a soft sheen: on big flat facets a strong one would wash whole faces out to white)
-    const R = {specular: .12, shininess: 24};
+    const R = {specular: .12, shininess: 24}, RS0 = {...R, shadow: false};
     // faceted, the low-poly look of the concept sheet: six-sided tubes, tapered limbs, gem-cut balls
     meshTube = batch(buildCylinder(1, 1, 6, false), R);
     meshLimb = batch(buildLathe([[.5, -.5], [.39, .5]], 6, false), R);
     meshBall = batch(buildSphere(1, 7, 5, false), R);
     meshBox = batch(buildBox(1), R);
-    // knobbly downhill tyres: two staggered rows of blocks round the tread
-    const tyre = buildTorus(.74, .12, 22, 7, true).setColor(PAL.tyre);
-    for (let k = 0; k < 30; ++k)
+    // bars to lay along a line: a square section with its corners cut, and one that tapers to its far end
+    const oct = [[.5, .3], [.3, .5], [-.3, .5], [-.5, .3], [-.5, -.3], [-.3, -.5], [.3, -.5], [.5, -.3]], sq = [[.5, .5], [-.5, .5], [-.5, -.5], [.5, -.5]];
+    meshBar8 = batch(buildSkin([ringY(-.5, oct), ringY(.5, oct)]), R);
+    meshTaper4 = batch(buildSkin([ringY(-.5, sq), ringY(.5, sq, .6)]), R);
+    // a part of a mesh laid from a to b: w across it (toward side), d the other way
+    const between = (a, b, w, d=w, side=vec3(0, 1, 0))=>
     {
-        const a = k/30*TAU, side = k % 2 ? .032 : -.032;
-        tyre.combine(buildBox(vec3(.035, .045, .05)).setColor(PAL.tyre), buildMatrix(vec3(cos(a)*.372, side, sin(a)*.372), vec3(0, -a, 0)));
-    }
-    // and the yellow lettering on the sidewalls, a word each side of the wheel
-    for (const side of [-1, 1]) for (const a0 of [0, PI]) for (let k = 0; k < 6; ++k)
+        const F = boneFrameInto(a, b, side, BONE_F), M = new Matrix4, m = M.m;
+        m[0] = F.x.x*w; m[1] = F.x.y*w; m[2] = F.x.z*w; m[4] = F.y.x*F.len; m[5] = F.y.y*F.len; m[6] = F.y.z*F.len;
+        m[8] = F.z.x*d; m[9] = F.z.y*d; m[10] = F.z.z*d; m[12] = (a.x + b.x)/2; m[13] = (a.y + b.y)/2; m[14] = (a.z + b.z)/2;
+        return M;
+    };
+    const polar = (r, a, y=0)=> vec3(cos(a)*r, y, sin(a)*r), flat = (r0, r1, y0, y1, sides)=> buildLathe([[r0, y0], [r1, y0], [r1, y1], [r0, y1], [r0, y0]], sides, false, false);
+    // a wheel, all of a piece about its axle (up y here): a knobbly downhill tyre (a row of blocks down the middle
+    // and one leaning out on each shoulder), the yellow lettering on its sidewalls, a box rim with its decals and a
+    // valve, laced spokes and the hub with its flanges
+    const wheel = buildTorus(.74, .12, 22, 7, true).setColor(PAL.tyre);
+    for (let k = 0; k < 24; ++k)
+        wheel.combine(buildBox(vec3(.04, .034, .045)).setColor(PAL.tyre), buildMatrix(polar(.372, k/24*TAU, k % 2 ? .013 : -.013), vec3(0, -k/24*TAU, 0)));
+    for (const sd of [-1, 1]) for (let k = 0; k < 24; ++k)
+        wheel.combine(buildBox(vec3(.04, .03, .05)).setColor(PAL.tyre), buildMatrix(polar(.356, (k + .5)/24*TAU, sd*.054), vec3(0, -(k + .5)/24*TAU, sd*.6)));
+    for (const sd of [-1, 1]) for (const a0 of [0, PI]) for (let k = 0; k < 6; ++k)
     {
         const a = a0 + (k - 2.5)*.075;
-        tyre.combine(buildBox(vec3(.035, .012, .045)).setColor(PAL.mark), buildMatrix(vec3(cos(a)*.31, side*.056, sin(a)*.31), vec3(0, -a, 0)));
+        wheel.combine(buildBox(vec3(.035, .012, .045)).setColor(PAL.mark), buildMatrix(polar(.31, a, sd*.056), vec3(0, -a, 0)));
     }
-    meshTyre = batch(tyre, R);
-    meshHelmet = batch(buildSphere(1, 9, 6, false), {specular: .3, shininess: 40});
+    wheel.combine(buildTorus(.61, .054, 22, 4, false).setColor(PAL.black));
+    for (const sd of [-1, 1]) for (let q = 0; q < 4; ++q) for (let k = 0; k < 3; ++k)
+    {
+        const a = q*PI/2 + .4 + k*.11;
+        wheel.combine(buildBox(vec3(.02, .004, .028)).setColor(k == 1 ? PAL.decal : PAL.mark), buildMatrix(polar(.288, a, sd*.022), vec3(0, -a, sd*.5)));
+    }
+    wheel.combine(buildCylinder(.012, .04, 5, false).setColor(PAL.silver), buildMatrix(polar(.262, 1.1), vec3(0, -1.1, PI/2)));
+    for (let k = 0; k < 16; ++k)
+    {
+        const a = k/16*TAU, sd = k % 2 ? 1 : -1;
+        wheel.combine(buildBox(1).setColor(PAL.chain), between(polar(.036, a + sd*.5, sd*.04), polar(.284, a), .007, .007));
+    }
+    wheel.combine(buildLathe([[.018, -.075], [.03, -.066], [.03, -.052], [.047, -.046], [.047, -.037], [.026, -.028], [.026, .028], [.047, .037], [.047, .046], [.03, .052], [.03, .066], [.018, .075]], 8, false).setColor(PAL.silver));
+    meshWheel = batch(wheel, R);
+    // a brake rotor: the braking ring on swept arms round its carrier
+    const rotor = flat(.074, .1, -.004, .004, 16).setColor(PAL.silver);
+    for (let k = 0; k < 5; ++k) rotor.combine(buildBox(1).setColor(PAL.chain), between(polar(.026, k/5*TAU), polar(.078, k/5*TAU + .5), .006, .014));
+    rotor.combine(buildCylinder(.062, .012, 8, false).setColor(PAL.black));
+    meshRotor = batch(rotor, RS0);
+    // the cassette: cogs stepping down in size outward, and its lock ring
+    const cass = buildLathe([[.096, 0], [.096, .008], [.082, .008], [.082, .019], [.068, .019], [.068, .03], [.055, .03], [.055, .041], [.043, .041], [.043, .052], [.03, .052], [.03, .058]], 12, false).setColor(PAL.chain);
+    meshCassette = batch(new MeshData().combine(cass, buildMatrix(vec3(), vec3(PI, 0, 0))), RS0);
+    // the chainring: a toothed ring on its spider, a bash guard outside it
+    const cring = flat(.084, .106, -.005, .005, 16).setColor(PAL.silver);
+    for (let k = 0; k < 16; ++k) cring.combine(buildBox(vec3(.014, .006, .014)).setColor(PAL.silver), buildMatrix(polar(.11, k/16*TAU), vec3(0, -k/16*TAU, 0)));
+    for (let k = 0; k < 4; ++k) cring.combine(buildBox(1).setColor(PAL.black), between(polar(.02, k/4*TAU + .3), polar(.088, k/4*TAU + .3), .012, .02));
+    cring.combine(flat(.1, .125, .007, .017, 16).setColor(PAL.black), buildMatrix(vec3(), vec3(PI, 0, 0)));
+    meshChainring = batch(cring, RS0);
+    // the saddle: a narrow nose widening to a tail that kicks up (forward is -z)
+    const sad = [];
+    for (const [z, w, y, t] of [[-.15, .014, 0, .016], [-.11, .024, .004, .024], [-.02, .04, 0, .03], [.07, .07, .004, .034], [.13, .062, .017, .026]])
+        sad.push(ringZ(z, [[-w, y - t*.4], [-w*.55, y], [w*.55, y], [w, y - t*.4], [w*.6, y - t], [-w*.6, y - t]]));
+    meshSaddle = batch(buildSkin(sad), R);
+    // a fork crown, across the bike: thick round each leg and waisted between them
+    const cr = [[-.045, 0], [-.03, .024], [.03, .024], [.045, 0], [.03, -.024], [-.03, -.024]];
+    meshCrown = batch(buildSkin([ringX(-.118, cr, .7), ringX(-.085, cr), ringX(-.04, cr, .8), ringX(.04, cr, .8), ringX(.085, cr), ringX(.118, cr, .7)]), RS0);
+    // a flat pedal: a platform with its corners cut, pins top and bottom
+    const pd = [[.05, .03], [.03, .05], [-.03, .05], [-.05, .03], [-.05, -.03], [-.03, -.05], [.03, -.05], [.05, -.03]];
+    const pedal = buildSkin([ringY(-.011, pd), ringY(.011, pd)]).setColor(PAL.black);
+    for (const y of [-.014, .014]) for (const [x, z] of [[.036, .036], [-.036, .036], [.036, -.036], [-.036, -.036], [0, .042], [0, -.042]])
+        pedal.combine(buildBox(vec3(.008, .008, .008)).setColor(PAL.silver), vec3(x, y, z));
+    meshPedal = batch(pedal, RS0);
+    // the front mudguard: a strip curved over the tyre, about the axle (up y, back z)
+    const mg = [];
+    for (let k = 0; k <= 5; ++k)
+    {
+        const a = -.25 + k*.24, w = k == 0 || k == 5 ? .028 : .04, c = vec3(0, cos(a)*.412, sin(a)*.412), r = vec3(0, cos(a), sin(a)).scale(.005);
+        mg.push([c.plus(-w, 0, 0).add(r), c.plus(w, 0, 0).add(r), c.plus(w, 0, 0).subtract(r), c.plus(-w, 0, 0).subtract(r)]);
+    }
+    meshMudguard = batch(buildSkin(mg), RS0);
+    // ---- the rider's own shaped parts
+    // a full-face lid (forward -z, up y): the shell in slices from the neck to the crown, then its trim: the chin bar
+    // round the front, the peak, and the dark of its grille, its vents and under the peak
+    const LID = {specular: .3, shininess: 40};
+    const lidAt = (a, rx, rzF, rzB=rzF)=> vec3(sin(a)*rx, 0, -cos(a)*(cos(a) > 0 ? rzF : rzB));
+    const lidRing = (y, k, dz=0)=> [...Array(10)].map((_, j)=> { const q = lidAt(j*TAU/10, .185*k, .2*k, .215*k); return vec3(q.x, y, q.z + dz); });
+    meshHelmet = batch(buildSkin([lidRing(-.13, .8), lidRing(-.06, .96), lidRing(.02, 1), lidRing(.09, .95, .005), lidRing(.145, .78, .01), lidRing(.18, .5, .015), lidRing(.195, .2, .02)]), LID);
+    // a band round the lid from angle a0 to a1 (0 is the front): yc its middle height, h its height, t its thickness
+    const lidBand = (rx, rzF, rzB, yc, h, t, a0, a1, n, color)=>
+    {
+        const rings = [];
+        for (let k = 0; k <= n; ++k)
+        {
+            const a = mix(a0, a1, k/n), c = lidAt(a, rx, rzF, rzB), o = vec3(c.x, 0, c.z).normalize(t/2);
+            rings.push([c.add(o).plus(0, yc - h/2, 0), c.add(o).plus(0, yc + h/2, 0), c.subtract(o).plus(0, yc + h/2, 0), c.subtract(o).plus(0, yc - h/2, 0)]);
+        }
+        return buildSkin(rings, color);
+    };
+    const dark = hsl(0,0,.05), trim = lidBand(.176, .255, .2, -.115, .12, .042, -1.85, 1.85, 10, WHITE);
+    const peak = [];
+    for (const [z, w, y, t] of [[-.11, .15, .152, .022], [-.24, .15, .17, .018], [-.335, .105, .178, .012]]) peak.push(ringZ(z, [[-w, y], [w, y], [w, y - t], [-w, y - t]]));
+    trim.combine(buildSkin(peak, WHITE));
+    trim.combine(buildBox(vec3(.25, .006, .17)).setColor(dark), buildMatrix(vec3(0, .146, -.235), vec3(-.12, 0, 0)));
+    for (const x of [-.055, 0, .055]) trim.combine(buildBox(vec3(.034, .05, .014)).setColor(dark), vec3(x, -.11, -.272));
+    trim.combine(buildBox(vec3(.14, .016, .014)).setColor(dark), vec3(0, -.158, -.268));
+    for (const sd of [-1, 1])
+    {
+        trim.combine(buildBox(vec3(.026, .012, .1)).setColor(dark), buildMatrix(vec3(sd*.075, .178, -.03), vec3(-.15, 0, -sd*.35)));
+        trim.combine(buildBox(vec3(.012, .07, .09)).setColor(dark), vec3(sd*.186, -.05, .01));
+    }
+    meshLidTrim = batch(trim, {...LID, shadow: false});
+    // the goggles: the dark of the face opening, the frame, the mirror lens with its glint, and the strap round the back
+    const gog = lidBand(.188, .206, .2, 0, .2, .012, -1.05, 1.05, 8, dark);
+    gog.combine(lidBand(.2, .222, .2, .03, .108, .03, -1.2, 1.2, 8, PAL.goggle));
+    gog.combine(lidBand(.2, .236, .2, .03, .072, .012, -.9, .9, 6, PAL.lens));
+    gog.combine(lidBand(.2, .24, .2, .052, .014, .012, -.7, .7, 4, PAL.lens2));
+    gog.combine(lidBand(.196, .21, .226, .03, .05, .012, 1.2, TAU - 1.2, 10, PAL.goggle));
+    meshGoggles = batch(gog, {...LID, shadow: false});
+    // a glove (y along the forearm to the fingers): the cuff, the back of the hand, the fingers curled over the grip,
+    // a guard over the knuckles and the thumb
+    const gr = (y, w, d, dz=0)=> [[-w, y, -d + dz], [w, y, -d + dz], [w, y, d + dz], [-w, y, d + dz]].map(q=> vec3(...q));
+    const glove = buildSkin([gr(-.5, .34, .3), gr(-.2, .5, .38), gr(.2, .5, .4), gr(.42, .46, .34, -.12), gr(.5, .4, .22, -.3)], WHITE);
+    glove.combine(buildBox(vec3(.84, .2, .2)).setColor(hsl(0,0,.45)), vec3(0, .24, .42));
+    glove.combine(buildBox(vec3(.2, .46, .26)).setColor(WHITE), buildMatrix(vec3(0, .05, -.46), vec3(.3, 0, 0)));
+    meshGlove = batch(glove, RS0);
+    // a flat-pedal shoe (forward -z): the upper from heel to toe over a wider sole, a strap across it and a toe cap
+    const upper = [], sole = [];
+    for (const [z, w, top] of [[.13, .05, .08], [.06, .06, .112], [-.04, .063, .078], [-.13, .06, .052], [-.19, .044, .036]])
+    {
+        upper.push(ringZ(z, [[-w, 0], [-w, top*.7], [-w*.6, top], [w*.6, top], [w, top*.7], [w, 0]]));
+        sole.push(ringZ(z*1.03, [[-w - .007, -.03], [-w - .007, 0], [w + .007, 0], [w + .007, -.03]]));
+    }
+    const shoe = buildSkin(upper, PAL.shoe).combine(buildSkin(sole, PAL.sole));
+    shoe.combine(buildBox(vec3(.135, .02, .045)).setColor(PAL.kneecap), buildMatrix(vec3(0, .085, -.02), vec3(.3, 0, 0)));
+    shoe.combine(buildBox(vec3(.1, .03, .05)).setColor(PAL.kneecap), buildMatrix(vec3(0, .03, -.185), vec3(.5, 0, 0)));
+    meshShoe = batch(shoe, R);
+    // the torso (y from the hips to the base of the neck, the back +z): hips, a narrower waist, a broad chest and the
+    // slope of the shoulders
+    const tr = (y, w, d, dz=0)=> [...Array(8)].map((_, j)=> { const a = j*TAU/8 + TAU/16; return vec3(sin(a)*w*1.08, y, -cos(a)*d*1.08 + dz); });
+    meshTorso = batch(buildSkin([tr(-.5, .4, .42), tr(-.22, .36, .37), tr(.12, .5, .5, -.03), tr(.36, .53, .5, -.02), tr(.5, .3, .34, .03)]), R);
+    // the number on the back
+    meshBackNo = batch(buildText3D('7', .2, .012).setColor(PAL.decal), RS0);
     // the number plate on the bars: a white board in a blue rim with a black number
     const plate = new MeshData().combine(buildBox(vec3(.36, .27, .02)).setColor(hsl(.62,.78,.48)), vec3(0, 0, .005))
         .combine(buildBox(vec3(.31, .22, .02)).setColor(hsl(0,0,.95)), vec3(0, 0, -.006)).combine(buildText3D('7', .17, .02).setColor(hsl(.62,.1,.1)), buildMatrix(vec3(0, -.005, -.018), vec3(0, PI, 0)));
     meshPlate = batch(plate, R);
-    meshRim = batch(buildTorus(.6, .04, 22, 5, true).setColor(PAL.black), R);
-    meshDisc = batch(buildCylinder(.2, .012, 14).setColor(PAL.silver), R);
-    meshRing = batch(buildTorus(.22, .03, 14, 4).setColor(PAL.silver), R);
     // a chainring to collect: a toothed gold ring on spokes round a silver hub, facing along z
     const gold = hsl(.12,.9,.56), sp = new MeshData;
     sp.combine(buildTorus(.84, .14, 18, 4).setColor(gold));
@@ -8847,10 +9007,6 @@ function buildRiderMeshes()
     }
     sp.combine(buildCylinder(.15, .1, 10).setColor(PAL.silver));
     meshSprocket = batch(new MeshData().combine(sp, buildMatrix(vec3(), vec3(PI/2, 0, 0))));
-    const spokes = new MeshData;
-    for (let k = 0; k < 8; ++k)
-        spokes.combine(buildBox(vec3(.006, .008, .56)), buildMatrix(vec3(), vec3(k*PI/8, 0, 0)), PAL.chain);
-    meshSpokes = batch(spokes, R);
     // a battery cell to pick up: a bright core in a spinning ring, glowing
     meshCell = batch(buildSphere(1, 16, 8, true), {emissive: 1});
     meshCellRing = batch(buildTorus(.22, .03, 14, 4), {emissive: 1});
@@ -8935,15 +9091,17 @@ function drawBody(J, B, k=1)
     const {x: X, y: Y, z: Z} = B, at = (p, dx, dy, dz)=> p.plus((X.x*dx + Y.x*dy + Z.x*dz)*k, (X.y*dx + Y.y*dy + Z.y*dz)*k, (X.z*dx + Y.z*dy + Z.z*dz)*k);
     const g = (p, sx, sy, sz, c)=> framed(meshBall, p, B, sx*k, sy*k, sz*k, c), bx = (p, sx, sy, sz, c, F=B)=> framed(meshBox, p, F, sx*k, sy*k, sz*k, c);
     const {chest, hip, head} = J;
-    // the torso: a broad chest over a narrower middle, lighter facets across the chest and the shoulders
-    g(hip.lerp(chest, .5), .4, .38, .3, PAL.jersey);
-    g(at(chest, 0, -.01, 0), .58, .42, .38, PAL.jersey);
-    g(at(chest, 0, .15, .02), .36, .14, .24, PAL.jersey);
+    // the torso, shaped from the hips to the shoulders, with lighter panels across the chest and the shoulders, a
+    // collar and the number on the back
+    bone(meshTorso, at(hip, 0, .02, 0), at(chest, 0, .2, 0), .56*k, .42*k, X, PAL.jersey);
     for (const s of [-1, 1])
     {
-        g(at(chest, s*.12, .03, -.14), .22, .2, .12, PAL.jersey2);
-        g(at(chest, s*.17, -.15, -.09), .14, .16, .12, PAL.jersey2);
+        g(at(chest, s*.12, .03, -.15), .22, .2, .12, PAL.jersey2);
+        g(at(chest, s*.17, -.15, -.1), .14, .16, .12, PAL.jersey2);
+        bx(at(chest, s*.2, .16, .0), .13, .035, .2, PAL.jersey2);
     }
+    bone(meshTube, at(chest, 0, .17, -.01), at(chest, 0, .215, -.015), .19*k, .17*k, X, PAL.jersey2);
+    if (FINE) framed(meshBackNo, at(chest, 0, -.02, .2), B, k, k, k);
     // the neck, the shorts and the belt
     bone(meshTube, at(chest, 0, .14, -.02), at(head, 0, -.1, 0), .13*k, .13*k, X, PAL.black);
     g(hip, .4, .27, .31, PAL.pants);
@@ -8975,12 +9133,16 @@ function drawBody(J, B, k=1)
         g(sh, .29, .26, .28, PAL.jersey2);
         bone(meshLimb, sh, el, .18*k, .17*k, X, PAL.jersey);
         bone(meshBall, sh.lerp(el, .18), sh.lerp(el, .8), .2*k, .18*k, X, PAL.jersey2);
-        g(el, .14, .14, .14, PAL.pad);
+        // (the elbow pad: a sleeve with a hard cap on the point of the elbow, strapped above and below)
+        g(el, .15, .15, .15, PAL.pad);
+        const eo = el.subtract(sh.lerp(hd, .5)), ed = eo.lengthSquared() > 1e-8 ? eo.normalize() : Z;
+        g(el.add(ed.scale(.035*k)), .11, .12, .11, PAL.kneecap);
         bone(meshLimb, el, hd, .16*k, .145*k, X, PAL.jersey, -.05);
-        bone(meshTube, el.lerp(hd, .78), el.lerp(hd, .93), .145*k, .14*k, X, PAL.glove);
+        if (FINE) { bone(meshTube, sh.lerp(el, .8), sh.lerp(el, .86), .185*k, .175*k, X, PAL.strap); bone(meshTube, el.lerp(hd, .16), el.lerp(hd, .22), .165*k, .155*k, X, PAL.strap); }
+        // the glove: its cuff up the wrist, the hand wrapped round the grip
+        bone(meshTube, el.lerp(hd, .74), el.lerp(hd, .9), .15*k, .14*k, X, PAL.glove);
         const hf = boneFrame(el, hd, X);
-        framed(meshBall, hd, hf, .13*k, .14*k, .12*k, PAL.glove);
-        framed(meshBox, hd.add(hf.y.scale(.04*k)).add(hf.z.scale(-.03*k)), hf, .1*k, .05*k, .06*k, PAL.strap);
+        framed(meshGlove, hd.add(hf.y.scale(.015*k)), hf, .15*k, .19*k, .13*k, PAL.glove);
         // the leg: baggy pants over a thick thigh, a knee pad strapped on, the shin, a chunky shoe with a grey sole
         bone(meshLimb, hp, kn, .21*k, .21*k, X, PAL.pants);
         bone(meshBall, hp.lerp(kn, .15), hp.lerp(kn, .88), .2*k, .19*k, X, PAL.pants);
@@ -8990,43 +9152,26 @@ function drawBody(J, B, k=1)
         framed(meshBall, kn.add(o.scale(.035*k)), {x: kf.x, y: kf.y, z: o}, .15*k, .2*k, .1*k, PAL.kneecap);
         bone(meshTube, kn.lerp(ft, .2), kn.lerp(ft, .26), .17*k, .165*k, X, PAL.strap);
         bone(meshBall, kn.lerp(ft, .25), kn.lerp(ft, .75), .13*k, .13*k, X, PAL.pad);
+        // the cuff of the pants and a sock over the ankle
+        bone(meshTube, kn.lerp(ft, .8), kn.lerp(ft, .86), .16*k, .155*k, X, PAL.strap);
+        bone(meshTube, kn.lerp(ft, .86), kn.lerp(ft, .97), .12*k, .12*k, X, PAL.white);
         // shoes along the foot's way (the bike's forward when riding)
-        const F = J.foot || B, fz = F.z;
-        framed(meshBox, ft.add(F.y.scale(.03*k)).add(fz.scale(-.03*k)), F, .13*k, .1*k, .3*k, PAL.shoe);
-        framed(meshBox, ft.add(F.y.scale(-.025*k)).add(fz.scale(-.03*k)), F, .14*k, .035*k, .31*k, PAL.sole);
-        framed(meshBall, ft.add(F.y.scale(.02*k)).add(fz.scale(-.16*k)), F, .13*k, .09*k, .1*k, PAL.shoe);
+        const F = J.foot || B;
+        framed(meshShoe, ft.add(F.y.scale(.012*k)), F, k, k, k);
     }
     helmetHead(J.headM);
 }
-// a full-face downhill lid in its own space (forward -z, up +y): a faceted shell with a star on the brow, a peak, the
-// chin bar with its vents, goggles with an orange mirror lens on a strap round the shell
-const HELM_M = new Matrix4;
+// a full-face downhill lid in its own space (forward -z, up +y): the shell in the kit's colour with a stripe of its
+// second over the crown, the chin bar and the peak, and the goggles
+const HELM_M = new Matrix4, LID_STRIPE = vec3(.33, 1.035, 1.035);
 function helmetHead(H)
 {
     const keep = MC;
     HELM_M.m.set(keep.m); MC = HELM_M.multiply(H);
-    const shell = (off, size, color, rot)=> drawPart(meshHelmet, buildMatrix(off, rot, size, scratch), color);
-    shell(vec3(0, .01, 0), vec3(.37, .37, .41), PAL.helmet);
-    shell(vec3(0, .07, .03), vec3(.33, .25, .38), PAL.helmet2);
-    // the chin bar, its vents, and the ear vents
-    shell(vec3(0, -.11, -.13), vec3(.27, .14, .2), PAL.helmet);
-    for (const x of [-.06, 0, .06]) box(vec3(x, -.1, -.225), vec3(.035, .05, .02), PAL.black);
-    box(vec3(0, -.16, -.2), vec3(.14, .02, .03), PAL.black);
-    for (const s of [-1, 1]) box(vec3(s*.18, -.04, -.02), vec3(.03, .09, .12), PAL.black);
-    // the star on the brow: a diamond and its points, lying on the shell
-    const brow = vec3(0, .145, -.13), tilt = vec3(-.75, 0, 0);
-    box(brow, vec3(.05, .012, .05), PAL.decal, vec3(-.75, PI/4, 0));
-    box(brow.plus(0, .02, .03), vec3(.022, .012, .11), PAL.decal, tilt);
-    for (const s of [-1, 1]) box(brow.plus(s*.045, -.004, -.01), vec3(.08, .012, .02), PAL.decal, vec3(-.75, 0, s*.25));
-    // the peak
-    box(vec3(0, .17, -.17), vec3(.31, .025, .17), PAL.helmet, vec3(.3, 0, 0));
-    box(vec3(0, .157, -.17), vec3(.29, .012, .15), PAL.black, vec3(.3, 0, 0));
-    // the goggles: the frame, the lens with its glint, and the strap round the shell
-    box(vec3(0, .035, -.185), vec3(.32, .105, .06), PAL.goggle);
-    box(vec3(0, .035, -.215), vec3(.27, .075, .02), PAL.lens);
-    box(vec3(0, .058, -.226), vec3(.24, .016, .012), PAL.lens2);
-    for (const s of [-1, 1]) box(vec3(s*.19, .035, -.02), vec3(.02, .055, .3), PAL.goggle);
-    box(vec3(0, .035, .2), vec3(.34, .055, .02), PAL.goggle);
+    drawPart(meshHelmet, buildMatrix(undefined, undefined, undefined, scratch), PAL.helmet);
+    drawPart(meshHelmet, buildMatrix(undefined, undefined, LID_STRIPE, scratch), PAL.helmet2);
+    drawPart(meshLidTrim, buildMatrix(undefined, undefined, undefined, scratch), PAL.helmet);
+    drawPart(meshGoggles, buildMatrix(undefined, undefined, undefined, scratch));
     MC = keep;
 }
 
@@ -9053,7 +9198,7 @@ const STEERER_BACK = STEERER.scale(-1);
 function drawBike(M, cF, cR, wheelSpin, crankA, whip=0, barA=0, offF=0, offR=0, G)
 {
     // the frame and back wheel, the fork and front wheel, and the bars each have their own transform
-    const MF = aboutSteerer(M, whip), MB = aboutSteerer(M, barA);
+    const MF = aboutSteerer(M, whip), MB = aboutSteerer(M, barA), X = FOOT_FRAME.x;
     MC = MF;
     // frame points drop with the suspension, the axles stay on the ground
     const sag = (p)=> vec3(p.x, p.y - mix(cR, cF, clamp01((.62 - p.z)/1.26)), p.z);
@@ -9061,47 +9206,56 @@ function drawBike(M, cF, cR, wheelSpin, crankA, whip=0, barA=0, offF=0, offR=0, 
     const seatTop = sag(vec3(0, .93 - (bike.seatDrop || 0), .17)), stayTop = sag(vec3(0, .8, .13)), ttRear = sag(vec3(0, .86, .14));
     // the axles ride up and down over the bumps, the fork and the swingarm with them
     const rA = AXLE_R.plus(0, offR/RS, 0), fA = AXLE_F.plus(0, offF/RS, 0);
-    // wheels
+    // wheels, each with its rotor on the left; the cassette turns with the back one
     const bent = !G && wobbleT > 0 ? .3*clamp01(wobbleT/4) : 0;
-    for (const [axle, disc] of [[rA, .07], [fA, -.07]])
+    for (const axle of [rA, fA])
     {
         MC = axle == fA ? G?.fw ?? M : G?.rw ?? MF;
         const wob = bent*sin(wheelSpin + (axle == fA ? 1.7 : 0)), rot = vec3(wheelSpin, wob, PI/2);
-        drawPart(meshTyre, buildMatrix(axle, rot, undefined, scratch));
-        drawPart(meshRim, buildMatrix(axle, rot, undefined, scratch));
-        drawPart(meshSpokes, buildMatrix(axle, vec3(wheelSpin, wob, 0), undefined, scratch));
-        drawPart(meshDisc, buildMatrix(vec3(disc, axle.y, axle.z), rot, undefined, scratch));
-        ball(axle, .09, PAL.silver);
+        drawPart(meshWheel, buildMatrix(axle, rot, undefined, scratch));
+        drawPart(meshRotor, buildMatrix(vec3(-.068, axle.y, axle.z), rot, undefined, scratch));
+        if (axle == rA) drawPart(meshCassette, buildMatrix(vec3(.04, axle.y, axle.z), rot, undefined, scratch));
     }
     MC = G?.frame ?? MF;
-    // main frame, chunky downhill tubes (thinner on a dirt jumper, fatter on the sled)
-    const tk = bike.tube;
-    tube(bb, headBot, .11*tk, PAL.frame);
-    tube(ttRear, headTop.plus(0, -.05, .02), .08*tk, PAL.frame);
+    // the main frame, chunky downhill tubes (thinner on a dirt jumper, fatter on the sled): a down tube with the
+    // battery in it, its corners cut; a top tube tapering back from the head tube; the seat tube; the head tube and
+    // a gusset behind it
+    const tk = bike.tube, dtW = max(.1*tk, bike.batt*.85), dtD = max(.12*tk, bike.batt*1.05);
+    const bA = bb.lerp(headBot, .08), bB = bb.lerp(headBot, .97);
+    bone(meshBar8, bA, bB, dtW, dtD, X, PAL.frame);
+    bone(meshTaper4, headTop.plus(0, -.055, .03), ttRear, .085*tk, .1*tk, X, PAL.frame);
     tube(bb, seatTop, .07*tk, PAL.frame);
-    ball(headBot.lerp(bb, .1), .14*tk, PAL.frame); ball(ttRear, .1*tk, PAL.frame);
+    tube(headBot.plus(0, -.05, -.02), headTop.plus(0, .03, .01), .092, PAL.frame);
+    bone(meshBox, headTop.lerp(ttRear, .2).plus(0, -.04, 0), headBot.lerp(bb, .24).plus(0, .03, 0), .03*tk, .1, X, PAL.frame);
+    ball(ttRear, .1*tk, PAL.frame);
     // the brace from the top tube down to the down tube, and a decal along the top tube
-    if (bike.brace) tube(headTop.lerp(ttRear, .45), bb.lerp(headBot, .56), .06*tk, PAL.frame);
+    if (bike.brace) tube(headTop.lerp(ttRear, .5), bb.lerp(headBot, .5), .055*tk, PAL.frame);
     if (bike.skid) box(bb.plus(0, -.13, -.06), vec3(.1, .03, .22), PAL.black);
-    for (const x of [-.033, .033]) tube(ttRear.lerp(headTop, .3).plus(x, -.005, 0), ttRear.lerp(headTop, .72).plus(x, -.025, 0), .016, PAL.decal);
-    tube(headBot.plus(0, -.05, -.02), headTop.plus(0, .03, .01), .075, PAL.frameDark);
-    for (const x of [-.055, .055])
+    for (const x of [-.036, .036]) tube(ttRear.lerp(headTop, .3).plus(x*tk, -.012, 0), ttRear.lerp(headTop, .7).plus(x*tk, -.03, 0), .016, PAL.decal);
+    // the swingarm, from its pivot over the cranks to the dropouts, and the stays up to the link that drives the shock
+    const piv = sag(vec3(0, .46, .1)), link = bb.lerp(seatTop, .64);
+    tube(piv.plus(-.075, 0, 0), piv.plus(.075, 0, 0), .055, PAL.silver);
+    for (const x of [-.062, .062])
     {
-        tube(bb.plus(x, 0, 0), rA.plus(x*1.3, 0, 0), .055, PAL.frame);
-        tube(stayTop.plus(x*.7, 0, 0), rA.plus(x*1.3, 0, 0), .045, PAL.frame);
+        bone(meshTaper4, piv.plus(x, 0, 0), rA.plus(x*1.25, 0, 0), .034, .08, X, PAL.frame);
+        bone(meshTaper4, stayTop.plus(x*.75, 0, 0), rA.plus(x*1.25, .015, 0), .03, .052, X, PAL.frame);
+        box(rA.plus(x*1.32, 0, 0), vec3(.02, .075, .075), PAL.frameDark);
+        if (bike.shock) bone(meshBox, stayTop.plus(x*.75, 0, .01), link.plus(x*.7, -.03, -.02), .014, .05, X, PAL.silver);
     }
-    // eBike: a battery along the down tube, the motor round the cranks, a display on the bars
-    const bA = bb.lerp(headBot, .16), bB = bb.lerp(headBot, .8);
-    tube(bA, bB, bike.batt, PAL.frame);
+    // eBike: the battery's charge along the down tube, the motor round the cranks, a display on the bars
     const lit = turboT > 0 ? hsl(.5, 1, .6 + .15*sin(time*40)) : battery >= 1 ? hsl(.5, 1, .55 + .15*sin(time*8)) : hsl(.5, .8, .18 + battery*.3);
-    for (const x of [-1, 1]) tube(bA.lerp(bB, .1).plus(x*(bike.batt/2 - .003), .005, 0), bA.lerp(bB, .1 + .8*max(.06, battery)).plus(x*(bike.batt/2 - .003), .005, 0), .028, lit);
-    ball(bb.plus(0, -.01, .03), bike.motor, PAL.motor);
+    for (const x of [-1, 1]) tube(bA.lerp(bB, .12).plus(x*(dtW/2 + .001), .005, 0), bA.lerp(bB, .12 + .76*max(.06, battery)).plus(x*(dtW/2 + .001), .005, 0), .026, lit);
+    const mo = bb.plus(0, -.005, .025);
+    tube(mo.plus(-.07, 0, 0), mo.plus(.07, 0, 0), bike.motor*.95, PAL.motor);
+    tube(mo.plus(-.082, 0, 0), mo.plus(-.07, 0, 0), bike.motor*.7, PAL.black);
+    if (FINE) for (let k = 0; k < 5; ++k) ball(mo.plus(-.086, cos(k*TAU/5)*bike.motor*.26, sin(k*TAU/5)*bike.motor*.26), .018, PAL.silver);
     // rear shock: a coil with its piggyback reservoir, or an air can; none on a hardtail
     const shA = sag(vec3(0, .5, -.1)), shB = stayTop.plus(0, -.02, -.04);
     if (bike.shock) tube(shA, shB, .045, PAL.frameDark);
     if (bike.shock == 'coil')
     {
-        tube(shA.lerp(shB, .2), shA.lerp(shB, .75), .085, PAL.spring);
+        if (FINE) for (let k = 0; k < 5; ++k) tube(shA.lerp(shB, .2 + k*.115), shA.lerp(shB, .26 + k*.115), .09, PAL.spring);
+        else tube(shA.lerp(shB, .2), shA.lerp(shB, .75), .085, PAL.spring);
         tube(shA.lerp(shB, .55).plus(.055, 0, .02), shA.lerp(shB, .95).plus(.055, 0, .02), .04, PAL.gold);
     }
     else if (bike.shock == 'air')
@@ -9109,54 +9263,82 @@ function drawBike(M, cF, cR, wheelSpin, crankA, whip=0, barA=0, offF=0, offR=0, 
         tube(shA.lerp(shB, .3), shA.lerp(shB, .85), .075, PAL.black);
         tube(shA.lerp(shB, .32), shA.lerp(shB, .4), .08, PAL.spring);
     }
-    // the drivetrain: chain from the ring to the cassette and back under through the mech, a guide over the ring,
-    // and the calliper on the back rotor
-    const ring = bb.plus(.075, 0, 0), cog = rA.plus(.075, 0, 0), mech = rA.plus(.08, -.12, .02);
-    tube(ring.plus(0, .105, 0), cog.plus(0, .05, 0), .012, PAL.chain);
-    tube(ring.plus(0, -.105, 0), mech.plus(0, -.02, -.02), .012, PAL.chain);
-    tube(mech, cog.plus(0, -.04, 0), .012, PAL.chain);
-    drawPart(meshDisc, buildMatrix(cog, vec3(0, 0, PI/2), vec3(.55, 3, .55), scratch), PAL.chain);
-    box(mech, vec3(.03, .1, .05), PAL.black);
-    box(ring.plus(0, .12, -.03), vec3(.03, .05, .08), PAL.black);
-    box(rA.plus(.08, .1, -.06), vec3(.03, .05, .07), PAL.black);
-    // seat
+    // the drivetrain: chain from the ring to the cassette and back under through the mech (its body, its cage and
+    // two jockey wheels), a guide over the ring; and the calliper on the back rotor with its hose up the stay
+    const ring = bb.plus(.075, 0, 0), cog = rA.plus(.075, 0, 0), mech = rA.plus(.085, -.13, .03);
+    tube(ring.plus(0, .1, 0), cog.plus(0, .05, 0), .014, PAL.chain);
+    tube(ring.plus(0, -.1, 0), mech.plus(0, -.05, -.035), .014, PAL.chain);
+    tube(mech.plus(0, .035, .012), cog.plus(0, -.045, 0), .014, PAL.chain);
+    box(rA.plus(.088, -.06, .02), vec3(.03, .07, .05), PAL.black);
+    bone(meshBox, mech.plus(0, .045, .016), mech.plus(0, -.06, -.04), .012, .032, X, PAL.silver);
+    if (FINE) for (const [y, z] of [[.035, .012], [-.05, -.035]]) tube(mech.plus(-.009, y, z), mech.plus(.009, y, z), .046, PAL.black);
+    box(ring.plus(0, .125, -.02), vec3(.03, .04, .075), PAL.black);
+    box(rA.plus(-.075, .095, -.06), vec3(.035, .055, .075), PAL.black);
+    if (FINE) { box(rA.plus(-.075, .06, -.03), vec3(.02, .04, .03), PAL.silver); tube(rA.plus(-.075, .12, -.07), stayTop.plus(-.05, -.04, .02), .009, PAL.black); }
+    // seat: the post in its clamp, a shaped saddle on its rails
     MC = G?.seat ?? MF;
-    tube(seatTop, seatTop.plus(0, .07, .03), .035, PAL.silver);
-    box(seatTop.plus(0, .09, .05), vec3(.13, .05, .27), PAL.black);
-    box(seatTop.plus(0, .116, .05), vec3(.03, .006, .24), PAL.jersey2);
-    // the fork: a dual crown up past the head tube, or a single crown under it; the stanchions slide into the lowers
+    tube(seatTop.plus(0, -.02, -.005), seatTop.plus(0, .012, 0), .09*tk, PAL.black);
+    tube(seatTop, seatTop.plus(0, .075, .025), .034, PAL.silver);
+    if (FINE) for (const x of [-.022, .022]) tube(seatTop.plus(x, .083, -.03), seatTop.plus(x, .083, .12), .009, PAL.silver);
+    box(seatTop.plus(0, .08, .03), vec3(.05, .02, .05), PAL.black);
+    drawPart(meshSaddle, buildMatrix(seatTop.plus(0, .112, .045), undefined, undefined, scratch), PAL.black);
+    box(seatTop.plus(0, .117, .06), vec3(.02, .004, .17), PAL.jersey2);
+    // the fork: a dual crown up past the head tube, or a single crown under it; the stanchions slide into the lowers,
+    // which are joined by an arch and clamp the axle; a mudguard over the tyre, the front calliper and its hose
     MC = G?.fork ?? M;
     const forkDir = fA.subtract(vec3(0, .8, -.46)).normalize();
     for (const x of [-.075, .075])
     {
         const top = (bike.crowns == 2 ? headTop.plus(0, .02, 0) : headBot.plus(0, -.02, 0)).plus(x, 0, 0), stanEnd = headBot.add(forkDir.scale(.34)).plus(x, 0, 0);
-        tube(top, stanEnd, .052, PAL.gold);
-        tube(fA.plus(x, 0, 0), fA.plus(x, 0, 0).subtract(forkDir.scale(.4)), .075, PAL.black);
+        const low = fA.plus(x, 0, 0), lowTop = low.subtract(forkDir.scale(.4));
+        tube(top, stanEnd, .05, PAL.gold);
+        tube(low, lowTop, .078, PAL.black);
+        tube(lowTop, lowTop.subtract(forkDir.scale(.018)), .088, PAL.frameDark);
+        box(low, vec3(.05, .075, .085), PAL.black);
     }
-    if (bike.crowns == 2) box(headTop.plus(0, .02, 0), vec3(.23, .045, .07), PAL.black);
-    box(headBot.plus(0, -.02, 0), vec3(.23, .045, .07), PAL.black);
-    box(fA.plus(-.08, .1, .05), vec3(.03, .05, .07), PAL.black);
-    // stem and wide bars
+    const arch = fA.subtract(forkDir.scale(.37));
+    box(arch.plus(0, 0, -.045), vec3(.2, .045, .03), PAL.black);
+    drawPart(meshMudguard, buildMatrix(fA, undefined, undefined, scratch), PAL.black);
+    tube(fA.plus(-.105, 0, 0), fA.plus(.105, 0, 0), .03, PAL.silver);
+    if (bike.crowns == 2) drawPart(meshCrown, buildMatrix(headTop.plus(0, .02, 0), undefined, undefined, scratch), PAL.black);
+    drawPart(meshCrown, buildMatrix(headBot.plus(0, -.02, 0), undefined, undefined, scratch), PAL.black);
+    box(fA.plus(-.085, .095, .055), vec3(.035, .055, .075), PAL.black);
+    if (FINE) { box(fA.plus(-.085, .055, .035), vec3(.02, .04, .03), PAL.silver); tube(fA.plus(-.085, .12, .07), headBot.plus(-.1, -.03, .03), .009, PAL.black); }
+    // the cockpit: a stem with its faceplate, riser bars swept up and back to lock-on grips, the brake levers, the
+    // display and the number plate
     MC = G?.bars ?? MB;
-    const stem = headTop.plus(0, .04, -.05), bar = stem.plus(0, .04, 0);
-    tube(headTop, stem, .045, PAL.black);
-    box(stem.plus(0, .07, .02), vec3(.09, .05, .07), lit);
-    tube(bar.plus(-.4, .03, 0), bar.plus(.4, .03, 0), .032, PAL.black);
-    for (const x of [-.36, .36]) tube(bar.plus(x - .04, .03, 0), bar.plus(x + .04, .03, 0), .045, PAL.glove);
+    const stemA = headTop.plus(0, .05, 0), barC = headTop.plus(0, .085, -.07);
+    tube(headTop, stemA.plus(0, .02, 0), .05, PAL.black);
+    bone(meshBox, stemA, barC, .055, .05, X, PAL.black);
+    box(barC.plus(0, 0, -.022), vec3(.065, .055, .014), PAL.frameDark);
+    box(stemA.plus(0, .04, -.02), vec3(.085, .018, .06), lit);
+    const BAR = [[0, 0, 0], [.07, 0, 0], [.17, .045, .01], [.42, .06, .04]], bp = (sd, k)=> barC.plus(sd*BAR[k][0], BAR[k][1], BAR[k][2]);
+    for (const sd of [-1, 1])
+    {
+        for (let k = 0; k < 3; ++k) tube(bp(sd, k), bp(sd, k + 1), .03, PAL.black);
+        tube(barC.plus(sd*.315, .054, .027), barC.plus(sd*.425, .06, .04), .046, PAL.glove);
+        // the lever: its clamp on the bar and the blade out in front of the grip
+        box(barC.plus(sd*.275, .05, .012), vec3(.03, .04, .045), PAL.black);
+        tube(barC.plus(sd*.275, .042, -.01), barC.plus(sd*.375, .03, -.075), .016, PAL.silver);
+        if (FINE) for (const x of [.31, .43]) tube(barC.plus(sd*x, .054 + (x - .31)*.05, .026 + (x - .31)*.11), barC.plus(sd*(x + .008), .054 + (x - .31)*.05, .026 + (x - .31)*.11), .052, PAL.silver);
+    }
+    if (FINE) for (const [x, y] of [[-.022, .018], [.022, .018], [-.022, -.018], [.022, -.018]]) ball(barC.plus(x, y, -.03), .012, PAL.silver);
     // the number plate, on the front of the bars
-    drawPart(meshPlate, buildMatrix(headTop.plus(0, .1, -.11), vec3(-.25, 0, 0), undefined, scratch));
+    drawPart(meshPlate, buildMatrix(headTop.plus(0, .1, -.135), vec3(-.25, 0, 0), undefined, scratch));
     // cranks, chainring and pedals
     MC = G?.crank ?? MF;
-    drawPart(meshRing, buildMatrix(bb.plus(.07, 0, 0), vec3(crankA, 0, PI/2), undefined, scratch));
+    tube(bb.plus(-.095, 0, 0), bb.plus(.095, 0, 0), .032, PAL.silver);
+    drawPart(meshChainring, buildMatrix(bb.plus(.07, 0, 0), vec3(crankA, 0, PI/2), undefined, scratch));
     const pedals = [];
     for (const [x, a] of [[.17, crankA], [-.17, crankA + PI]])
     {
         const p = bb.plus(x, .17*cos(a), -.17*sin(a));
-        tube(bb.plus(x*.5, 0, 0), p, .03, PAL.silver);
-        box(p.plus(x*.15, 0, 0), vec3(.1, .025, .1), PAL.black);
+        bone(meshTaper4, bb.plus(x*.56, 0, 0), p.plus(-x*.06, 0, 0).lerp(bb.plus(x*.56, 0, 0), -.12), .024, .055, X, PAL.black);
+        tube(p.plus(-x*.12, 0, 0), p.plus(x*.08, 0, 0), .016, PAL.silver);
+        drawPart(meshPedal, buildMatrix(p.plus(x*.15, 0, 0), undefined, undefined, scratch));
         pedals.push(p.plus(x*.12, .04, 0));
     }
-    return {pedals, grips: [bar.plus(.37, .03, 0), bar.plus(-.37, .03, 0)], bb, seatTop};
+    return {pedals, grips: [barC.plus(.37, .057, .034), barC.plus(-.37, .057, .034)], bb, seatTop};
 }
 
 // the feet lie along the bike
@@ -9270,6 +9452,9 @@ function drawStars(hp)
 }
 function drawRiderView()
 {
+    // the small parts only when the rider is big enough on the screen to show them: on the menu, in the garage, in a
+    // wreck, and riding with the camera close (taller than about 70 px)
+    FINE = state != 'ride' || mainCanvasSize.y*RS/(max(1, camD)*tan(cam.fov/2)) > 70;
     if (wrecked())
     {
         const G = {};

@@ -1300,6 +1300,38 @@ The rider is reworked after `art/bluecow-rider-concept.png`, at its level of det
   - **No new shaders over a long ride through night and water:** this check was cut short and has not been run.
   - **GPU speed on a real phone** can't be timed here: `?perf=1` shows the frame meter on the device.
 
+## Rider and bike models reworked: done (Three.js version)
+- **Asked for:** better models for the rider and bike only, in a richer low-poly style, the rider a human in a full-face helmet (not the concept sheet's cow rider).
+- **How:** the same system as before (parts placed each frame through the instanced batches, so poses, tricks, the ragdoll, the bike in pieces, the four bikes, the kits and the rival all still work), with new shaped parts built once in `buildRiderMeshes`.
+  - **`buildSkin(rings)`** makes a faceted solid from rings of points, each face turned outward; `ringX`, `ringY` and `ringZ` make rings from flat outlines.
+  - **Colour:** white areas of a part take the kit's colour, dark ones stay dark.
+- **The bike** (`drawBike`):
+  - **Wheels** (`meshWheel`, one part each): three rows of knobs, sidewall lettering, a box rim with decals and a valve, 16 laced spokes, a hub with flanges. Rotors on swept arms (`meshRotor`), now both on the left; a stepped cassette (`meshCassette`).
+  - **Frame:** a down tube with cut corners holding the battery (`meshBar8`), a tapered top tube (`meshTaper4`), a gusset behind the head tube, a swingarm from its own pivot with tapered stays, dropouts and a link to the shock.
+  - **Fork:** shaped crowns (`meshCrown`), seals, an arch across the lowers, axle clamps and a mudguard (`meshMudguard`).
+  - **Drivetrain:** a toothed chainring with a bash guard (`meshChainring`), a mech with its cage, tapered crank arms, flat pedals with pins (`meshPedal`).
+  - **Cockpit:** a stem with a faceplate, riser bars swept up and back, lock-on grips, brake levers. The grips sit about 3 cm higher.
+  - **Saddle:** shaped, narrow nose to a kicked-up tail (`meshSaddle`), on a clamp.
+  - **eBike:** a motor housing across the cranks with a cover.
+- **The rider** (`drawBody`, `helmetHead`):
+  - **Helmet:** a shell in slices from neck to crown (`meshHelmet`) with a stripe of the kit's second colour, a chin bar with a grille, a peak and vents (`meshLidTrim`), and goggles with a frame, mirror lens, glint and strap (`meshGoggles`).
+  - **Torso:** shaped from hips to shoulders (`meshTorso`), with shoulder yokes, a collar and a number on the back.
+  - **Arms and hands:** an elbow cap and straps; gloves with a cuff, curled fingers, a knuckle guard and a thumb (`meshGlove`).
+  - **Legs and feet:** a pants cuff, a sock, and a flat-pedal shoe with a sole, strap and toe cap (`meshShoe`).
+- **Detail by distance** (`FINE`): bolts, hoses, coil turns, jockey wheels, saddle rails, grip rings, pad straps and the back number are drawn only on the menu, in the garage, in a wreck, or when the rider is taller than about 70 px on screen.
+- **Small parts cast no shadow of their own** (`shadow: false` on a batch).
+- **Checked:**
+  - **Close-ups:** garage from four sides for three bikes and four kits, with and without the pack; riding close, at MID and at NEAR; five tricks held at their middle; a crash. No page errors.
+  - **Cost riding at MID, portrait:**
+
+    | Measure | Before | After |
+    |---|---|---|
+    | Draw calls | 56 | 67 |
+    | Triangles | 80,145 | 86,297 |
+    | Frame time (logic and HUD) | 1.30 ms | 1.26 ms |
+
+  - **Sim:** 12.3 km with flips and tricks, 0 crashes.
+
 ## Next: proposals
 - **More fun:**
   - pumping (hold on a downslope for speed);

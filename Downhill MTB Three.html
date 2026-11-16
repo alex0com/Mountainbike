@@ -5820,7 +5820,7 @@ function updateCows(dt)
         {
             c.state = 'walk'; c.t = 0;
             if (!cowSeen) { cowSeen = true; showMessage('BLUE COW!', 'land on its back for points', hsl(.6,.8,.7)); }
-            moo(.9 + Math.random()*.3, .6, .16);
+            moo(.9 + Math.random()*.3, .6, .16); sfx('bell', Math.random()*3 | 0);
         }
         let speed = 0;
         if (c.state == 'walk')
@@ -10868,7 +10868,7 @@ function drawHUD()
     if (state == 'ride' && !mp.code && !mp.ws) button(W - 12 - 58*2 - 7 - 70 - 82, top, 75, 38, 'INVITE', mpHost, false, 12);
 
     const bw = 58, bh = 38;
-    button(W - 12 - bw, top, bw, bh, soundOn ? 'SND' : 'MUTE', toggleSound, !soundOn);
+    button(W - 12 - bw, top, bw, bh, soundLabel(), toggleSound, !soundOn, 12);
     camButtons(W, top, bw, bh);
     if (state == 'ride' && !inMatch() && pausedT < 0) button(W - 12 - bw, top + bh + 7, bw, 30, 'II', pauseGame, false, 13);
     if (state == 'ride' && pausedT < 0) drawHazard(W, H, top, bottom);
@@ -11181,7 +11181,7 @@ function drawTitle(W, H, top, bottom)
             txt(b, W/2, y - 16, fitSize(b, 14, W - 30, 700), 'rgba(255,255,255,.9)', 'center', 700);
         }
     }
-    button(W - 12 - 58, top, 58, 38, soundOn ? 'SND' : 'MUTE', toggleSound, !soundOn);
+    button(W - 12 - 58, top, 58, 38, soundLabel(), toggleSound, !soundOn, 12);
     // the cel shaded look, on or off
     button(W - 12 - 76, top + 45, 76, 32, celOn ? 'CEL ON' : 'CEL OFF', ()=> setCel(!celOn), celOn, 11);
     camButtons(W, top, 58, 38);
@@ -11356,94 +11356,172 @@ function drawResults(W, H)
 }
 
 // ============================================================================
-// SOUND - the tyres and the air going by, soft and low; swishes, ticks and soft tones for pickups, boosts, tricks and
-// crashes; and thumps for landings. No music: rendering it brought phone browsers down
+// SOUND - a bike and the outdoors, all made in the browser: the tyres on what they are riding, the freehub, the air,
+// landings and crashes built up from their parts, soft ticks and tones for pickups and tricks, the country around
+// (birds, crickets, wind, water) and a quiet tune played live
 // ============================================================================
-let au, fx, soundOn = true;
-// thumps and splashes: ZzFX one shots, each through a low pass so nothing hisses or crackles
-const SFX = {
-    land:     new Sound([.33,.1,70,.006,.03,.2,4,1.2,-8,,,,,4,,,.04,.5,,,-1000]),
-    landHard: new Sound([.45,.1,55,.006,.06,.34,4,1.6,-6,,,,,6,,,.07,.4,,,-700]),
-    crash:    new Sound([.45,.15,85,.01,.18,.6,4,2.2,-4,,,,.09,8,,,.1,.35,,,-800]),
-    grind:    new Sound([.16,.2,900,.01,.05,.12,4,1,-6,,,,,6,,,.02,.5,,,-1200]),
-    splash:   new Sound([.29,.3,500,.01,.12,.35,4,.4,,,,,,9,,,.06,.5,,,-900]),
-    berm:     new Sound([.20,.2,180,.08,.25,.35,4,.8,-4,,,,,2.5,,,.06,.45,,,-450]),
-    thud:     new Sound([.36,.1,60,.006,.04,.15,4,1.5,-5,,,,,6,,,.05,.4,,,-700]),
-    clank:    new Sound([.16,.05,520,.003,.02,.14,1,1.4,,,,,,,,,.03,.5,.1,,-900]),
-    bonk:     new Sound([.45,.05,170,.004,.05,.3,1,2,-12,,,,,3,,,.04,.5,,,-500])};
-
+// how it is switched: 2 the music and the sounds, 1 the sounds only, 0 nothing
+let au, fx, soundOn = true, musicOn = true;
+try { const v = localStorage.getItem('bcr.snd'); if (v == '0') { soundOn = false; setSoundVolume(0); } else if (v == '1') musicOn = false; } catch(e) {}
+const soundLabel = ()=> !soundOn ? 'MUTE' : musicOn ? 'MUSIC' : 'SND';
 const midiHz = m=> 440*2**((m - 69)/12);
-// ---------- the natural voice: no tunes and no arcade blips. Two things only: a breath of filtered noise (a swish, a
-// tick, a rush of air) and a soft sine tone like a struck wooden bar, alone or as a chord struck at once
-const NOISE = new WeakMap;
-function noiseBuf(ac)
+
+// ---------- the mix: four buses (the ride's own noise, the one-shots, the country around, the music) into a gentle
+// limiter, so nothing clips when sounds pile up; and a short dark reverb they each send a little into, for some
+// space round them. Everything that makes a sound is given the mix and a time, so the same code plays live and
+// renders a preview off line
+function makeMix(ac, dest)
 {
-    let b = NOISE.get(ac);
-    if (!b)
+    const lim = ac.createDynamicsCompressor();
+    lim.threshold.value = -14; lim.knee.value = 10; lim.ratio.value = 6; lim.attack.value = .005; lim.release.value = .2;
+    lim.connect(dest);
+    const bus = v=> { const g = ac.createGain(); g.gain.value = v; g.connect(lim); return g; };
+    const M = {ac, ride: bus(.9), fx: bus(3), amb: bus(2.2), music: bus(1.3)};
+    // the reverb: noise dying away over a second and a bit, duller toward its end, a little different in each ear
+    const sr = ac.sampleRate, n = 1.25*sr | 0, ir = ac.createBuffer(2, n, sr);
+    for (let c = 0; c < 2; ++c)
     {
-        b = ac.createBuffer(1, ac.sampleRate, ac.sampleRate);
-        const d = b.getChannelData(0);
-        for (let i = 0; i < d.length; ++i) d[i] = Math.random()*2 - 1;
-        NOISE.set(ac, b);
+        const d = ir.getChannelData(c);
+        let l = 0;
+        for (let i = 0; i < n; ++i) { const u = i/n, k = .25 + .6*u; l += ((Math.random()*2 - 1) - l)*(1 - k); d[i] = l*(1 - u)**2.4*min(1, i/300); }
     }
-    return b;
+    const conv = ac.createConvolver(), wet = ac.createGain(), cut = ac.createBiquadFilter();
+    conv.buffer = ir; wet.gain.value = 1.6; cut.type = 'lowpass'; cut.frequency.value = 3200;
+    wet.connect(cut); cut.connect(conv); conv.connect(lim);
+    M.wet = wet;
+    // noise to draw on: white, pink (softer at the top) and brown (a deep rumble)
+    const buffer = (seconds, fill)=> { const b = ac.createBuffer(1, seconds*sr | 0, sr); fill(b.getChannelData(0)); return b; };
+    M.white = buffer(1, d=> { for (let i = 0; i < d.length; ++i) d[i] = Math.random()*2 - 1; });
+    M.pink = buffer(2, d=>
+    {
+        let b0 = 0, b1 = 0, b2 = 0;
+        for (let i = 0; i < d.length; ++i)
+        {
+            const w = Math.random()*2 - 1;
+            b0 = .99765*b0 + w*.099046; b1 = .963*b1 + w*.2965164; b2 = .57*b2 + w*1.0526913;
+            d[i] = (b0 + b1 + b2 + w*.1848)*.12;
+        }
+    });
+    M.brown = buffer(2, d=> { let l = 0; for (let i = 0; i < d.length; ++i) { l = (l + .02*(Math.random()*2 - 1))/1.02; d[i] = l*3.5; } });
+    // gravel: grit of all sizes thrown up at random, a crackle rather than a hiss
+    M.gravel = buffer(2, d=> { let l = 0; for (let i = 0; i < d.length; ++i) { const hit = Math.random() < .012 ? (Math.random()*2 - 1)*Math.random() : 0; l += (hit - l)*.35; d[i] = l*3; } });
+    return M;
 }
-// a breath of noise through a band that slides from f0 to f1: eased in over att, dying away by len
-function puff(dest, t, len, vol, f0, f1=f0, q=1.2, att=min(.03, len*.3))
+// a sound into its bus, placed left or right, with a share of it sent to the reverb
+function route(M, node, {bus='fx', send=0, pan=0}={})
 {
-    const ac = dest.context, src = ac.createBufferSource(), f = ac.createBiquadFilter(), g = ac.createGain();
-    src.buffer = noiseBuf(ac); src.loop = true;
-    f.type = 'bandpass'; f.Q.value = q;
-    f.frequency.setValueAtTime(f0, t); f.frequency.exponentialRampToValueAtTime(f1, t + len);
-    g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(vol, t + att); g.gain.exponentialRampToValueAtTime(.0005, t + len);
-    src.connect(f); f.connect(g); g.connect(dest);
+    let n = node;
+    if (pan && M.ac.createStereoPanner) { const p = M.ac.createStereoPanner(); p.pan.value = clampV(pan, -1, 1); n.connect(p); n = p; }
+    n.connect(M[bus]);
+    if (send > 0) { const g = M.ac.createGain(); g.gain.value = send; n.connect(g); g.connect(M.wet); }
+}
+// ---------- the voices everything is made of
+// a breath of noise through a band that slides from f0 to f1: eased in over att, dying away by len
+function puff(M, t, len, vol, f0, f1=f0, o={})
+{
+    const ac = M.ac, src = ac.createBufferSource(), f = ac.createBiquadFilter(), g = ac.createGain(), att = o.att ?? min(.03, len*.3);
+    src.buffer = M[o.noise || 'white']; src.loop = true;
+    f.type = o.type || 'bandpass'; f.Q.value = o.q ?? 1.2;
+    f.frequency.setValueAtTime(f0, t); f.frequency.exponentialRampToValueAtTime(max(20, f1), t + len);
+    g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(vol, t + att); g.gain.exponentialRampToValueAtTime(.0004, t + len);
+    src.connect(f); f.connect(g); route(M, g, o);
     src.start(t, Math.random()*.5); src.stop(t + len + .02);
 }
-// a soft struck tone: a sine with a faint octave over it that dies sooner, eased in and ringing away
-function ping(dest, midi, t, len, vol)
+// a struck tone: a sine and a few partials over it (each [how many times the pitch, how loud, how long]), eased in
+// and ringing away. The default is a wooden bar; other partials make a bell or a clank
+const BAR = [[1, 1, 1], [2, .18, .4]];
+function ping(M, t, hz, len, vol, o={})
 {
-    const ac = dest.context;
-    for (const [k, v, l] of [[1, vol, len], [2, vol*.18, len*.4]])
+    const ac = M.ac, mixg = ac.createGain();
+    for (const [k, v, l] of o.partials || BAR)
     {
-        const o = ac.createOscillator(), g = ac.createGain();
-        o.frequency.value = midiHz(midi)*k;
-        g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(v, t + .008); g.gain.exponentialRampToValueAtTime(.0004, t + l);
-        o.connect(g); g.connect(dest);
-        o.start(t); o.stop(t + l + .02);
+        const os = ac.createOscillator(), g = ac.createGain();
+        os.type = o.wave || 'sine'; os.frequency.setValueAtTime(hz*k, t);
+        if (o.to) os.frequency.exponentialRampToValueAtTime(o.to*k, t + len*l);
+        g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(vol*v, t + (o.att ?? .008)); g.gain.exponentialRampToValueAtTime(.0003, t + len*l);
+        os.connect(g); g.connect(mixg);
+        os.start(t); os.stop(t + len*l + .02);
     }
+    route(M, mixg, o);
 }
-const chord = (d, t, notes, len, vol)=> { for (const n of notes) ping(d, n, t, len, vol/notes.length**.5); };
-// each plays into d from time t, v telling it which one (a streak, a direction)
+const note = (M, t, midi, len, vol, o)=> ping(M, t, midiHz(midi), len, vol, o);
+const chord = (M, t, notes, len, vol, o)=> { for (const n of notes) note(M, t, n, len, vol/notes.length**.5, o); };
+// something heavy and soft: a low tone dropping in pitch
+const thump = (M, t, f0, f1, len, vol, o={})=> ping(M, t, f0, len, vol, {partials: [[1, 1, 1]], to: f1, att: .004, ...o});
+// something small and hard: a tick of bright noise
+const tick = (M, t, vol, f=3500, o={})=> puff(M, t, o.len ?? .018, vol, f, f*.7, {q: 2, att: .002, ...o});
+// metal on metal: partials that are not in tune with each other
+const CLANK = [[1, 1, 1], [1.51, .6, .7], [2.37, .4, .5], [3.6, .25, .3]];
+
+// ---------- the one-shots: each plays into the mix M from time t; v says how hard, how far along a run, which way
 const COIN = [60, 63, 65, 68, 70, 72, 75, 77];
+// what the wheels are on, for a landing: 0 dirt, 1 snow, 2 wood, 3 rock
+function landOn(M, t, hit, surf)
+{
+    const h = clamp01(hit), wood = surf == 2, snow = surf == 1;
+    // the weight coming down, the tyres squashing, the suspension through its stroke, the chain slapping the stay
+    thump(M, t, wood ? 95 : 68, wood ? 60 : 36, .18 + .1*h, (snow ? .1 : .16)*(.45 + h), {send: .1});
+    puff(M, t, .1 + .1*h, (snow ? .1 : .06)*(.5 + h), snow ? 1400 : 500, snow ? 700 : 160, {q: .7, noise: 'pink', send: .1});
+    puff(M, t + .01, .16, .022*(.4 + h), 2600, 900, {q: .9});
+    if (wood) note(M, t, 50, .12, .05*(.5 + h), {send: .2});
+    if (!snow) for (let k = 0; k < 2 + (h > .5); ++k) tick(M, t + .03 + k*.045 + Math.random()*.01, .03*(.5 + h)*(1 - k*.25), 3200 + 900*Math.random());
+}
 const JINGLES = {
     // a sprocket: a soft dry tick, a touch brighter along a run of them
-    orb:      (d, t, v)=> puff(d, t, .03, .09, 1500 + 60*(v % 8), 1100, 2.5, .003),
+    orb:      (M, t, v)=> puff(M, t, .03, .09, 1500 + 60*(v % 8), 1100, {q: 2.5, att: .003, send: .08}),
     // a battery cell: one soft tone, a step higher with each of a set
-    cell:     (d, t, v)=> ping(d, [63, 65, 67, 68, 70, 72][v % 6], t, .22, .05),
-    // a jump: the tyres leaving the dirt, a short low swish
-    jump:     (d, t)=> puff(d, t, .13, .12, 350, 900, .9),
+    cell:     (M, t, v)=> note(M, t, [63, 65, 67, 68, 70, 72][v % 6], .24, .05, {send: .3}),
+    // a jump: the tyres letting go of the dirt and the suspension springing back
+    jump:     (M, t)=> { puff(M, t, .12, .1, 380, 900, {q: .9, noise: 'pink'}); puff(M, t + .02, .1, .03, 1200, 2600, {q: 1}); },
     // a trick starting: a quick swish of air, a little higher or lower by the way it was swiped
-    whoosh:   (d, t, v)=> puff(d, t, .16, .065, 700 + 40*v, 1900 + 60*v, 1),
-    trick:    (d, t)=> ping(d, 68, t, .25, .05),
-    trickBig: (d, t)=> chord(d, t, [63, 70], .35, .055),
-    bank:     (d, t)=> chord(d, t, [56, 63, 68], .5, .05),
-    perfect:  (d, t)=> ping(d, 75, t, .18, .035),
-    line:     (d, t)=> chord(d, t, [61, 68], .4, .055),
-    go:       (d, t)=> chord(d, t, [56, 63], .45, .055),
-    ready:    (d, t)=> ping(d, 70, t, .3, .045),
+    whoosh:   (M, t, v)=> puff(M, t, .17, .065, 700 + 40*v, 1900 + 60*v, {q: 1, send: .15, pan: (v % 2 ? .3 : -.3)}),
+    trick:    (M, t)=> note(M, t, 68, .26, .05, {send: .3}),
+    trickBig: (M, t)=> chord(M, t, [63, 70], .38, .055, {send: .35}),
+    bank:     (M, t)=> chord(M, t, [56, 63, 68], .55, .05, {send: .4}),
+    perfect:  (M, t)=> note(M, t, 75, .2, .035, {send: .3}),
+    line:     (M, t)=> chord(M, t, [61, 68], .42, .055, {send: .35}),
+    go:       (M, t)=> chord(M, t, [56, 63], .5, .055, {send: .4}),
+    ready:    (M, t)=> note(M, t, 70, .32, .045, {send: .3}),
     // pedal power: a rush of air and a low tone
-    chain:    (d, t)=> { puff(d, t, .3, .05, 400, 1400, .8, .12); ping(d, 56, t + .1, .4, .05); },
+    chain:    (M, t)=> { puff(M, t, .3, .05, 400, 1400, {q: .8, att: .12}); note(M, t + .1, 56, .42, .05, {send: .3}); },
     // the turbo: the motor's rush winding up; a send the same, longer
-    turbo:    (d, t)=> puff(d, t, .6, .14, 250, 1800, .9, .35),
-    send:     (d, t)=> puff(d, t, .8, .15, 250, 2200, .9, .5),
-    tyre:     (d, t)=> puff(d, t, .15, .06, 300, 500, 1),
-    // a crash: a low breath of dust settling (the thump is its own sample)
-    crash:    (d, t)=> puff(d, t + .1, .7, .1, 500, 120, .7, .1),
-    click:    (d, t)=> puff(d, t, .02, .06, 1800, 1400, 2.5, .002)};
-function jingle(name, v=0, m=fx, t)
+    turbo:    (M, t)=> puff(M, t, .6, .14, 250, 1800, {q: .9, att: .35, send: .15}),
+    send:     (M, t)=> puff(M, t, .8, .15, 250, 2200, {q: .9, att: .5, send: .2}),
+    // landings, by how hard (v, 0 to 1) and what they come down on
+    land:     (M, t, v, surf)=> landOn(M, t, .15 + .6*v, surf),
+    landHard: (M, t, v, surf)=> { landOn(M, t, 1, surf); thump(M, t + .015, 48, 30, .3, .14, {send: .15}); },
+    // a crash: the bike and the rider going down in a heap, then the dust
+    crash:    (M, t)=>
+    {
+        thump(M, t, 80, 34, .34, .26, {send: .2});
+        puff(M, t, .28, .12, 900, 200, {q: .6, noise: 'pink', send: .15});
+        for (let k = 0; k < 4; ++k) thump(M, t + .16 + k*.17 + Math.random()*.06, 70 + 40*Math.random(), 40, .14, .12*(1 - k*.2), {send: .15});
+        for (let k = 0; k < 5; ++k) ping(M, t + .06 + k*.13 + Math.random()*.07, 900 + 1300*Math.random(), .09, .022*(1 - k*.15), {partials: CLANK, send: .2, pan: Math.random() - .5});
+        puff(M, t + .35, .9, .05, 600, 150, {q: .5, att: .2, noise: 'pink'});
+    },
+    // onto a wooden rail: a knock and the scrape starting
+    grind:    (M, t)=> { note(M, t, 52, .1, .06, {send: .2}); puff(M, t, .22, .06, 700, 1100, {q: 1.4, noise: 'gravel'}); },
+    // through a creek: the slap of the water, the spray and a few drops
+    splash:   (M, t)=>
+    {
+        puff(M, t, .1, .14, 700, 300, {q: .7, noise: 'pink'});
+        puff(M, t + .02, .45, .1, 2600, 900, {q: .6, att: .05, send: .25});
+        for (let k = 0; k < 4; ++k) ping(M, t + .12 + k*.07 + Math.random()*.05, 900 + 900*Math.random(), .05, .012, {partials: [[1, 1, 1]], to: 1500 + 800*Math.random(), send: .3, pan: Math.random() - .5});
+    },
+    // into a berm: the tyres loading up
+    berm:     (M, t)=> puff(M, t, .32, .07, 220, 520, {q: .8, att: .1, noise: 'pink'}),
+    // parts of a wreck hitting the ground: something heavy, something metal
+    thud:     (M, t)=> { thump(M, t, 90, 48, .14, .14, {send: .15}); puff(M, t, .08, .04, 500, 200, {q: .7, noise: 'pink'}); },
+    clank:    (M, t)=> ping(M, t, 700 + 500*Math.random(), .14, .035, {partials: CLANK, send: .25, pan: Math.random() - .5}),
+    // the rider into the logo
+    bonk:     (M, t)=> { thump(M, t, 170, 70, .2, .2, {send: .25}); ping(M, t, 330, .3, .04, {partials: CLANK, send: .3}); },
+    // a cow's bell, as it walks out
+    bell:     (M, t, v)=> ping(M, t, 520 + 60*(v || 0), .32, .03, {partials: [[1, 1, 1], [1.48, .7, .8], [2.9, .25, .4]], send: .35, pan: .4}),
+    click:    (M, t)=> puff(M, t, .02, .06, 1800, 1400, {q: 2.5, att: .002})};
+function jingle(name, v=0, M=fx, t, surf=0)
 {
-    if (!m) return;
-    JINGLES[name](m.fx, t ?? m.ac.currentTime + .005, v);
+    if (!M) return;
+    JINGLES[name](M, t ?? M.ac.currentTime + .005, v, surf);
 }
 
 // a cow's moo, made from scratch: a buzzing voice through a mouth that opens from mmm to ooo and closes again,
@@ -11452,7 +11530,7 @@ function jingle(name, v=0, m=fx, t)
 function moo(pitch=1, d=.8, loud=.22)
 {
     perfMark(256);
-    if (!soundOn || !audioContext || audioContext.state != 'running' || !audioMasterGain) return false;
+    if (!soundOn || !fx || audioContext.state != 'running') return false;
     const ac = audioContext, t = ac.currentTime + .02, u = d/1.7;
     const voice = (type, k, level)=>
     {
@@ -11477,86 +11555,90 @@ function moo(pitch=1, d=.8, loud=.22)
     mouth.frequency.linearRampToValueAtTime(720, t + 1.15*u);
     mouth.frequency.linearRampToValueAtTime(260, t + d);
     throat.type = 'peaking'; throat.frequency.value = 620; throat.Q.value = 1.8; throat.gain.value = 9;
+    // (the one-shots' bus is three times up: the moo is as loud as it was)
     env.gain.setValueAtTime(0, t);
-    env.gain.linearRampToValueAtTime(loud, t + .14*u);
-    env.gain.setValueAtTime(loud, t + 1.2*u);
+    env.gain.linearRampToValueAtTime(loud/3, t + .14*u);
+    env.gain.setValueAtTime(loud/3, t + 1.2*u);
     env.gain.linearRampToValueAtTime(0, t + d);
     voice('sawtooth', 1, .7).connect(mouth);
     voice('square', .5, .35).connect(mouth);
-    mouth.connect(throat); throat.connect(env); env.connect(audioMasterGain);
+    mouth.connect(throat); throat.connect(env); route(fx, env, {send: .3, pan: .3});
     return true;
 }
 
+// what the wheels are on, for the sounds: 0 dirt, 1 snow, 2 wood (a deck, a skinny, a bridge), 3 rock (a wall ride)
+function soundSurface()
+{
+    if (grinding) return grinding.wall ? 3 : 2;
+    if (!onBranch(px)) for (const g of gullies) if (g.bridge && abs(px - g.xc) < g.hw) return 2;
+    return surfNow == S_SNOW ? 1 : 0;
+}
 function sfx(name, v=0)
 {
     perfMark(256);
-    if (!soundOn) return;
-    if (JINGLES[name] && audioContext?.state == 'running') jingle(name, v);
-    const s = SFX[name];
-    if (!s) return;
-    if (name == 'land') s.play(undefined, .45 + v*.6);
-    else s.play();
+    if (!soundOn || !fx || audioContext?.state != 'running' || !JINGLES[name]) return;
+    jingle(name, v, fx, undefined, state == 'ride' ? soundSurface() : 0);
 }
+// the switch goes round: the music and the sounds, the sounds only, nothing
 function toggleSound()
 {
-    soundOn = !soundOn;
+    if (soundOn && musicOn) musicOn = false;
+    else if (soundOn) soundOn = false;
+    else soundOn = musicOn = true;
     setSoundVolume(soundOn ? .5 : 0);
+    try { localStorage.setItem('bcr.snd', !soundOn ? 0 : musicOn ? 2 : 1); } catch(e) {}
 }
 function audioUnlock()
 {
-    if (audioContext && audioContext.state != 'running') audioContext.resume?.().catch?.(()=> {});
+    if (audioContext && audioContext.state != 'running' && pausedT < 0) audioContext.resume?.().catch?.(()=> {});
 }
 
-// ---------- the noise under it all, soft and low: the tyres rolling and crunching, the air going by, a rail's
-// grind and the motor's hum
-function soundLoops(ac, dest)
+// ---------- the ride's own noise, going all the time and turned up and down by the speed and what is under the
+// wheels: the tyres on dirt (a low rumble and the crackle of grit), on snow (soft), on wood (hollow), on rock; the
+// freehub's clicking buzz when the bike is coasting, clearest in the air; the air going by, in both ears; the brakes;
+// the motor; a low wind over the open country; and running water where there is a creek
+function soundLoops(M)
 {
-    const sr = ac.sampleRate;
-    const buffer = (seconds, fill)=>
-    {
-        const b = ac.createBuffer(1, seconds*sr | 0, sr);
-        fill(b.getChannelData(0));
-        return b;
-    };
-    // brown noise, a deep rumble, and pink, softer than white with less of the hiss at the top
-    const brown = buffer(2, d=>
-    {
-        let l = 0;
-        for (let i = 0; i < d.length; ++i) { l = (l + .02*(Math.random()*2 - 1))/1.02; d[i] = l*3.5; }
-    });
-    const pink = buffer(2, d=>
-    {
-        let b0 = 0, b1 = 0, b2 = 0;
-        for (let i = 0; i < d.length; ++i)
-        {
-            const w = Math.random()*2 - 1;
-            b0 = .99765*b0 + w*.099046; b1 = .963*b1 + w*.2965164; b2 = .57*b2 + w*1.0526913;
-            d[i] = (b0 + b1 + b2 + w*.1848)*.12;
-        }
-    });
-    const loop = (b, type, freq, q)=>
+    const ac = M.ac;
+    const loop = (buf, type, freq, q, o={})=>
     {
         const src = ac.createBufferSource(), filter = ac.createBiquadFilter(), gain = ac.createGain();
-        src.buffer = b; src.loop = true;
+        src.buffer = M[buf]; src.loop = true;
         filter.type = type; filter.frequency.value = freq; filter.Q.value = q;
         gain.gain.value = 0;
-        src.connect(filter); filter.connect(gain); gain.connect(dest);
-        src.start();
+        src.connect(filter); filter.connect(gain); route(M, gain, {bus: 'ride', ...o});
+        src.start(0, Math.random()*.9);
         return {src, filter, gain};
     };
     const L = {
-        roll: loop(brown, 'lowpass', 300, .7),
-        grit: loop(pink, 'bandpass', 500, .9),
-        wind: loop(brown, 'lowpass', 400, .5),
-        grind: loop(pink, 'bandpass', 1500, 1.2)};
-    // the eBike motor: a soft hum, a low note and its octave, rising a little with the speed
+        roll: loop('brown', 'lowpass', 300, .7),
+        grit: loop('gravel', 'bandpass', 1300, .7),
+        snow: loop('pink', 'highpass', 1500, .5),
+        wood: loop('brown', 'bandpass', 170, 3.5, {send: .15}),
+        rock: loop('gravel', 'bandpass', 700, 1),
+        skid: loop('pink', 'bandpass', 700, .9),
+        squeal: loop('pink', 'bandpass', 2400, 9),
+        windL: loop('brown', 'lowpass', 400, .5, {pan: -.7}),
+        windR: loop('brown', 'lowpass', 400, .5, {pan: .7}),
+        moan: loop('brown', 'bandpass', 320, 2.5, {bus: 'amb', send: .3}),
+        water: loop('pink', 'bandpass', 1100, .8, {bus: 'amb', send: .2}),
+        grind: loop('gravel', 'bandpass', 900, 1.2)};
+    // the water is put left or right of the rider
+    if (ac.createStereoPanner) { L.waterPan = ac.createStereoPanner(); L.water.gain.disconnect(); L.water.gain.connect(L.waterPan); route(M, L.waterPan, {bus: 'amb', send: .2}); }
+    // the freehub: bright noise let through in clicks, so many a second
+    const fh = loop('white', 'bandpass', 3000, 1.6), gate = ac.createGain(), tr = ac.createOscillator(), sh = ac.createWaveShaper(), n = 256, curve = new Float32Array(n);
+    for (let i = 0; i < n; ++i) curve[i] = i > n*.9 ? 1 : 0;
+    gate.gain.value = 0; fh.filter.disconnect(); fh.filter.connect(gate); gate.connect(fh.gain);
+    tr.type = 'sawtooth'; tr.frequency.value = 60; sh.curve = curve; tr.connect(sh); sh.connect(gate.gain); tr.start();
+    L.hub = {gain: fh.gain.gain, rate: tr.frequency};
+    // the eBike motor: a whirr, two notes a fifth apart rising with the speed
     const o1 = ac.createOscillator(), o2 = ac.createOscillator(), h = ac.createGain(), f = ac.createBiquadFilter(), g = ac.createGain();
-    o1.frequency.value = 62; o2.frequency.value = 124; h.gain.value = .35;
-    f.type = 'lowpass'; f.frequency.value = 420;
+    o1.type = o2.type = 'sawtooth'; o1.frequency.value = 90; o2.frequency.value = 135; h.gain.value = .5;
+    f.type = 'lowpass'; f.frequency.value = 700; f.Q.value = 2;
     g.gain.value = 0;
-    o1.connect(f); o2.connect(h); h.connect(f); f.connect(g); g.connect(dest);
+    o1.connect(f); o2.connect(h); h.connect(f); f.connect(g); route(M, g, {bus: 'ride'});
     o1.start(); o2.start();
-    L.motor = {o1, o2, g};
+    L.motor = {o1, o2, f, g};
     L.last = new Map;
     return L;
 }
@@ -11571,18 +11653,100 @@ function soundLoopsSet(L, now, s)
         if (was !== undefined && abs(v - was) <= max(.002, abs(was)*.02)) return;
         L.last.set(param, v);
         param.setTargetAtTime(v, now, tc);
-    }, speed = s.speed;
-    set(L.roll.gain.gain, s.onGround ? clamp01(speed/12)*(s.deck ? .5 : s.snow ? .2 : .32) : 0);
-    set(L.roll.filter.frequency, s.deck ? 90 + speed*10 : 110 + speed*18);
-    set(L.grit.gain.gain, s.skid ? .11 : s.onGround ? clamp01(speed/14)*(s.deck ? .02 : s.snow ? .12 : .08) : 0);
-    set(L.grit.filter.frequency, s.skid ? 600 + speed*20 : s.snow ? 800 + speed*20 : 350 + speed*15);
-    // the air: a soft rush that grows with the speed and comes and goes in slow gusts
-    const gust = .8 + .2*sin(now*.7)*sin(now*.29 + 1);
-    set(L.wind.gain.gain, s.riding ? (clamp01((speed - 5)/25)**2*.14 + (s.air ? .03 : 0) + (s.boost ? .03 : 0))*gust : 0, .3);
-    set(L.wind.filter.frequency, 300 + speed*16, .3);
-    set(L.grind.gain.gain, s.grinding ? .06 : 0, .05);
-    set(L.motor.g.gain, s.turbo ? .06 : 0, .15);
-    set(L.motor.o1.frequency, 62 + speed*1.6); set(L.motor.o2.frequency, 124 + speed*3.2);
+    }, speed = s.speed, on = s.onGround ? clamp01(speed/12) : 0, surf = s.surf || 0, fast = clamp01(speed/30);
+    set(L.roll.gain.gain, on*(surf == 2 ? .12 : surf == 1 ? .16 : .3));
+    set(L.roll.filter.frequency, 110 + speed*16);
+    set(L.grit.gain.gain, surf == 0 ? on*(.12 + .16*fast) : 0);
+    set(L.grit.filter.frequency, 900 + speed*30);
+    set(L.snow.gain.gain, surf == 1 ? on*.08 : 0);
+    set(L.wood.gain.gain, surf == 2 ? on*.5 : 0, .03);
+    set(L.wood.filter.frequency, 140 + speed*3);
+    set(L.rock.gain.gain, surf == 3 ? on*.12 : 0, .03);
+    set(L.grind.gain.gain, s.grinding ? .05 : 0, .05);
+    set(L.skid.gain.gain, s.skid ? .1 : 0);
+    set(L.skid.filter.frequency, 500 + speed*18);
+    set(L.squeal.gain.gain, s.skid ? .012 + .012*fast : 0, .1);
+    // the freehub: coasting it clicks, faster with the wheel; with the tyres off the ground it is what is heard
+    set(L.hub.gain, s.riding && !s.turbo ? (s.onGround ? .06 : .22)*clamp01(speed/6) : 0, .05);
+    set(L.hub.rate, 24 + speed*5, .1);
+    // the air: a rush in both ears that grows with the speed and comes and goes in slow gusts, not quite together
+    const rush = s.riding ? clamp01((speed - 5)/25)**2*.13 + (s.air ? .03 : 0) + (s.boost ? .03 : 0) : 0;
+    set(L.windL.gain.gain, rush*(.8 + .2*sin(now*.7)*sin(now*.29 + 1)), .3);
+    set(L.windR.gain.gain, rush*(.8 + .2*sin(now*.61 + 2)*sin(now*.33)), .3);
+    set(L.windL.filter.frequency, 300 + speed*16, .3); set(L.windR.filter.frequency, 320 + speed*15, .3);
+    set(L.motor.g.gain, s.turbo ? .035 : 0, .15);
+    set(L.motor.o1.frequency, 90 + speed*4); set(L.motor.o2.frequency, 135 + speed*6); set(L.motor.f.frequency, 500 + speed*30);
+    // the country: a low wind over the snow and the red rock, and the creek when there is one near
+    set(L.moan.gain.gain, (s.moan || 0)*(.75 + .25*sin(now*.23)), .8);
+    set(L.moan.filter.frequency, 280 + 60*sin(now*.17), .8);
+    set(L.water.gain.gain, (s.water || 0)*.1, .3);
+    if (L.waterPan) set(L.waterPan.pan, s.waterPan || 0, .2);
+}
+
+// ---------- the country around, quiet and a little way off: birds in the trees by day, crickets at night, leaves in
+// the autumn woods. Each call is a few short notes put together as it comes due (A keeps when the next ones are)
+function ambience(M, A, now, s)
+{
+    if (A.t === undefined || A.t < now - 2) A.t = now, A.bird = now + 1, A.cricket = now + .5, A.leaf = now + 3;
+    const quiet = 1 - .55*clamp01(s.speed/35), o = (pan, send=.45)=> ({bus: 'amb', send, pan});
+    while (A.bird < now + .5)
+    {
+        const t = A.bird, pan = Math.random()*1.6 - .8, v = .02*quiet*(.5 + Math.random()), kind = Math.random()*3 | 0;
+        if (s.birds > .2)
+        {
+            if (kind == 0) for (let k = 0, n = 3 + (Math.random()*4 | 0); k < n; ++k) { const f = 3000 + 1500*Math.random(); ping(M, t + k*.085, f, .06, v, {partials: [[1, 1, 1]], to: f*(Math.random() < .5 ? 1.25 : .8), ...o(pan)}); }
+            else if (kind == 1) { const f = 2100 + 700*Math.random(); ping(M, t, f, .16, v, {partials: [[1, 1, 1]], to: f*1.2, att: .03, ...o(pan)}); ping(M, t + .2, f*1.25, .22, v, {partials: [[1, 1, 1]], to: f, att: .03, ...o(pan)}); }
+            else for (let k = 0, f = 3800 + 800*Math.random(); k < 8; ++k) ping(M, t + k*.045, f, .03, v*.8, {partials: [[1, 1, 1]], ...o(pan)});
+        }
+        A.bird += (1.2 + 4*Math.random())/max(.3, s.birds);
+    }
+    while (A.cricket < now + .5)
+    {
+        if (s.night > .3) for (let k = 0; k < 3; ++k) ping(M, A.cricket + k*.05, 4500, .03, .007*s.night*quiet, {partials: [[1, 1, 1]], ...o(A.side = -(A.side || .6), .3)});
+        A.cricket += .45 + .5*Math.random();
+    }
+    while (A.leaf < now + .5)
+    {
+        if (s.leaves > .3) puff(M, A.leaf, .7 + Math.random()*.6, .012*quiet*s.leaves, 2600, 4200, {q: .6, att: .3, noise: 'pink', ...o(Math.random() - .5, .2)});
+        A.leaf += 2 + 5*Math.random();
+    }
+    A.t = now;
+}
+
+// ---------- the music: calm and warm, played a few notes at a time as they come due, never rendered ahead (a long
+// buffer of it is what brought phones down before). Four bars round and round in the key the pickups ring in: a soft
+// pad, a low note under it, a plucked pattern when the ride has some flow, a light pulse at full flow
+const TUNE = {bpm: 84, chords: [[53, 56, 60, 63], [49, 53, 56, 60], [56, 60, 63, 67], [51, 55, 58, 62]], pat: [0, 2, 1, 2, 3, 2, 1, 2]};
+function padNote(M, t, midi, len, vol)
+{
+    const ac = M.ac, f = ac.createBiquadFilter(), g = ac.createGain();
+    f.type = 'lowpass'; f.frequency.value = 900; f.Q.value = .5;
+    for (const d of [-5, 5]) { const o = ac.createOscillator(); o.type = 'triangle'; o.frequency.value = midiHz(midi); o.detune.value = d; o.connect(f); o.start(t); o.stop(t + len + .1); }
+    g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(vol, t + .7); g.gain.setValueAtTime(vol, t + len - .9); g.gain.linearRampToValueAtTime(0, t + len);
+    f.connect(g); route(M, g, {bus: 'music', send: .5});
+}
+// the notes of one step (an eighth of a bar) at time t; level 0 the pad and the bass, 1 the pluck too, 2 the pulse
+function musicStep(M, t, step, level)
+{
+    const e = 60/TUNE.bpm/2, k = step % 8, ch = TUNE.chords[(step >> 3) % 4], o = {bus: 'music', send: .4};
+    if (k == 0)
+    {
+        for (const n of ch.slice(1)) padNote(M, t, n, e*8 + 1.2, .014);
+        thump(M, t, midiHz(ch[0] - 12), midiHz(ch[0] - 12), e*5, .05, {bus: 'music', att: .03});
+    }
+    if (k == 5) thump(M, t, midiHz(ch[0] - 12), midiHz(ch[0] - 12), e*2.5, .03, {bus: 'music', att: .03});
+    if (level >= 1 && !(k == 3 && (step >> 3) % 2)) note(M, t, ch[TUNE.pat[k]] + 12, .55, k % 2 ? .014 : .02, {...o, pan: k % 2 ? .3 : -.3});
+    if (level >= 2)
+    {
+        if (k % 4 == 0) thump(M, t, 62, 42, .14, .05, {bus: 'music'});
+        if (k % 2) puff(M, t, .05, .012, 6500, 5000, {q: 1.5, att: .004, bus: 'music', pan: .2});
+    }
+}
+function musicUpdate(M, U, now, level, on)
+{
+    const e = 60/TUNE.bpm/2;
+    if (U.t === undefined || U.t < now - .5) { U.t = now + .1; U.step = 0; }
+    for (; U.t < now + .3; U.t += e, ++U.step) if (on) musicStep(M, U.t, U.step, level);
 }
 
 function audioInit()
@@ -11590,12 +11754,13 @@ function audioInit()
     if (au || !audioContext || !audioMasterGain) return;
     try
     {
-        au = soundLoops(audioContext, audioMasterGain);
-        fx = makeFx(audioContext, audioMasterGain);
+        fx = makeMix(audioContext, audioMasterGain);
+        au = soundLoops(fx);
+        au.amb = {}; au.tune = {};
     }
-    catch(e) { au = undefined; }
+    catch(e) { au = undefined; fx = undefined; }
 }
-
+const BW_SND = {};
 function audioUpdate()
 {
     if (!au)
@@ -11603,58 +11768,61 @@ function audioUpdate()
         if (audioContext?.state == 'running') audioInit();
         return;
     }
+    if (audioContext.state != 'running') return;
     const now = audioContext.currentTime, riding = state == 'ride', speed = riding ? hypot(vx, vy) : 0;
     // every other frame is plenty for sounds that glide to where they are going
     if (frame % 2) return;
-    soundLoopsSet(au, now, {riding, speed, onGround: riding && (grounded || !!grinding?.deck), deck: riding && !!grinding?.deck,
-        snow: surfNow == S_SNOW, skid: riding && braking && grounded, air: !grounded, boost: boostT > 0,
-        grinding: riding && grinding && !grinding.deck && !grinding.wall, turbo: riding && turboT > 0});
+    const bw = biomeW(camX, BW_SND), day = 1 - night;
+    // the nearest creek or bridge, and which side of the rider it is
+    let water = 0, waterPan = 0;
+    for (const g of gullies) { const d = g.xc - px, w = clamp01(1 - abs(d)/70); if (w > water) { water = w; waterPan = clampV(d/30, -.8, .8); } }
+    soundLoopsSet(au, now, {riding, speed, onGround: riding && (grounded || !!grinding), surf: riding ? soundSurface() : 0,
+        skid: riding && braking && grounded, air: !grounded, boost: boostT > 0,
+        grinding: riding && grinding && !grinding.deck && !grinding.wall, turbo: riding && turboT > 0,
+        moan: state == 'title' ? .04 : (bw.snow*.12 + bw.desert*.08 + bw.alpine*.03), water, waterPan});
+    ambience(fx, au.amb, now, {speed, birds: (bw.forest + bw.alpine*.8 + bw.autumn*.7)*day, night, leaves: bw.autumn});
+    musicUpdate(fx, au.tune, now, riding ? (flowLevel >= 3 ? 2 : flowLevel >= 1 ? 1 : 0) : 0, musicOn && soundOn);
 }
 
-// ---------- the jingles' own bus, loud enough to ring out over the ride
-function makeFx(ac, dest)
+// a recording of the game's sound, for listening to outside the game: a stereo WAV file as base64. parts picks what
+// is in it, any of ride, events, ambience and music (loops, jingles and thumps are the old names for the first two)
+async function audioPreview(seconds=44, parts='ride events ambience music')
 {
-    const fx = ac.createGain();
-    fx.gain.value = 3.2; fx.connect(dest);
-    return {ac, fx};
-}
-
-// a recording of the ride's sounds with some jingles over them, for listening to outside the game: a WAV file as
-// base64. parts picks what is in it, any of loops, jingles and thumps
-async function audioPreview(seconds=40, parts='loops jingles thumps')
-{
-    const sr = 44100, ac = new OfflineAudioContext(1, seconds*sr, sr), master = ac.createGain(), mute = ac.createGain();
-    master.gain.value = .5; master.connect(ac.destination); mute.gain.value = 0; mute.connect(ac.destination);
-    const has = k=> parts.includes(k) ? master : mute;
-    const m = makeFx(ac, has('jingles')), L = soundLoops(ac, has('loops'));
-    // riding along at a steady 16 m/s, a bit faster in the middle
-    for (let t = 0; t < seconds; t += .25)
+    const sr = 44100, ac = new OfflineAudioContext(2, seconds*sr, sr), master = ac.createGain();
+    master.gain.value = .5; master.connect(ac.destination);
+    const M = makeMix(ac, master), has = (...k)=> k.some(q=> parts.includes(q));
+    if (!has('ride', 'loops')) M.ride.gain.value = 0;
+    if (!has('events', 'jingles', 'thumps')) M.fx.gain.value = 0;
+    if (!has('ambience')) M.amb.gain.value = 0;
+    if (!has('music')) M.music.gain.value = 0;
+    const L = soundLoops(M), A = {}, U = {};
+    // a ride: off the summit through the forest, a jump, a deck and a skinny, a creek, the brakes, the snow, night
+    const air = t=> t > 6.4 && t < 8.3 || t > 30.9 && t < 33.4, wood = t=> t > 14 && t < 17.5, snowAt = t=> t > 25 && t < 30;
+    for (let t = 0; t < seconds; t += .1)
     {
-        const speed = 16 + 6*sin(PI*t/seconds)**2;
-        soundLoopsSet(L, t, {riding: true, speed, onGround: true, air: false, turbo: t > 20 && t < 26});
+        const speed = t < 1 ? 0 : min(30, 6 + (t - 1)*2.2) - (t > 21 && t < 23 ? 8 : 0);
+        soundLoopsSet(L, t, {riding: t > 1 && t < 38, speed, onGround: !air(t), surf: wood(t) ? 2 : snowAt(t) ? 1 : 0, air: air(t), skid: t > 21 && t < 22.6,
+            grinding: t > 16 && t < 17.5, turbo: t > 34 && t < 37, moan: snowAt(t) ? .12 : 0, water: clamp01(1 - abs(t - 19)/3), waterPan: clampV((19 - t)/2, -.8, .8)});
+        ambience(M, A, t, {speed, birds: t < 24 ? 1 : 0, night: t > 38 ? 1 : 0, leaves: 0});
+        musicUpdate(M, U, t, t < 1 || t > 38 ? 0 : t < 12 ? 0 : t < 26 ? 1 : 2, true);
     }
-    // the start, a row of sprockets, a jump with a trick, a battery set, pedal power, a turbo, a crash...
-    const at = [['go', 1], ['jump', 6.5], ['whoosh', 7, 2], ['trick', 8.5], ['bank', 10], ['chain', 16], ['ready', 19], ['turbo', 20],
-        ['tyre', 26], ['perfect', 28], ['send', 31], ['line', 35], ['crash', 38]];
+    const at = [['go', 1], ['jump', 6.4], ['whoosh', 6.9, 2], ['land', 8.3, .7, 0], ['trick', 8.35], ['bank', 9.6], ['land', 14, .3, 2], ['grind', 16, 0, 2], ['splash', 19],
+        ['bell', 23.5], ['land', 27, .4, 1], ['perfect', 27.05], ['send', 30.3], ['landHard', 33.4, 1, 0], ['trickBig', 33.45], ['ready', 33.9], ['turbo', 34], ['crash', 38]];
     for (let k = 0; k < 8; ++k) at.push(['orb', 3 + k*.22, k]);
-    for (let k = 0; k < 6; ++k) at.push(['cell', 12.5 + k*.35, k]);
-    for (const [name, t, v] of at) if (t < seconds - 1) jingle(name, v || 0, m, t);
-    // and the thumps, from their own samples
-    for (const [name, t, vol] of [['land', 8.4, .9], ['landHard', 33.5, 1], ['crash', 38, 1]])
-    {
-        const data = SFX[name].sampleChannels?.[0] ?? SFX[name]._sampleChannels?.[0];
-        if (!data) continue;
-        const b = ac.createBuffer(1, data.length, audioDefaultSampleRate), src = ac.createBufferSource(), g = ac.createGain();
-        b.getChannelData(0).set(data); src.buffer = b; g.gain.value = vol;
-        src.connect(g); g.connect(has('thumps')); src.start(t);
-    }
-    const d = (await ac.startRendering()).getChannelData(0), n = d.length, bytes = new Uint8Array(44 + n*2), v = new DataView(bytes.buffer);
+    for (let k = 0; k < 6; ++k) at.push(['cell', 11 + k*.35, k]);
+    for (const [name, t, v, surf] of at) if (t < seconds - 1) jingle(name, v || 0, M, t, surf || 0);
+    const buf = await ac.startRendering(), l = buf.getChannelData(0), r = buf.getChannelData(1), n = l.length, bytes = new Uint8Array(44 + n*4), v = new DataView(bytes.buffer);
     const text = (o, s)=> { for (let i = 0; i < s.length; ++i) bytes[o + i] = s.charCodeAt(i); };
-    text(0, 'RIFF'); v.setUint32(4, 36 + n*2, true); text(8, 'WAVEfmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true);
-    v.setUint16(22, 1, true); v.setUint32(24, sr, true); v.setUint32(28, sr*2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
-    text(36, 'data'); v.setUint32(40, n*2, true);
+    text(0, 'RIFF'); v.setUint32(4, 36 + n*4, true); text(8, 'WAVEfmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true);
+    v.setUint16(22, 2, true); v.setUint32(24, sr, true); v.setUint32(28, sr*4, true); v.setUint16(32, 4, true); v.setUint16(34, 16, true);
+    text(36, 'data'); v.setUint32(40, n*4, true);
     let peak = 0, sum = 0;
-    for (let i = 0; i < n; ++i) { const x = clampV(d[i], -1, 1); peak = max(peak, abs(x)); sum += x*x; v.setInt16(44 + i*2, x*32767, true); }
+    for (let i = 0; i < n; ++i)
+    {
+        const a = clampV(l[i], -1, 1), b = clampV(r[i], -1, 1);
+        peak = max(peak, abs(a), abs(b)); sum += (a*a + b*b)/2;
+        v.setInt16(44 + i*4, a*32767, true); v.setInt16(46 + i*4, b*32767, true);
+    }
     let s = '';
     for (let i = 0; i < bytes.length; i += 32768) s += String.fromCharCode(...bytes.subarray(i, i + 32768));
     return {wav: btoa(s), peak, rms: Math.sqrt(sum/n)};

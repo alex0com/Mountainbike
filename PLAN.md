@@ -1332,6 +1332,38 @@ The rider is reworked after `art/bluecow-rider-concept.png`, at its level of det
 
   - **Sim:** 12.3 km with flips and tricks, 0 crashes.
 
+## Sound reworked: a bike and the outdoors, with quiet live music: done (Three.js version)
+- **Asked for:** real bike and outdoors sounds, plus light music. Everything is still made in the browser; nothing is recorded.
+- **The mix** (`makeMix`): four buses (ride, one-shots, ambience, music) into a limiter, so nothing clips when sounds pile up, and a short dark reverb (a generated impulse in a `ConvolverNode`) that each sends a little into. Sounds are placed left and right (`route`). Every sound takes the mix and a time, so the same code plays live and renders the preview.
+- **Riding** (`soundLoops`, `soundLoopsSet`), by speed and by what is under the wheels (`soundSurface`):
+  - **Tyres:** dirt (a low rumble and a gravel crackle), snow (soft), wood on decks, skinnies and bridges (hollow), rock on wall rides.
+  - **Freehub:** bright noise let through in clicks, their rate following the wheel; louder in the air.
+  - **Wind** in both ears, with gusts; **brakes** (a skid and a faint squeal); the **motor's** whirr on turbo.
+- **One-shots** (`JINGLES`, `sfx`): the nine ZzFX thumps are gone.
+  - **Landings** (`landOn`) are built from the weight coming down, the tyres, the suspension and chain slap, by how hard and onto what.
+  - **Also rebuilt:** takeoff, crash (thuds, clatter, dust), rail, creek splash, berm, wreck thuds and clanks, the logo smack.
+  - **Kept as last asked:** the sprocket's soft tick and the soft tones, now with a little reverb.
+  - **Cow:** a small bell with the moo as it walks out.
+- **Ambience** (`ambience`), quieter as the speed rises: birds by day in the forest, alpine and autumn trails; crickets at night; leaves in autumn; a low wind over the snow and red rock; running water near a creek or bridge, on its side of the rider.
+- **Music** (`musicStep`, `musicUpdate`): four bars round and round at 84 bpm in the pickups' key: a soft pad and a bass note; a plucked pattern once there is some flow; a light pulse at full flow. It is scheduled a third of a second ahead, an eighth-note at a time, never rendered into a long buffer (which is what brought phones down before).
+- **The switch:** the SND button cycles MUSIC (music and sounds), SND (sounds only), MUTE. Saved as `bcr.snd`.
+- **`tools/listen.mjs`** renders a stereo preview; parts are `ride events ambience music`.
+- **Checked** (by measurement; how it sounds is for the user to judge):
+
+  | 44 s preview | Peak | RMS | Energy above 4 kHz |
+  |---|---|---|---|
+  | Ride | 0.24 | −27.3 dB | 0.5% |
+  | One-shots | 0.38 | −35.1 dB | 1.3% |
+  | Ambience | 0.07 | −43.6 dB | 0.7% |
+  | Music | 0.13 | −31.2 dB | 0.0% |
+  | Full mix | 0.37 | −25.8 dB | 0.5% |
+
+  - **No clipping** in any render. The previous build's full mix was −28.3 dB, so it is about 2.5 dB louder overall, mostly the added music and ambience.
+  - **First levels were wrong and were fixed:** the music was as loud as the ride (halved), and the freehub was inaudible (about −70 dB in the air; raised to about −54 dB in its band).
+  - **Live:** all 25 one-shots, the moo and a ride play with no page errors; pause suspends the audio and a tap resumes it; the switch's three states are remembered after a reload.
+  - **Sims:** 42.6 km (flips and tricks, turbo), 0 crashes.
+- **Not checked:** the cost of the audio on a phone's audio thread, and frame time with sound running (the perf tool runs muted).
+
 ## Next: proposals
 - **More fun:**
   - pumping (hold on a downslope for speed);

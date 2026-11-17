@@ -1364,6 +1364,15 @@ The rider is reworked after `art/bluecow-rider-concept.png`, at its level of det
   - **Sims:** 42.6 km (flips and tricks, turbo), 0 crashes.
 - **Not checked:** the cost of the audio on a phone's audio thread, and frame time with sound running (the perf tool runs muted).
 
+## Rolling and air sounds no longer static: done (Three.js version)
+- **The problem (played on a phone):** the bike rolling sounded like static, and so did the bike in the air.
+- **The cause:** both were bright noise. On the ground it was the gravel crackle (band-passed at 1.3 kHz, and raised when it measured faint); in the air it was the freehub, made of white noise let through in clicks, and the wind's rush.
+- **Now:**
+  - **Rolling:** the low rumble of the tyres, with only a little low crunch under it (the gravel below 420 Hz). Snow is a soft band at 520 Hz, not a hiss.
+  - **Freehub:** no noise in it. A train of short pulses rings a narrow filter at 1.7 kHz, so each is a small clear click; far fewer of them (about 50 a second flat out, was about 170).
+  - **Wind:** duller, and no extra rush for being in the air.
+- **Measured (ride bus):** on dirt 94% of the energy is below 500 Hz and 0.006% above 2 kHz; in the air 98% and 0.13%.
+
 ## Next: proposals
 - **More fun:**
   - pumping (hold on a downslope for speed);
